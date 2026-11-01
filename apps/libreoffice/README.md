@@ -157,8 +157,8 @@ npm run package  # installers for Windows (nsis/portable/zip), macOS (dmg/zip),
 ```
 
 Tests are plain vitest and run on any OS. GitHub Actions runs the test
-suite on both Ubuntu and Windows, and builds installers for all three
-OSes on every push.
+suite on both Ubuntu and Windows; installers for all three OSes are
+built only when a `v*` tag is pushed or on a manual workflow dispatch.
 
 ```
 src/server.ts       Express API + bridge discovery/healing

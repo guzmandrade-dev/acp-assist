@@ -129,8 +129,9 @@ npm run package  # installers for Windows (nsis/portable/zip), macOS (dmg/zip),
 Build output goes to `dist-release/`, gitignored. Tests run on any OS —
 the mock LyXServer transport uses named pipes on Windows and FIFOs
 elsewhere, and GitHub Actions runs the test suite on both Ubuntu and
-Windows. CI builds and uploads artifacts for all three OSes on every push,
-and publishes a draft release when a `v*` tag is pushed.
+Windows. Packaging (installers for all three OSes) runs only when a
+`v*` tag is pushed — publishing a draft release — or on a manual
+workflow dispatch.
 
 The packaged app writes its data (chat history, attachments, logs) to the
 Electron user-data directory — `%APPDATA%\LyX ACP Assist` on Windows,
