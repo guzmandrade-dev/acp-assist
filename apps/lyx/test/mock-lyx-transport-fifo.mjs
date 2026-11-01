@@ -80,16 +80,29 @@ async function flush() {
   flushing = true;
   while (pending.length > 0) {
     const line = pending.shift();
+    let fd = null;
     try {
       // The open completes as soon as the client (re)connects its reader
       // (it reconnects ~50ms after each EOF). Replies that arrive in
       // between queue up here — same as the Windows transport.
-      const fd = (await preOpened) ?? (await fsp.open(outPath, 'w'));
+      fd = (await preOpened) ?? (await fsp.open(outPath, 'w'));
       preOpened = null;
       await fd.write(`${line}\n`);
       await fd.close(); // reply-then-close: LyX's resetPipe
-    } catch (e) {
-      console.log(`WRITE-ERROR|${e.message}`);
+    } catch {
+      // The reader vanished mid-write (the client was mid-reconnect
+      // cycle): never drop the reply. Requeue it — the retried open
+      // blocks until the client's next reader connects, so the retry
+      // always delivers into a live reader.
+      if (fd) {
+        try {
+          await fd.close();
+        } catch {
+          /* already closed */
+        }
+      }
+      pending.unshift(line);
+      await new Promise((resolve) => setTimeout(resolve, 10));
     }
   }
   flushing = false;

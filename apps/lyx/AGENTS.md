@@ -509,6 +509,26 @@ each cost a debugging round):
   documented real-LyX per-instance-buffer quirk — the client's
   waiter-based matching is what makes it harmless in both.
 
+FIFO findings (from the 2026-11-01 CI flake in `lyxserver-mock.test.ts`:
+`serializes overlapping same-func requests` timed out at 20s on Ubuntu,
+intermittently):
+
+- A FIFO `open(O_WRONLY)` pairs with ANY open reader fd — including one
+  that already saw EOF but has not closed yet. With reply-then-close,
+  the NEXT round-trip's reply could be written into that dying reader
+  and silently discarded when its fd closed (fs streams close via the
+  thread pool, so the window stretches under CI's parallel test load);
+  or the write EPIPEd, which the old transport DROPPED (WRITE-ERROR).
+- Fixes, both deterministic rather than timing-tuned: (1) the client
+  marks the .out reader possibly-dying on every dispatched reply and
+  `roundTrip` waits for that cycle before sending the next command; the
+  cycle handler closes the fd SYNCHRONOUSLY (`fs.closeSync`) before
+  resolving, so a server writer can never pair with the dying reader.
+  The wait is capped at 250ms so a server that keeps `.out` open (no
+  per-reply reset) never stalls. (2) The FIFO transport re-queues a
+  reply on write error instead of dropping it — the retried open blocks
+  until the client's reconnect reader pairs, so it always delivers.
+
 ## Auto mode / intent inference (2026-10-04)
 
 The manual Chat/Rewrite/Insert radio modes are GONE. One input box,

@@ -122,6 +122,15 @@ export class LyxServerClient extends EventEmitter {
 
   private inFd: number | null = null;
   private helloPending = false;
+  /**
+   * Pending teardown of the .out reader that last delivered a reply, if
+   * any. LyX closes the .out connection right after every reply, so any
+   * dispatched line implies this reader may be about to cycle; the next
+   * command must wait for its fd to close before leaving (see
+   * awaitOutCycle) or a fast server's reply can be swallowed by the
+   * dying reader.
+   */
+  private dyingOut: { promise: Promise<void>; resolve: () => void } | null = null;
 
   constructor(options: LyxServerOptions = {}) {
     super();
@@ -250,10 +259,19 @@ export class LyxServerClient extends EventEmitter {
           if (bytes > 0) {
             // Data was dispatched before the close (reply-then-reset): the
             // connection is dead, so hand over nothing — start() opens a
-            // fresh readLoop stream.
+            // fresh readLoop stream. Close the fd synchronously so a fast
+            // server cannot pair its next reply with this dying reader.
             settled = true;
             clearTimeout(timer);
+            try {
+              const fd = (stream as { fd?: number }).fd;
+              if (typeof fd === 'number') fs.closeSync(fd);
+            } catch {
+              /* already closed */
+            }
             stream.destroy();
+            this.dyingOut?.resolve();
+            this.dyingOut = null;
             resolve({ verdict: 'data', stream: null });
           } else {
             done('empty-close');
@@ -297,6 +315,8 @@ export class LyxServerClient extends EventEmitter {
     }
     for (const w of this.waiters) w.resolve(undefined);
     this.waiters.clear();
+    this.dyingOut?.resolve();
+    this.dyingOut = null;
   }
 
   /** Send an LFUN and wait for its INFO/ERROR reply. Returns the reply line. */
@@ -326,6 +346,13 @@ export class LyxServerClient extends EventEmitter {
     // pipe broadcasts duplicates, and stale duplicates of earlier requests
     // would be mistaken for fresh replies. Waiters are registered before
     // the request is sent, so genuine replies always reach the waiter.
+
+    // Do not send while the previous .out reader is dying: LyX closes the
+    // connection right after each reply, and a reply written into a
+    // reader that has seen EOF but not yet closed is silently discarded
+    // (the write lands in the kernel buffer; closing the fd drops it).
+    // Waiting for the cycle is what makes the next round-trip race-free.
+    await this.awaitOutCycle();
 
     const promise = new Promise<string | undefined>((resolve) => {
       const waiter: Waiter = { func, resolve };
@@ -392,19 +419,53 @@ export class LyxServerClient extends EventEmitter {
     }
 
     let reopened = false;
-    const reopen = () => {
+    const cycle = () => {
       if (reopened) return; // only one retry per stream
       reopened = true;
+      // Close the fd synchronously: fs streams close asynchronously via
+      // the thread pool, and while the fd is still open a server's
+      // writer-open can pair with this dying reader — its reply would
+      // be discarded when the fd finally closes.
+      try {
+        const fd = (stream as { fd?: number }).fd;
+        if (typeof fd === 'number') fs.closeSync(fd);
+      } catch {
+        /* already closed */
+      }
       stream.destroy();
+      this.dyingOut?.resolve();
+      this.dyingOut = null;
       if (!this.shuttingDown) setTimeout(() => this.readLoop(), 50);
     };
     // Post-reply disconnects (normal on Windows) surface as error/end/close.
-    stream.on('error', () => reopen());
-    stream.on('end', () => reopen());
-    stream.on('close', () => reopen());
+    stream.on('error', cycle);
+    stream.on('end', cycle);
+    stream.on('close', cycle);
+  }
+
+  /**
+   * Wait until the .out reader that last delivered a reply finished
+   * closing (see roundTrip). Bounded: a server that keeps its .out
+   * connection open never cycles, so a hard wait would stall forever.
+   */
+  private async awaitOutCycle(): Promise<void> {
+    const dying = this.dyingOut;
+    if (dying) await Promise.race([dying.promise, sleep(250)]);
+  }
+
+  /** Mark the current .out reader as possibly dying (see dispatch()). */
+  private markOutDying(): void {
+    if (this.dyingOut) return;
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => (resolve = r));
+    this.dyingOut = { promise, resolve };
   }
 
   private dispatch(line: string): void {
+    // Any reply implies LyX may close the .out connection right after
+    // (reply-then-close): from now on, sends wait for this reader's fd
+    // to close instead of racing a reply into it.
+    this.markOutDying();
     this.emit('message', line);
     if (this.helloPending && line === `LYXSRV:${this.clientName}:hello`) {
       this.helloPending = false;
