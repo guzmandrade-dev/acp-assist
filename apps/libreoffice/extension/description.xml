@@ -6,6 +6,6 @@
   <identifier value="org.libreofficeacp.bridge"/>
   <version value="0.0.1"/>
   <display-name>
-    <name>ACP Assist Bridge (spike)</name>
+    <name>ACP Assist Bridge</name>
   </display-name>
 </description>
