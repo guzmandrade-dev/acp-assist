@@ -1,5 +1,10 @@
 # ACP Assist
 
+[![Tests](https://github.com/guzmandrade-dev/lyx-acp-assist/actions/workflows/test.yml/badge.svg)](https://github.com/guzmandrade-dev/lyx-acp-assist/actions/workflows/test.yml)
+[![Build](https://github.com/guzmandrade-dev/lyx-acp-assist/actions/workflows/build.yml/badge.svg)](https://github.com/guzmandrade-dev/lyx-acp-assist/actions/workflows/build.yml)
+
+**Website:** <https://guzmandrade-dev.github.io/lyx-acp-assist/>
+
 Copilot-style LLM assistants for document editors. Each app is a floating
 companion panel that reads your document, chats, and writes **directly into
 the live editor document**. All reasoning is delegated to an external agent

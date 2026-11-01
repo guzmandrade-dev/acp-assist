@@ -1,0 +1,43 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+env:
+  NODE_VERSION: 22
+
+jobs:
+  test:
+    # Tests are cross-platform: the LyX pipe-mock uses named pipes on
+    # Windows and FIFOs on Linux/macOS, so both OSes exercise the real
+    # choreography suites (not skips).
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [lyx, libreoffice]
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies (all workspaces)
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+        working-directory: apps/${{ matrix.app }}
+
+      - name: Typecheck
+        run: npm run typecheck
+        working-directory: apps/${{ matrix.app }}
