@@ -24,10 +24,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/guzmandrade-dev/lyx-acp-assist.git",
+    "url": "git+https://github.com/guzmandrade-dev/acp-assist.git",
     "directory": "apps/libreoffice"
   },
-  "homepage": "https://github.com/guzmandrade-dev/lyx-acp-assist#readme",
+  "homepage": "https://github.com/guzmandrade-dev/acp-assist#readme",
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^26.1.1",
