@@ -46,7 +46,7 @@ companion talks to the bridge, and the bridge performs every operation
 through UNO in a single undo transaction per edit.
 
 ## Demo
-https://github.com/user-attachments/assets/fc5e98a4-29b0-447d-8c01-de6df796d24f
+https://github.com/user-attachments/assets/d022ecfd-9af4-4eaa-a621-e748b3d4ea04
 
 ## Requirements
 
