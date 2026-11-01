@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ACP Assist — Copilot-style assistants for LyX and LibreOffice</title>
+<meta name="description" content="ACP Assist provides floating LLM assistant panels for LyX and LibreOffice. All reasoning is delegated to an external agent over the Agent Client Protocol (ACP); there is no LLM and no API key inside these apps.">
+<link rel="icon" type="image/svg+xml" href="logo-lyx.svg">
+<style>
+  :root {
+    --text: #1f2937;
+    --muted: #5b6470;
+    --line: #d9dee5;
+    --accent: #3b6ea5;
+    --accent-dark: #2f5884;
+    --bg: #ffffff;
+    --bg-alt: #f6f8fa;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: var(--text);
+    background: var(--bg);
+    line-height: 1.65;
+    font-size: 17px;
+  }
+  a { color: var(--accent); }
+  a:hover { color: var(--accent-dark); }
+
+  /* Header */
+  .site-header {
+    border-bottom: 1px solid var(--line);
+    background: var(--bg);
+  }
+  .wrap {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 0 20px;
+  }
+  .site-header .wrap {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px 24px;
+    padding-top: 14px;
+    padding-bottom: 14px;
+  }
+  .site-name {
+    font-weight: 700;
+    font-size: 20px;
+    color: var(--text);
+    text-decoration: none;
+  }
+  .site-name img {
+    width: 26px;
+    height: 26px;
+    vertical-align: -6px;
+    margin-right: 8px;
+  }
+  .site-nav a {
+    color: var(--muted);
+    text-decoration: none;
+    margin-left: 18px;
+    font-size: 15px;
+  }
+  .site-nav a:hover { color: var(--accent); }
+
+  /* Hero */
+  .hero {
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-alt);
+  }
+  .hero .wrap { padding-top: 56px; padding-bottom: 56px; }
+  .hero h1 {
+    font-size: 40px;
+    line-height: 1.2;
+    margin: 0 0 16px;
+    max-width: 18ch;
+  }
+  .hero p {
+    font-size: 20px;
+    color: var(--muted);
+    max-width: 46ch;
+    margin: 0 0 28px;
+  }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; }
+  .btn {
+    display: inline-block;
+    padding: 10px 22px;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    font-size: 16px;
+    text-decoration: none;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-dark); color: #fff; }
+  .btn-secondary { color: var(--accent); background: var(--bg); }
+  .btn-secondary:hover { color: var(--accent-dark); }
+
+  /* Sections */
+  section { padding: 48px 0; }
+  section + section { border-top: 1px solid var(--line); }
+  h2 { font-size: 28px; margin: 0 0 24px; }
+  h3 { font-size: 20px; margin: 0 0 8px; }
+  section p { max-width: 72ch; }
+  section p, section ul, section ol, section table { margin-top: 0; }
+  section p + p, section ul + p { margin-top: 12px; }
+  .lead { color: var(--muted); font-size: 18px; }
+
+  /* Apps */
+  .app-list { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
+  @media (max-width: 640px) { .app-list { grid-template-columns: 1fr; } }
+  .app h3 { display: flex; align-items: center; gap: 12px; }
+  .app h3 img { width: 40px; height: 40px; }
+  .app p { color: var(--muted); margin: 0 0 8px; }
+  .app ul { color: var(--muted); padding-left: 20px; margin: 12px 0 8px; }
+  .app ul li { margin: 4px 0; }
+
+  /* How it works */
+  ol.steps { max-width: 72ch; padding-left: 22px; }
+  ol.steps li { margin-bottom: 14px; }
+  table.actions {
+    border-collapse: collapse;
+    max-width: 100%;
+    font-size: 15px;
+    margin: 16px 0;
+  }
+  table.actions th, table.actions td {
+    border: 1px solid var(--line);
+    padding: 8px 14px;
+    text-align: left;
+    vertical-align: top;
+  }
+  table.actions th { background: var(--bg-alt); }
+  code, pre {
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.9em;
+  }
+  code { background: var(--bg-alt); padding: 1px 5px; border-radius: 3px; }
+  pre {
+    background: var(--bg-alt);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 14px 16px;
+    overflow-x: auto;
+  }
+  pre code { background: none; padding: 0; }
+
+  /* Demo */
+  video {
+    width: 100%;
+    max-width: 860px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    display: block;
+    margin: 8px 0 12px;
+  }
+
+  /* Footer */
+  .site-footer {
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 15px;
+  }
+  .site-footer .wrap {
+    padding-top: 28px;
+    padding-bottom: 28px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 28px;
+    justify-content: space-between;
+  }
+  .site-footer a { color: var(--muted); }
+  .site-footer a:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="site-name" href=".">
+      <img src="logo-lyx.svg" alt=""> ACP Assist
+    </a>
+    <nav class="site-nav">
+      <a href="#apps">Apps</a>
+      <a href="#how-it-works">How it works</a>
+      <a href="#demo">Demo</a>
+      <a href="#get-started">Get started</a>
+      <a href="https://github.com/guzmandrade-dev/lyx-acp-assist">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<div class="hero">
+  <div class="wrap">
+    <h1>AI assistants that write into LyX and LibreOffice</h1>
+    <p>
+      ACP Assist is a pair of floating companion panels that read your document,
+      chat, and write directly into the live editor document. All reasoning is
+      delegated to an external agent you already trust — there is no LLM and no
+      API key inside these apps.
+    </p>
+    <div class="cta">
+      <a class="btn btn-primary" href="#get-started">Get started</a>
+      <a class="btn btn-secondary" href="https://github.com/guzmandrade-dev/lyx-acp-assist">View on GitHub</a>
+    </div>
+  </div>
+</div>
+
+<main>
+
+<section id="apps">
+  <div class="wrap">
+    <h2>Apps</h2>
+    <p class="lead">Two apps, one architecture: the editor stays the single writer of truth, and the panel is a quiet chat surface that floats beside the document.</p>
+    <div class="app-list">
+      <div class="app">
+        <h3><img src="logo-lyx.svg" alt=""> LyX ACP Assist</h3>
+        <p>
+          An assistant for <a href="https://www.lyx.org/">LyX</a>. It writes through
+          the LyXServer named pipe and the <code>application/x-lyx</code> clipboard
+          format, so LyX itself performs every insertion — formatting, insets, and
+          cross-references stay intact.
+        </p>
+        <ul>
+          <li>LyX 2.5+, Windows, Linux, macOS</li>
+          <li>Read-only <code>.lyx</code> parser builds the agent's context</li>
+          <li>Every paste is verified against the document before it happens</li>
+        </ul>
+        <p><a href="https://github.com/guzmandrade-dev/lyx-acp-assist/tree/main/apps/lyx">LyX ACP Assist README →</a></p>
+      </div>
+      <div class="app">
+        <h3><img src="logo-libreoffice.svg" alt=""> LibreOffice ACP Assist</h3>
+        <p>
+          An assistant for <a href="https://www.libreoffice.org/">LibreOffice</a>
+          — Writer, Calc, and Impress — via a small in-process UNO bridge
+          (<code>.oxt</code>) with per-module adapters. Edits land as tracked
+          changes in Writer and Calc, and every edit is one undo transaction.
+        </p>
+        <ul>
+          <li>Writer, Calc, Impress (and Draw via Impress)</li>
+          <li>Multiple LibreOffice instances supported</li>
+          <li>Live selection and cursor events update the panel</li>
+        </ul>
+        <p><a href="https://github.com/guzmandrade-dev/lyx-acp-assist/tree/main/apps/libreoffice">LibreOffice ACP Assist README →</a></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how-it-works">
+  <div class="wrap">
+    <h2>How it works</h2>
+    <p class="lead">One input box, agent-decided intent. The document is never touched behind the editor's back.</p>
+    <ol class="steps">
+      <li>
+        <strong>The editor stays the single writer of truth.</strong>
+        The app never writes the document file directly. For LyX, inserts are
+        pasted through LyX itself; for LibreOffice, every operation goes through
+        UNO in a single undo transaction.
+      </li>
+      <li>
+        <strong>You type one message.</strong> The agent decides whether to reply
+        in chat or edit the document, and ends its reply with a small action tag
+        the app executes mechanically:
+      </li>
+      <li>
+        <strong>Edits are confirmed quietly and are undoable.</strong>
+        Applied edits are confirmed under the reply ("Inserted after [p5]") and
+        every edit is one undo step.
+      </li>
+    </ol>
+    <table class="actions">
+      <thead>
+        <tr><th>Action</th><th>Effect</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>[ACTION: none]</code></td><td>Prose reply; document untouched</td></tr>
+        <tr><td><code>[ACTION: insert]</code></td><td>Paste at the cursor</td></tr>
+        <tr><td><code>[ACTION: insert-after pN]</code></td><td>Insert new paragraph(s) after <code>[pN]</code></td></tr>
+        <tr><td><code>[ACTION: rewrite]</code></td><td>Replace the active selection</td></tr>
+        <tr><td><code>[ACTION: rewrite-at pN]</code></td><td>Replace paragraph <code>[pN]</code> (verified first)</td></tr>
+        <tr><td><code>[ACTION: delete-at pN]</code></td><td>Delete paragraph <code>[pN]</code></td></tr>
+        <tr><td><code>[ACTION: move pN pM]</code></td><td>Move paragraph <code>[pN]</code> to after <code>[pM]</code></td></tr>
+      </tbody>
+    </table>
+    <p>
+      The LibreOffice app adds module-specific actions — <code>write-cells</code>,
+      <code>insert-rows</code>, <code>insert-cols</code> in Calc, and
+      <code>insert-after sN</code> / <code>rewrite-slide sN</code> in Impress.
+    </p>
+    <p>
+      <strong>Bring your own agent.</strong> Any
+      <a href="https://agentclientprotocol.com/">Agent Client Protocol (ACP)</a>-speaking
+      CLI works — <code>vibe-acp</code>, <code>copilot --acp</code>, or
+      <code>goose acp</code> — configurable at runtime in the app's agent settings.
+    </p>
+  </div>
+</section>
+
+<section id="demo">
+  <div class="wrap">
+    <h2>Demo</h2>
+    <p>
+      The LyX app rewriting a selection, inserting a paragraph, and answering
+      questions alongside a live LyX document:
+    </p>
+    <video controls preload="metadata" src="https://github.com/user-attachments/assets/ce301d65-6185-4de0-8086-4a246bd8fc85">
+      Your browser does not support embedded video. Watch the demo in the
+      <a href="https://github.com/user-attachments/assets/ce301d65-6185-4de0-8086-4a246bd8fc85">LyX ACP Assist README</a>.
+    </video>
+  </div>
+</section>
+
+<section id="get-started">
+  <div class="wrap">
+    <h2>Get started</h2>
+    <p class="lead">You need Node.js 22+, your editor (LyX 2.5+ or LibreOffice), and an ACP agent CLI.</p>
+    <p>
+      Install once at the repository root, then run either app from its own
+      directory:
+    </p>
+<pre><code>git clone https://github.com/guzmandrade-dev/lyx-acp-assist.git
+cd lyx-acp-assist
+npm install
+
+cd apps/lyx          # or: cd apps/libreoffice
+npm start            # builds TypeScript and launches the companion</code></pre>
+    <p>
+      Open a saved document in your editor, select some text, and type a
+      message. The panel shows the active document, selection word count, and
+      connection status. For installers, run <code>npm run package</code> —
+      prebuilt installers for Windows, macOS, and Linux are attached to each
+      <a href="https://github.com/guzmandrade-dev/lyx-acp-assist/releases">release</a>.
+    </p>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <span>ACP Assist — MIT license</span>
+    <nav>
+      <a href="https://github.com/guzmandrade-dev/lyx-acp-assist">Source</a> ·
+      <a href="https://github.com/guzmandrade-dev/lyx-acp-assist/releases">Releases</a> ·
+      <a href="https://agentclientprotocol.com/">ACP</a> ·
+      <a href="https://www.lyx.org/">LyX</a> ·
+      <a href="https://www.libreoffice.org/">LibreOffice</a>
+    </nav>
+  </div>
+</footer>
+
+</body>
+</html>
