@@ -45,6 +45,9 @@ The document is never read or written behind LibreOffice's back: the
 companion talks to the bridge, and the bridge performs every operation
 through UNO in a single undo transaction per edit.
 
+## Demo
+https://github.com/user-attachments/assets/fc5e98a4-29b0-447d-8c01-de6df796d24f
+
 ## Requirements
 
 - **LibreOffice** (Writer, Calc, and/or Impress)
