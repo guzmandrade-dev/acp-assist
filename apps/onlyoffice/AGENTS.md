@@ -80,6 +80,41 @@ port 8791; log beside it).
     they work when the window is foreground. Drive the app only while
     it is visible/foreground.
 
+## Bridge v0 (Phase 1) — verified 2026-11-01 night
+
+Product code: `bridge-plugin/` (guid
+`asc.{7E2F9A41-6B3C-4D58-9E7A-1F4B8C6D2E39}`, installed in the user's
+editors as "ACP Assist Bridge"); test companion
+`spike/bridge-server/server.mjs` (port 8792, stop after sessions —
+restart with `node server.mjs`). Live-tested end-to-end in Writer:
+
+13. **The bridge protocol works over the long-poll channel.** Wire
+    surface: `POST /bridge/hello` (plugin announces editor type), `GET
+    /bridge/next` (long-poll job `{id, op, args}`), `POST
+    /bridge/result` (`{id, ok, data|error}`), `POST /bridge/event`
+    (selection-change from the 2s poll). Drive→result round-trip is
+    ~50–150ms per op.
+14. **All Writer ops verified**: `insert` (InsertContent at cursor),
+    `insertAfter {index}` (via `ApiDocument.AddElement(nPos, oElement)`
+    — inherited from ApiDocumentContent), `rewriteAt {index}`
+    (`RemoveElement(nPos)` + `AddElement(nPos, new)` inside ONE
+    callCommand), `deleteAt {index}` (`RemoveElement(nPos)`),
+    `rewriteSelection` (`executeMethod("PasteHtml", [html])` — the
+    editor's own paste route; verified via Ctrl+A + replace).
+    `context` returns paragraphs + selection + editor; `journal` keeps
+    old text per op for a future panel Undo button.
+15. **Single-undo-per-op verified for every op**: 4 ops → exactly 4
+    Ctrl+Z restored the document byte-identical (read back via
+    context); the compound rewriteAt counts as ONE step; PasteHtml
+    selection rewrite is one step and restores the selection too.
+16. **Editor detection inside callCommand**: `Api.GetSheets()` → cell,
+    `Api.GetCurrentSlide()` → slide, else word (typeof-guarded). v0
+    implements word ops only; cell/slide ops return a clean
+    "not implemented for editor" error.
+17. `GetText()` quirks confirmed again: paragraphs read with `\r\r\n`/
+    `\r\n` endings — the bridge normalizes them before returning to
+    the companion.
+
 ## Probe artifacts (spike/)
 
 - `probe-plugin/` — the probe plugin sources (config.json, index.html,
