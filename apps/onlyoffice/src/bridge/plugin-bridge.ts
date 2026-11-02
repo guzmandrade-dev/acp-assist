@@ -52,7 +52,7 @@ export interface BlockParagraph {
 
 /** Writer document read (the plugin's `context` op). */
 export interface WriterDocument {
-  editor: 'word' | 'cell' | 'slide';
+  editor: 'word';
   paragraphs: number;
   /** Normalized paragraph texts (0-based order, trailing newlines stripped). */
   texts: string[];
@@ -60,6 +60,71 @@ export interface WriterDocument {
   styles?: (string | null)[];
   selection: { selectionType: string; selectedText: string };
 }
+
+/** One sheet of a cell (spreadsheet) document read. */
+export interface SheetSummary {
+  name: string;
+  /** Used-range address, e.g. "A1:E12" ("" when the sheet is empty). */
+  used: string;
+  active: boolean;
+}
+
+/** One capped TSV block of sheet data (active sheet or selection). */
+export interface CalcGridBlock {
+  sheet: string;
+  /** A1 range of the shown block, e.g. "A1:E12". */
+  range: string;
+  values: string[][];
+  /** Formula text per cell ("" where the cell has no formula). */
+  formulas: string[][] | null;
+  truncated: boolean;
+}
+
+/** The spreadsheet's current selection. */
+export interface CalcSelection {
+  /** Selected range addresses, first = the primary range. */
+  ranges: string[];
+  /** Top-left A1 anchor of the primary range, e.g. "B2". */
+  anchor: string;
+  values: string[][];
+  truncated: boolean;
+}
+
+/** Cell (spreadsheet) document read (the plugin's `context` op). */
+export interface CellDocument {
+  editor: 'cell';
+  sheets: SheetSummary[];
+  /** Active-sheet used-range block (capped; null when the sheet is empty). */
+  data: CalcGridBlock | null;
+  selection: CalcSelection | null;
+}
+
+/** One slide of a slide (presentation) document read. */
+export interface SlideSummary {
+  /** 0-based slide index. */
+  index: number;
+  current: boolean;
+  /** Title placeholder text (null when the slide has no title frame). */
+  title: string | null;
+  /** First body paragraph preview (null when empty/absent). */
+  bodyPreview: string | null;
+  /** Number of body paragraphs (0 when the slide has no body frame). */
+  bodyParas: number;
+}
+
+/** Slide (presentation) document read (the plugin's `context` op). */
+export interface SlideDocument {
+  editor: 'slide';
+  count: number;
+  /** 0-based index of the current slide. */
+  current: number;
+  slides: SlideSummary[];
+  /** Selected text-frame text, when the user selected one (else null). */
+  selectionText: string | null;
+}
+
+/** The `context` op result for whichever editor is open. */
+export type EditorDocument = WriterDocument | CellDocument | SlideDocument;
 
 export type EditMode =
   | 'insert' | 'insert-top' | 'insert-after' | 'rewrite-at' | 'delete-at' | 'rewrite';
@@ -76,6 +141,42 @@ export interface EditResult {
   elements?: number;
   /** rewrite-at / delete-at: the replaced/removed paragraph's old text. */
   oldText?: string;
+}
+
+// --- cell (spreadsheet) op payload types --------------------------------------
+
+export interface WriteCellsArgs {
+  /** A1 anchor for the top-left cell of the block (always resolved by
+   * the companion — the plugin stays dumb). */
+  anchor: string;
+  /** TSV rows: one sheet row per entry; "" clears the cell; "=..." is a
+   * formula. */
+  rows: string[][];
+}
+
+export interface InsertRowColArgs {
+  /** A1 anchor identifying the row/column the empty one goes ABOVE/LEFT of. */
+  anchor: string;
+}
+
+export interface InsertRowColResult {
+  /** The A1 anchor the plugin actually inserted at (echoed back). */
+  anchor: string;
+}
+
+// --- slide (presentation) op payload types ------------------------------------
+
+export interface SlideContentArgs {
+  /** 0-based slide index. */
+  index: number;
+  title: string;
+  /** Body paragraphs (empty = keep the current body). */
+  body: string[];
+}
+
+export interface SlideEditResult {
+  count?: number;
+  error?: string;
 }
 
 // --- the bridge ---------------------------------------------------------------

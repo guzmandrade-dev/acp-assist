@@ -8,10 +8,11 @@
  * plugin connects OUT to this companion, so the PluginBridge hosts the
  * plugin-facing endpoints on THIS app instead of discovering them.
  *
- * v1 scope: Writer documents (the plugin detects the editor type and
- * the backend blocks non-Writer documents with a clear message); one
- * active document per session (conversation keyed UNSAVED — the plugin
- * sandbox cannot read the file path).
+ * v1 scope: Writer, Spreadsheet (active sheet), and Presentation
+ * documents — the plugin detects the editor type and the backend
+ * dispatches to the matching module adapter; one active document per
+ * session (conversation keyed UNSAVED — the plugin sandbox cannot read
+ * the file path).
  *
  * The session lifecycle, shared routes, and the multi-action message
  * loop live in core `createCompanionServer`; this file is the app's
@@ -41,8 +42,17 @@ import {
   type TurnMeta,
 } from '@acp-assist/core';
 import { panelPublicDir, type PanelConfig } from '@acp-assist/panel';
-import { PluginBridge, BridgeError, type WriterDocument } from './bridge/plugin-bridge.js';
+import {
+  PluginBridge,
+  BridgeError,
+  type EditorDocument,
+  type WriterDocument,
+  type CellDocument,
+  type SlideDocument,
+} from './bridge/plugin-bridge.js';
 import { writerAdapter, type WriterOutcome } from './modules/writer.js';
+import { calcAdapter, parseCalcAction, type CalcOutcome } from './modules/calc.js';
+import { impressAdapter, parseImpressAction, type ImpressOutcome } from './modules/impress.js';
 import { extractContentBlock, parseContentBlock } from './modules/markdown.js';
 import { TIMINGS } from './timings.js';
 
@@ -73,10 +83,16 @@ export interface ServerOptions {
   pluginBridge?: PluginBridge;
 }
 
+/** The app's parsed action: whichever module's vocabulary the reply used. */
+export type OoOutcome = WriterOutcome | CalcOutcome | ImpressOutcome;
+
+/** The module an editor maps to (writer/calc/impress adapters). */
+export type OoModule = 'writer' | 'calc' | 'impress';
+
 /** One step's data: ONE plugin `context` read serves the whole step. */
 interface OoStepData {
-  doc: WriterDocument;
-  styles?: (string | null)[];
+  doc: EditorDocument;
+  module: OoModule;
   contextText: string;
   selection: { hasSelection: boolean; text: string | null };
 }
@@ -108,11 +124,11 @@ export function createServer(options: ServerOptions & {
   return app;
 }
 
-/** The ONLYOFFICE backend: plugin bridge + the writer adapter. */
+/** The ONLYOFFICE backend: plugin bridge + the per-module adapters. */
 function createOoBackend(
   bridge: PluginBridge,
   options: ServerOptions,
-): CompanionBackend<Record<string, never>, WriterOutcome> {
+): CompanionBackend<Record<string, never>, OoOutcome> {
   const logError = createLogError(options.logDir);
   void logError; // reserved for future app-level error logging
 
@@ -181,11 +197,15 @@ function createOoBackend(
       let outline = '';
       if (opts.outline && bridge.isConnected()) {
         try {
-          const doc = await bridge.op<WriterDocument>('context');
+          const doc = await bridge.op<EditorDocument>('context');
           if (doc.editor === 'word') {
             outline = doc.texts
               .map((text, i) => `[p${i + 1}] ${text}`)
               .join('\n');
+          } else if (doc.editor === 'cell') {
+            outline = calcAdapter.renderOutline(doc);
+          } else if (doc.editor === 'slide') {
+            outline = impressAdapter.renderOutline(doc);
           }
         } catch {
           /* plugin between polls; report what we have */
@@ -203,51 +223,92 @@ function createOoBackend(
     },
 
     async readStep(_session): Promise<ReadStepResult<OoStepData>> {
-      const doc = await bridge.op<WriterDocument>('context');
-      if (doc.editor !== 'word') {
-        return {
-          blocked: {
-            status: 400,
-            body: {
-              error:
-                `This version supports ONLY Writer documents; the active editor ` +
-                `is "${doc.editor}". Please open a text document.`,
+      const doc = await bridge.op<EditorDocument>('context');
+      const selection = { hasSelection: false, text: null as string | null };
+      let module: OoModule;
+      let contextText: string;
+      switch (doc.editor) {
+        case 'word': {
+          module = 'writer';
+          const sel = doc.selection;
+          if (sel.selectionType === 'text' && sel.selectedText.trim().length > 0) {
+            selection.hasSelection = true;
+            selection.text = sel.selectedText.trim().replace(/\r+/g, '');
+          }
+          contextText = writerAdapter.buildContextBlock(doc, doc.styles);
+          break;
+        }
+        case 'cell': {
+          module = 'calc';
+          // The selection grid is already part of the calc context block.
+          contextText = calcAdapter.buildContextBlock(doc);
+          break;
+        }
+        case 'slide': {
+          module = 'impress';
+          if (doc.selectionText && doc.selectionText.trim().length > 0) {
+            selection.hasSelection = true;
+            selection.text = doc.selectionText.trim().replace(/\r+/g, '');
+          }
+          contextText = impressAdapter.buildContextBlock(doc);
+          break;
+        }
+        default:
+          return {
+            blocked: {
+              status: 400,
+              body: {
+                error:
+                  `This version supports Writer, Spreadsheet, and Presentation ` +
+                  `documents; the active editor is "${(doc as { editor: string }).editor}".`,
+              },
             },
-          },
-        };
+          };
       }
-      const sel = doc.selection;
-      const selection = {
-        hasSelection: sel.selectionType === 'text' && sel.selectedText.trim().length > 0,
-        text: sel.selectedText.trim() ? sel.selectedText.replace(/\r+/g, '') : null,
-      };
-      return {
-        data: {
-          doc,
-          styles: doc.styles,
-          contextText: writerAdapter.buildContextBlock(doc, doc.styles),
-          selection,
-        },
-      };
+      return { data: { doc, module, contextText, selection } };
     },
 
     async buildAutoPrompt(_session, stepData, message, attachments, historyPrefix) {
       const s = stepData as OoStepData;
-      return buildAutoPrompt(s.contextText, s.selection, message, attachments, historyPrefix);
+      return buildAutoPrompt(s.contextText, s.selection, message, attachments, historyPrefix, s.module);
     },
 
     async buildContinuationPrompt(_session, stepData, originalMessage, completed) {
       const s = stepData as OoStepData;
-      return buildContinuationPrompt(s.contextText, s.selection, originalMessage, completed);
+      return buildContinuationPrompt(s.contextText, s.selection, originalMessage, completed, s.module);
     },
 
-    parseAction(_session, reply): WriterOutcome {
-      return parseAction(reply);
+    parseAction(_session, reply, stepData): OoOutcome {
+      const module = (stepData as OoStepData | undefined)?.module;
+      switch (module) {
+        case 'calc':
+          return parseCalcAction(reply);
+        case 'impress':
+          return parseImpressAction(reply);
+        default:
+          return parseAction(reply);
+      }
     },
 
     async applyAction(_session, outcome, stepData): Promise<AppliedResult> {
       const s = stepData as OoStepData;
-      const description = await writerAdapter.applyAction(bridge, s.doc, s.selection.hasSelection, outcome);
+      let description: string;
+      switch (outcome.module) {
+        case 'calc':
+          description = await calcAdapter.applyAction(bridge, s.doc as CellDocument, outcome);
+          break;
+        case 'impress':
+          description = await impressAdapter.applyAction(bridge, s.doc as SlideDocument, outcome);
+          break;
+        default:
+          description = await writerAdapter.applyAction(
+            bridge,
+            s.doc as WriterDocument,
+            s.selection.hasSelection,
+            outcome,
+          );
+          break;
+      }
       return { ok: true, description, target: outcome.target };
     },
 
@@ -255,6 +316,9 @@ function createOoBackend(
       const outcome = ctx.outcome;
       const step = ctx.step;
       const stepField = step > 1 ? { step } : {};
+      const target = outcome.module === 'impress' && outcome.target !== null
+        ? `s${outcome.target}`
+        : outcome.target;
       switch (ctx.kind) {
         case 'none':
           return {
@@ -265,8 +329,9 @@ function createOoBackend(
         case 'applied':
           return {
             applied: outcome.action,
-            target: outcome.target,
-            module: 'writer',
+            target,
+            address: outcome.module === 'calc' ? outcome.address : undefined,
+            module: outcome.module,
             ...(outcome.tagNote ? { tagNote: outcome.tagNote } : {}),
             ...stepField,
           };
@@ -282,7 +347,10 @@ function createOoBackend(
     },
 
     metaExtras(_session, outcome) {
-      return { module: 'writer' };
+      return {
+        module: outcome.module,
+        ...(outcome.module === 'calc' ? { address: outcome.address } : {}),
+      };
     },
 
     watchEvents(_session, push) {
@@ -314,6 +382,7 @@ export function parseAction(reply: string): WriterOutcome {
   const needsContent = contentActions.includes(action);
   const rawBlock = needsContent ? extractContentBlock(reply) : null;
   return {
+    module: 'writer' as const,
     action,
     target,
     block: needsContent ? (rawBlock !== null ? parseContentBlock(rawBlock) : null) : null,
@@ -323,13 +392,46 @@ export function parseAction(reply: string): WriterOutcome {
 
 // --- prompt building ------------------------------------------------------------
 
-const CHAT_KNOWLEDGE = [
-  'ADDRESSING AND EDITS',
-  '- Edits are applied to the LIVE document. ONLYOFFICE Writer has no',
-  '  change tracking: each edit is a single undo step the user can revert',
-  '  with Ctrl+Z in the editor.',
-  '- Content for actions goes in ONE fenced content block: ```writer.',
-].join('\n');
+const MODULE_FENCE: Record<OoModule, string> = {
+  writer: '```writer',
+  calc: '```calc',
+  impress: '```impress',
+};
+
+/** Per-module chat knowledge: undo semantics + the content fence. */
+function moduleKnowledge(module: OoModule): string {
+  return [
+    'ADDRESSING AND EDITS',
+    '- Edits are applied to the LIVE document. ONLYOFFICE has no',
+    '  change tracking: each edit is a single undo step the user can revert',
+    '  with Ctrl+Z in the editor.',
+    `- Content for actions goes in ONE fenced content block: ${MODULE_FENCE[module]}.`,
+  ].join('\n');
+}
+
+/** Per-module line about what shifts between steps of one message. */
+function freshAddressesLine(module: OoModule): string {
+  switch (module) {
+    case 'calc':
+      return 'cell addresses and the selection may have changed because of the edit.';
+    case 'impress':
+      return 'slide numbers ([sN]) may have shifted because of the edit.';
+    default:
+      return 'paragraph addresses ([pN]) may have shifted because of the edit.';
+  }
+}
+
+/** The action instructions block for the step's module. */
+function actionInstructionsFor(module: OoModule): string {
+  switch (module) {
+    case 'calc':
+      return calcAdapter.buildActionInstructions();
+    case 'impress':
+      return impressAdapter.buildActionInstructions();
+    default:
+      return writerAdapter.buildActionInstructions();
+  }
+}
 
 export function buildAutoPrompt(
   contextText: string,
@@ -337,15 +439,16 @@ export function buildAutoPrompt(
   message: string,
   attachments: Attachment[] = [],
   historyPrefix = '',
+  module: OoModule = 'writer',
 ): string {
   const parts: string[] = [
-    'You are assisting an author writing a document in ONLYOFFICE. Your ' +
+    'You are assisting an author working in ONLYOFFICE. Your ' +
       'reply is shown in a chat panel, and you can also write content ' +
       'directly into the live ONLYOFFICE document.',
     '',
-    writerAdapter.buildActionInstructions(),
+    actionInstructionsFor(module),
     '',
-    CHAT_KNOWLEDGE,
+    moduleKnowledge(module),
     '',
     contextText,
   ];
@@ -369,11 +472,12 @@ export function buildContinuationPrompt(
   selection: { hasSelection: boolean; text: string | null },
   originalMessage: string,
   completed: string[],
+  module: OoModule = 'writer',
 ): string {
   const parts = [
     'You are continuing the SAME user request after one edit was applied ' +
       'to the live ONLYOFFICE document. The document context below is ' +
-      'FRESH: paragraph addresses ([pN]) may have shifted because of the edit.',
+      `FRESH: ${freshAddressesLine(module)}`,
     '',
     'Original user request:', originalMessage,
     '',
@@ -390,9 +494,9 @@ export function buildContinuationPrompt(
       'edits per user message; if that limit is reached it stops and tells ' +
       'the user, who can ask you to continue in a follow-up message.',
     '',
-    writerAdapter.buildActionInstructions(),
+    actionInstructionsFor(module),
     '',
-    CHAT_KNOWLEDGE,
+    moduleKnowledge(module),
     '',
     contextText,
   ];
@@ -410,8 +514,9 @@ export function buildContinuationPrompt(
 
 /** Replay rendering shared by the history wrapper and the conversation store. */
 export const OO_REPLAY_OPTIONS = {
-  blockPattern: /```writer[\s\S]*?```/g,
-  describeTarget: (m: TurnMeta) => (m.target ? ` p${m.target}` : ''),
+  blockPattern: /```(?:writer|calc|impress)[\s\S]*?```/g,
+  describeTarget: (m: TurnMeta) =>
+    m.module === 'impress' && m.target ? ` s${m.target}` : m.target ? ` p${m.target}` : m.address ? ` ${m.address}` : '',
 };
 
 export function formatHistoryReplay(turns: Turn[], unseen: number): string {

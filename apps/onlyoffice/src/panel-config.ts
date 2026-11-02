@@ -5,7 +5,7 @@ import type { PanelConfig } from '@acp-assist/panel';
 export const PANEL_CONFIG: PanelConfig = {
   appName: 'ONLYOFFICE',
   appTitle: 'ONLYOFFICE ACP Assist',
-  fenceRe: 'writer',
+  fenceRe: '(?:writer|calc|impress)',
   statusKey: 'bridgeAvailable',
   statusMissing:
     'ONLYOFFICE editor not connected — open the ACP Assist Bridge plugin from the editor\u2019s Plugins tab',

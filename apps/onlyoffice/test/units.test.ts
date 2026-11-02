@@ -6,6 +6,8 @@ import { PluginBridge } from '../src/bridge/plugin-bridge.js';
 import { parseAction } from '../src/server.js';
 import { parseContentBlock, extractContentBlock } from '../src/modules/markdown.js';
 import { writerAdapter } from '../src/modules/writer.js';
+import { calcAdapter, parseCalcAction } from '../src/modules/calc.js';
+import { impressAdapter, parseImpressAction } from '../src/modules/impress.js';
 
 /** The companion-side PluginBridge driven over real HTTP like the
  * plugin iframe does (hello -> next -> result). */
@@ -226,12 +228,12 @@ describe('writerAdapter.applyAction', () => {
     const bridge = recordingBridge(calls);
     const content = { style: null, runs: [{ text: 'New paragraph.' }] };
 
-    await writerAdapter.applyAction(bridge, doc, false, { action: 'insert', target: null, block: [content] });
-    await writerAdapter.applyAction(bridge, doc, false, { action: 'insert-top', target: null, block: [content] });
-    await writerAdapter.applyAction(bridge, doc, false, { action: 'insert-after', target: 2, block: [content] });
-    await writerAdapter.applyAction(bridge, doc, false, { action: 'rewrite-at', target: 1, block: [content] });
-    await writerAdapter.applyAction(bridge, doc, true, { action: 'rewrite', target: null, block: [content] });
-    await writerAdapter.applyAction(bridge, doc, false, { action: 'delete-at', target: 2, block: null });
+    await writerAdapter.applyAction(bridge, doc, false, { action: 'insert', module: 'writer', target: null, block: [content] });
+    await writerAdapter.applyAction(bridge, doc, false, { action: 'insert-top', module: 'writer', target: null, block: [content] });
+    await writerAdapter.applyAction(bridge, doc, false, { action: 'insert-after', module: 'writer', target: 2, block: [content] });
+    await writerAdapter.applyAction(bridge, doc, false, { action: 'rewrite-at', module: 'writer', target: 1, block: [content] });
+    await writerAdapter.applyAction(bridge, doc, true, { action: 'rewrite', module: 'writer', target: null, block: [content] });
+    await writerAdapter.applyAction(bridge, doc, false, { action: 'delete-at', module: 'writer', target: 2, block: null });
 
     expect(calls.map((c) => c.op)).toEqual([
       'insert', 'insertTop', 'insertAfter', 'rewriteAt', 'rewriteSelection', 'deleteAt',
@@ -248,10 +250,160 @@ describe('writerAdapter.applyAction', () => {
       writerAdapter.applyAction(bridge, doc, false, { action: 'insert', target: null, block: null }),
     ).rejects.toThrow(/content block/);
     await expect(
-      writerAdapter.applyAction(bridge, doc, false, { action: 'rewrite', target: null, block: [{ style: null, runs: [] }] }),
+      writerAdapter.applyAction(bridge, doc, false, { action: 'rewrite', module: 'writer', target: null, block: [{ style: null, runs: [] }] }),
     ).rejects.toThrow(/no active selection/);
     await expect(
-      writerAdapter.applyAction(bridge, doc, false, { action: 'delete-at', target: 9, block: null }),
+      writerAdapter.applyAction(bridge, doc, false, { action: 'delete-at', module: 'writer', target: 9, block: null }),
+    ).rejects.toThrow(/does not exist/);
+    expect(calls).toEqual([]);
+  });
+});
+/** Calc action grammar + the calc adapter's op mapping. */
+describe('calc adapter', () => {
+  const doc = {
+    editor: 'cell' as const,
+    sheets: [{ name: 'Sheet1', used: 'A1:B2', active: true }],
+    data: {
+      sheet: 'Sheet1',
+      range: 'A1:B2',
+      values: [['Name', 'Qty'], ['Widget', '2']],
+      formulas: [['', ''], ['', '']],
+      truncated: false,
+    },
+    selection: { ranges: ['B2:C3'], anchor: 'B2', values: [['', ''], ['', '']], truncated: false },
+  };
+
+  function recordingBridge(calls: Array<{ op: string; args: Record<string, unknown> }>) {
+    return {
+      async op<T>(name: string, args: Record<string, unknown> = {}): Promise<T> {
+        calls.push({ op: name, args });
+        return {} as T;
+      },
+    };
+  }
+
+  it('parses write-cells with an A1 anchor and a TSV grid', () => {
+    const reply = [
+      'Writing the block.',
+      '```calc',
+      'Name\tQty',
+      'Widget\t=SUM(B2:B10)',
+      '```',
+      '[ACTION: write-cells B2]',
+    ].join('\n');
+    const outcome = parseCalcAction(reply);
+    expect(outcome.module).toBe('calc');
+    expect(outcome.action).toBe('write-cells');
+    expect(outcome.address).toBe('B2');
+    expect(outcome.grid).toEqual([['Name', 'Qty'], ['Widget', '=SUM(B2:B10)']]);
+  });
+
+  it('parses insert-rows without content and keeps the selection anchor', async () => {
+    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
+    const bridge = recordingBridge(calls);
+    const outcome = parseCalcAction('Making room.\n[ACTION: insert-rows]');
+    expect(outcome.action).toBe('insert-rows');
+    expect(outcome.grid).toBeNull();
+    await calcAdapter.applyAction(bridge, doc, outcome);
+    // No tag address: the selection's top-left anchor is resolved companion-side.
+    expect(calls).toEqual([{ op: 'insertRows', args: { anchor: 'B2' } }]);
+  });
+
+  it('maps write-cells/rewrite to the writeCells op and insert-cols to insertCols', async () => {
+    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
+    const bridge = recordingBridge(calls);
+    const grid = [['a', 'b']];
+
+    await calcAdapter.applyAction(bridge, doc, parseCalcAction('```calc\na\tb\n```\n[ACTION: write-cells C1]'));
+    await calcAdapter.applyAction(bridge, doc, parseCalcAction('```calc\na\tb\n```\n[ACTION: rewrite]'));
+    await calcAdapter.applyAction(bridge, doc, parseCalcAction('[ACTION: insert-cols D4]'));
+
+    expect(calls.map((c) => c.op)).toEqual(['writeCells', 'writeCells', 'insertCols']);
+    expect(calls[0]?.args).toEqual({ anchor: 'C1', rows: grid });
+    // rewrite anchors at the selection's top-left when the tag has no address.
+    expect(calls[1]?.args).toEqual({ anchor: 'B2', rows: grid });
+    expect(calls[2]?.args).toEqual({ anchor: 'D4' });
+  });
+
+  it('throws before writing when content, anchor, or selection is missing', async () => {
+    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
+    const bridge = recordingBridge(calls);
+    const emptySel = { ...doc, selection: null };
+
+    await expect(
+      calcAdapter.applyAction(bridge, doc, parseCalcAction('[ACTION: write-cells B2]')),
+    ).rejects.toThrow(/content block/);
+    await expect(
+      calcAdapter.applyAction(bridge, emptySel, parseCalcAction('[ACTION: insert-rows]')),
+    ).rejects.toThrow(/A1 anchor/);
+    await expect(
+      calcAdapter.applyAction(bridge, emptySel, parseCalcAction('```calc\na\n```\n[ACTION: rewrite]')),
+    ).rejects.toThrow(/no selection/);
+    expect(calls).toEqual([]);
+  });
+});
+
+/** Impress action grammar + the impress adapter's op mapping. */
+describe('impress adapter', () => {
+  const doc = {
+    editor: 'slide' as const,
+    count: 2,
+    current: 0,
+    slides: [
+      { index: 0, current: true, title: 'First', bodyPreview: 'one', bodyParas: 2 },
+      { index: 1, current: false, title: null, bodyPreview: null, bodyParas: 0 },
+    ],
+    selectionText: null,
+  };
+
+  function recordingBridge(calls: Array<{ op: string; args: Record<string, unknown> }>) {
+    return {
+      async op<T>(name: string, args: Record<string, unknown> = {}): Promise<T> {
+        calls.push({ op: name, args });
+        return {} as T;
+      },
+    };
+  }
+
+  it('parses rewrite-slide with its content block (title first, then body)', () => {
+    const reply = [
+      'New outline.',
+      '```impress',
+      'New Title',
+      'first point',
+      'second point',
+      '```',
+      '[ACTION: rewrite-slide s1]',
+    ].join('\n');
+    const outcome = parseImpressAction(reply);
+    expect(outcome.module).toBe('impress');
+    expect(outcome.action).toBe('rewrite-slide');
+    expect(outcome.target).toBe(1);
+    expect(outcome.block).toEqual(['New Title', 'first point', 'second point']);
+  });
+
+  it('maps rewrite-slide and insert-after to the matching plugin ops', async () => {
+    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
+    const bridge = recordingBridge(calls);
+
+    await impressAdapter.applyAction(bridge, doc, parseImpressAction('```impress\nT\nb\n```\n[ACTION: rewrite-slide s1]'));
+    await impressAdapter.applyAction(bridge, doc, parseImpressAction('```impress\nT2\nb2\n```\n[ACTION: insert-after s0]'));
+
+    expect(calls.map((c) => c.op)).toEqual(['rewriteSlide', 'insertSlideAfter']);
+    expect(calls[0]?.args).toEqual({ index: 0, title: 'T', body: ['b'] });
+    // insert-after s0 = the very start: the new slide lands at index 0.
+    expect(calls[1]?.args).toEqual({ index: 0, title: 'T2', body: ['b2'] });
+  });
+
+  it('throws before writing when content or the slide address is invalid', async () => {
+    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
+    const bridge = recordingBridge(calls);
+
+    await expect(
+      impressAdapter.applyAction(bridge, doc, parseImpressAction('[ACTION: rewrite-slide s1]')),
+    ).rejects.toThrow(/content block/);
+    await expect(
+      impressAdapter.applyAction(bridge, doc, parseImpressAction('```impress\nT\n```\n[ACTION: rewrite-slide s9]')),
     ).rejects.toThrow(/does not exist/);
     expect(calls).toEqual([]);
   });

@@ -175,12 +175,37 @@ export function parseContentBlock(block: string): BlockParagraph[] {
   return paragraphs;
 }
 
-/** Extract the LAST fenced ```writer block from a reply (the operative
- * content; earlier echoes are dropped). Returns null when none. */
-const contentBlockRe = /```writer\s*\n([\s\S]*?)```/gi;
+/**
+ * Extract the LAST fenced content block of the given language from a
+ * reply (the operative content; earlier echoes are dropped). Returns
+ * null when none.
+ */
+const contentBlockRes = new Map<string, RegExp>();
 
-export function extractContentBlock(reply: string): string | null {
-  const fences = [...reply.matchAll(contentBlockRe)];
+export function extractContentBlock(reply: string, lang = 'writer'): string | null {
+  let re = contentBlockRes.get(lang);
+  if (!re) {
+    re = new RegExp('```' + lang + '\\s*\\n([\\s\\S]*?)```', 'gi');
+    contentBlockRes.set(lang, re);
+  }
+  const fences = [...reply.matchAll(re)];
   const last = fences[fences.length - 1];
   return last?.[1] ?? null;
+}
+
+/**
+ * Parse a ```calc content block into TSV rows: one sheet row per line,
+ * cells split on tabs. Action tags are protocol, never content — they
+ * are dropped wherever they appear. Trailing empty lines are removed.
+ */
+export function parseTsvBlock(block: string): string[][] {
+  const rows: string[][] = [];
+  for (const raw of block.replace(/\r\n/g, '\n').split('\n')) {
+    if (ACTION_TAG_LINE.test(raw)) continue;
+    rows.push(raw.split('\t'));
+  }
+  while (rows.length > 0 && (rows[rows.length - 1] ?? []).every((c) => c.trim() === '')) {
+    rows.pop();
+  }
+  return rows;
 }

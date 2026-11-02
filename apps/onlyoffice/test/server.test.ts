@@ -11,9 +11,11 @@ const API_TOKEN = 'test-api-token';
 
 /**
  * In-memory fake of the in-ONLYOFFICE plugin: overrides op() with the
- * same paragraph semantics as the real callCommand ops (insert = fresh
- * paragraphs below the cursor, rewrite-at = replace, delete-at =
- * remove) so the whole multi-action loop runs without the editor.
+ * same semantics as the real callCommand ops (insert = fresh paragraphs
+ * below the cursor, rewrite-at = replace, delete-at = remove; writeCells
+ * splices the TSV rows at the anchor, insertRows/Cols splice an empty
+ * row/column; rewriteSlide/insertSlideAfter mutate the deck) so the
+ * whole multi-action loop runs without the editor.
  */
 class FakePluginBridge extends PluginBridge {
   paragraphs: Array<{ text: string; style: string | null }> = [
@@ -23,20 +25,83 @@ class FakePluginBridge extends PluginBridge {
   editor: 'word' | 'cell' | 'slide' = 'word';
   edits: Array<{ op: string; args: Record<string, unknown> }> = [];
   selection: { selectionType: string; selectedText: string } = { selectionType: 'none', selectedText: '' };
-  undoResult: { undone?: boolean; error?: string } = { undone: true };
+  undoResult: { undone?: boolean; reason?: string; error?: string } = { undone: true };
+  /** Cell state: a small grid + the selection the editor would report. */
+  cells: string[][] = [['Name', 'Qty'], ['Widget', '2']];
+  cellSelection: { ranges: string[]; anchor: string; values: string[][] } | null = {
+    ranges: ['B2:C3'],
+    anchor: 'B2',
+    values: [['', ''], ['', '']],
+  };
+  /** Slide state: title + body lines per slide. */
+  slides: Array<{ title: string | null; body: string[] }> = [
+    { title: 'First slide', body: ['one', 'two'] },
+    { title: 'Second slide', body: [] },
+  ];
+  currentSlide = 0;
   private cursorAt = 0;
 
   override isConnected(): boolean {
     return true;
   }
 
-  private doc(): WriterDocument {
+  private a1ToRC(a1: string): { row: number; col: number } {
+    const m = /^([A-Za-z]+)([0-9]+)$/.exec(a1);
+    if (!m || !m[1] || !m[2]) throw new Error('bad anchor ' + a1);
+    let col = 0;
+    for (const ch of m[1]) col = col * 26 + (ch.charCodeAt(0) & 31);
+    return { row: Number.parseInt(m[2], 10) - 1, col: col - 1 };
+  }
+
+  private wordDoc(): WriterDocument {
     return {
-      editor: this.editor,
+      editor: 'word',
       paragraphs: this.paragraphs.length,
       texts: this.paragraphs.map((p) => p.text),
       styles: this.paragraphs.map((p) => p.style),
       selection: this.selection,
+    };
+  }
+
+  private cellDoc() {
+    const cols = Math.max(...this.cells.map((r) => r.length));
+    const colName = (n: number): string => {
+      let s = '';
+      let x = n + 1;
+      while (x > 0) {
+        const rem = (x - 1) % 26;
+        s = String.fromCharCode(65 + rem) + s;
+        x = Math.floor((x - 1) / 26);
+      }
+      return s;
+    };
+    return {
+      editor: 'cell' as const,
+      sheets: [{ name: 'Sheet1', used: `A1:${colName(cols - 1)}${this.cells.length}`, active: true }],
+      data: {
+        sheet: 'Sheet1',
+        range: `A1:${colName(cols - 1)}${this.cells.length}`,
+        values: this.cells,
+        formulas: null,
+        truncated: false,
+      },
+      selection: this.cellSelection,
+    };
+  }
+
+  private slideDoc() {
+    return {
+      editor: 'slide' as const,
+      count: this.slides.length,
+      current: this.currentSlide,
+      slides: this.slides.map((s, i) => ({
+        index: i,
+        current: i === this.currentSlide,
+        title: s.title,
+        bodyPreview: s.body[0] ?? null,
+        bodyParas: s.body.length,
+      })),
+      selectionText: null,
     };
   }
 
@@ -51,7 +116,10 @@ class FakePluginBridge extends PluginBridge {
       case 'ping':
         return { pong: true, editor: this.editor } as T;
       case 'context':
-        return this.doc() as T;
+        if (this.editor === 'word') return this.wordDoc() as T;
+        if (this.editor === 'cell') return this.cellDoc() as T;
+        if (this.editor === 'slide') return this.slideDoc() as T;
+        return { editor: this.editor } as T;
       case 'selection':
         return this.selection as T;
       case 'undo':
@@ -80,6 +148,41 @@ class FakePluginBridge extends PluginBridge {
       case 'rewriteSelection': {
         this.paragraphs.splice(this.cursorAt, 1, ...plain);
         return { pasted: true } as T;
+      }
+      case 'writeCells': {
+        const { row, col } = this.a1ToRC(args.anchor as string);
+        const rows = args.rows as string[][];
+        while (this.cells.length < row + rows.length) this.cells.push([]);
+        rows.forEach((cells, r) => {
+          const target = this.cells[row + r] ?? (this.cells[row + r] = []);
+          cells.forEach((value, c) => {
+            target[col + c] = value;
+          });
+        });
+        return { rows: rows.length, anchor: args.anchor } as T;
+      }
+      case 'insertRows': {
+        const { row } = this.a1ToRC(args.anchor as string);
+        this.cells.splice(row, 0, []);
+        return { anchor: args.anchor } as T;
+      }
+      case 'insertCols': {
+        const { col } = this.a1ToRC(args.anchor as string);
+        this.cells.forEach((r) => r.splice(col, 0, ''));
+        return { anchor: args.anchor } as T;
+      }
+      case 'rewriteSlide': {
+        const index = args.index as number;
+        const slide = this.slides[index];
+        if (!slide) throw new Error(`slide index ${index} out of range`);
+        slide.title = args.title as string;
+        if ((args.body as string[]).length > 0) slide.body = args.body as string[];
+        return { count: this.slides.length } as T;
+      }
+      case 'insertSlideAfter': {
+        const index = args.index as number;
+        this.slides.splice(index, 0, { title: args.title as string, body: args.body as string[] });
+        return { count: this.slides.length, insertedAt: index } as T;
       }
       default:
         throw new Error(`fake bridge: unknown op '${name}'`);
@@ -257,9 +360,92 @@ describe('server (fake agent + fake plugin bridge)', () => {
     }
   });
 
-  it('blocks messages for non-Writer editors with a clear error', async () => {
+  it('undo reports the Ctrl+Z hint when the plugin honestly says undone:false (v0.3)', async () => {
+    const bridge = new FakePluginBridge();
+    bridge.undoResult = { undone: false, reason: 'no plugin undo API — use Ctrl+Z in the editor' };
+    const { url, close } = await serve({ bridge });
+    try {
+      const session = (await (await fetch(`${url}/api/session`, { method: 'POST', headers })).json()) as { sessionId: string };
+      const undo = (await (
+        await fetch(`${url}/api/session/${session.sessionId}/undo`, { method: 'POST', headers })
+      ).json()) as { ok: boolean; reason: string };
+      expect(undo.ok).toBe(false);
+      expect(undo.reason).toMatch(/Ctrl\+Z/);
+    } finally {
+      close();
+    }
+  });
+
+  it('runs a calc multi-action loop through the cell module', async () => {
     const bridge = new FakePluginBridge();
     bridge.editor = 'cell';
+    const scripted = [
+      'Writing the block.\n```calc\nName\tQty\nGadget\t=SUM(B2:B10)\n```\n[ACTION: write-cells B2]',
+      'Making room above row 2.\n[ACTION: insert-rows A2]',
+      'The sheet now holds the data.',
+    ];
+    const { url, close } = await serve({ bridge, replies: scripted });
+    try {
+      const created = await fetch(`${url}/api/session`, { method: 'POST', headers });
+      const res = await fetch(`${url}/api/session/${(await created.json() as { sessionId: string }).sessionId}/message/stream`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ message: 'Write the block at B2, then insert a row above row 2.' }),
+      });
+      const frames = sseFrames(await res.text());
+      const applied = frames.filter((f) => 'applied' in f);
+      expect(applied.map((f) => f['applied'])).toEqual(['write-cells', 'insert-rows']);
+      expect(applied[0]).toMatchObject({ applied: 'write-cells', module: 'calc' });
+      // Calc addressing rides in `address`, not `target`.
+      expect(applied[0]).toMatchObject({ address: 'B2' });
+      expect(frames[frames.length - 1]).toEqual({ done: true });
+
+      // The fake plugin applied both edits with A1 anchoring; the inserted
+      // empty row (above row 2) shifted the written block down one row.
+      const ops = bridge.edits.filter((e) => e.op !== 'context').map((e) => e.op);
+      expect(ops).toEqual(['writeCells', 'insertRows']);
+      expect(bridge.cells[2]).toContain('Name');
+      expect(bridge.cells[3]).toContain('Gadget');
+    } finally {
+      close();
+    }
+  });
+
+  it('runs a slide loop: rewrite a slide, then insert one at the start', async () => {
+    const bridge = new FakePluginBridge();
+    bridge.editor = 'slide';
+    const scripted = [
+      'New outline.\n```impress\nRenamed\nfirst point\nsecond point\n```\n[ACTION: rewrite-slide s1]',
+      'Adding the opening slide.\n```impress\nOpening\nwelcome\n```\n[ACTION: insert-after s0]',
+      'The deck is ready.',
+    ];
+    const { url, close } = await serve({ bridge, replies: scripted });
+    try {
+      const created = await fetch(`${url}/api/session`, { method: 'POST', headers });
+      const res = await fetch(`${url}/api/session/${(await created.json() as { sessionId: string }).sessionId}/message/stream`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ message: 'Rewrite slide 1, then add an opening slide at the very start.' }),
+      });
+      const frames = sseFrames(await res.text());
+      const applied = frames.filter((f) => 'applied' in f);
+      expect(applied.map((f) => f['applied'])).toEqual(['rewrite-slide', 'insert-after']);
+      expect(applied[0]).toMatchObject({ applied: 'rewrite-slide', target: 's1', module: 'impress' });
+      expect(frames[frames.length - 1]).toEqual({ done: true });
+
+      // The fake plugin rewrote slide 0 and inserted the new slide at index 0.
+      const ops = bridge.edits.filter((e) => e.op !== 'context').map((e) => e.op);
+      expect(ops).toEqual(['rewriteSlide', 'insertSlideAfter']);
+      expect(bridge.slides[0]?.title).toBe('Opening');
+      expect(bridge.slides[1]?.title).toBe('Renamed');
+    } finally {
+      close();
+    }
+  });
+
+  it('blocks messages for unknown editor types with a clear error', async () => {
+    const bridge = new FakePluginBridge();
+    bridge.editor = 'other' as FakePluginBridge['editor'];
     const { url, close } = await serve({ bridge, replies: [] });
     try {
       const session = (await (await fetch(`${url}/api/session`, { method: 'POST', headers })).json()) as { sessionId: string };
@@ -271,7 +457,7 @@ describe('server (fake agent + fake plugin bridge)', () => {
       // readStep refusals answer as plain JSON before the SSE stream starts.
       expect(res.status).toBe(400);
       const body = (await res.json()) as { error: string };
-      expect(body.error).toMatch(/ONLY Writer documents/i);
+      expect(body.error).toMatch(/Writer, Spreadsheet, and Presentation/i);
     } finally {
       close();
     }

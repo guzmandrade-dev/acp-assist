@@ -18,6 +18,7 @@ const OUTLINE_ONLY_BODY_LIMIT = 16_000;
 
 /** A parsed writer action plus its content block. */
 export interface WriterOutcome {
+  module: 'writer';
   action:
     | 'none' | 'continue'
     | 'insert' | 'insert-top' | 'insert-after' | 'rewrite' | 'rewrite-at' | 'delete-at';
