@@ -273,6 +273,15 @@ export interface CompanionServerOptions<TState = unknown> {
     wrap: WrapFn;
     getSession: (id: string | string[] | undefined) => CompanionSession<TState>;
   }) => void;
+  /**
+   * Routes registered BEFORE the API auth guard (after the statics).
+   * For endpoints whose clients cannot hold the bearer token — the
+   * ONLYOFFICE in-editor plugin (a file:// iframe with no secret
+   * delivery channel) connects OUT to /bridge/* long-polls. The server
+   * binds 127.0.0.1 only; keep such routes strictly localhost-facing
+   * and document why the guard must not apply.
+   */
+  preAuthRoutes?: (app: express.Express) => void;
 }
 
 export function createCompanionServer<TState>(
@@ -295,6 +304,8 @@ export function createCompanionServer<TState>(
     app.use(express.static(options.assetsDir, { maxAge: 0, etag: false, lastModified: false }));
   }
   app.use(express.static(publicDir, { maxAge: 0, etag: false, lastModified: false }));
+  // App routes that live BEFORE the auth guard (see the option comment).
+  options.preAuthRoutes?.(app);
   app.use(createApiAuthGuard(apiToken));
 
   const sessions = new Map<string, CompanionSession<TState>>();
