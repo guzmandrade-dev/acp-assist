@@ -7,6 +7,7 @@ import {
   docEl,
   docSelect,
   selectionEl,
+  APP,
 } from './state.js';
 import { api } from './api.js';
 import { addSystemMessage, renderConversation } from './messages.js';
@@ -30,6 +31,7 @@ export async function refreshSelection() {
 
 export function updateDocSelector(active, documents) {
   docSelect.innerHTML = '';
+  docSelect.title = `Active ${APP} document`;
   for (const p of documents) {
     const opt = document.createElement('option');
     opt.value = p;
