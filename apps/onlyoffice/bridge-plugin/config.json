@@ -1,0 +1,22 @@
+{
+    "name": "ACP Assist Bridge",
+    "guid": "asc.{7E2F9A41-6B3C-4D58-9E7A-1F4B8C6D2E39}",
+    "version": "0.1.0",
+    "variations": [
+        {
+            "description": "ACP Assist bridge to the companion panel",
+            "url": "index.html",
+            "icons": ["resources/icon.png", "resources/icon@2x.png"],
+            "isViewer": false,
+            "EditorsSupport": ["word", "cell", "slide"],
+            "isVisual": true,
+            "isModal": false,
+            "isInsideMode": true,
+            "isSystem": false,
+            "initDataType": "none",
+            "initData": "",
+            "isUpdateOleOnResize": false,
+            "buttons": []
+        }
+    ]
+}
