@@ -44,6 +44,13 @@ export interface ElectronMainOptions {
   appDistDir: string;
   /** Per-app asset overrides (logo.svg); passed through to createServer. */
   assetsDir?: string;
+  /**
+   * Fixed default listen port (used when the PORT env override is
+   * absent). Default: 0 = OS-assigned. The ONLYOFFICE app pins a
+   * well-known port because its in-editor plugin connects OUT to the
+   * companion and cannot read a discovery record.
+   */
+  listenPort?: number;
   /** Build the app's Express server (paths under userData provided). */
   createServer: (paths: {
     publicDir: string;
@@ -149,9 +156,13 @@ export function createElectronMain(options: ElectronMainOptions): void {
       logDir: path.join(userDataDir, 'logs'),
     });
 
-    // Dynamic port (discovery-first rule; multiple companion instances
-    // are first-class): bind :0 and report the URL; PORT overrides for tests.
-    const port = process.env.PORT ? Number.parseInt(process.env.PORT, 10) : 0;
+    // Dynamic port by default (discovery-first rule; multiple companion
+    // instances are first-class): bind :0 and report the URL; PORT
+    // overrides for tests. listenPort = an app's FIXED default (the
+    // ONLYOFFICE plugin connects to a well-known port).
+    const port = process.env.PORT
+      ? Number.parseInt(process.env.PORT, 10)
+      : (options.listenPort ?? 0);
     await new Promise<void>((resolve) => {
       httpServer = server.listen(port, '127.0.0.1', () => resolve());
     });
