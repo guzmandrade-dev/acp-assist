@@ -16,4 +16,5 @@ next-steps.md
 
 # OS junk
 .DS_Store
-Thumbs.db
+Thumbs.db# ONLYOFFICE packaged plugin artifact (built by Compress-Archive)
+*.plugin

@@ -1,0 +1,22 @@
+{
+    "name": "ACP Assist Probe",
+    "guid": "asc.{B4F7A1C2-3D4E-4F5A-9B6C-7D8E9F0A1B2C}",
+    "version": "0.1.0",
+    "variations": [
+        {
+            "description": "ACP Assist Phase 0 probe",
+            "url": "index.html",
+            "icons": ["resources/icon.png", "resources/icon@2x.png"],
+            "isViewer": false,
+            "EditorsSupport": ["word", "cell", "slide"],
+            "isVisual": true,
+            "isModal": false,
+            "isInsideMode": true,
+            "isSystem": false,
+            "initDataType": "none",
+            "initData": "",
+            "isUpdateOleOnResize": false,
+            "buttons": []
+        }
+    ]
+}
