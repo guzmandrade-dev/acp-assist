@@ -1,0 +1,45 @@
+{
+  "name": "onlyoffice-acp-assist",
+  "version": "0.1.0",
+  "description": "Copilot-for-Word-style LLM assistant for ONLYOFFICE Desktop Editors: ACP agent companion with an in-editor plugin bridge.",
+  "author": {
+    "name": "guzmandrade-dev",
+    "email": "117118816+guzmandrade-dev@users.noreply.github.com"
+  },
+  "type": "module",
+  "main": "./dist/electron/main.js",
+  "scripts": {
+    "build": "npm run build -w @acp-assist/panel && npm run build -w @acp-assist/core && tsc && tsc -p tsconfig.preload.json",
+    "dev": "tsc --watch",
+    "typecheck": "npm run build -w @acp-assist/panel && npm run build -w @acp-assist/core && tsc --noEmit",
+    "start": "npm run build && electron ./dist/electron/main.js",
+    "test": "npm run build -w @acp-assist/panel && npm run build -w @acp-assist/core && vitest run",
+    "test:watch": "vitest",
+    "package:plugin": "node scripts/package-plugin.mjs"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/guzmandrade-dev/acp-assist.git",
+    "directory": "apps/onlyoffice"
+  },
+  "homepage": "https://github.com/guzmandrade-dev/acp-assist#readme",
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.1.1",
+    "electron": "44.9.3",
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^1.7.0",
+    "@acp-assist/core": "*",
+    "@acp-assist/panel": "*",
+    "express": "^5.2.1",
+    "zod": "^4.6.5"
+  }
+}

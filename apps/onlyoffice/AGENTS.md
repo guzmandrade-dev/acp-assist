@@ -115,6 +115,48 @@ restart with `node server.mjs`). Live-tested end-to-end in Writer:
     `\r\n` endings — the bridge normalizes them before returning to
     the companion.
 
+## Phase 2 companion (2026-11-01 night) — verified live end-to-end
+
+Product code: `apps/onlyoffice` (npm workspace `onlyoffice-acp-assist`);
+companion = core `createCompanionServer` + the OO `CompanionBackend`
+(`src/server.ts`) + `src/bridge/plugin-bridge.ts` (the plugin-facing
+endpoints). Bridge plugin v0.2 installed in the user's editors
+(styles, port field, camelCase ops). **FULL E2E VERIFIED LIVE with
+vibe-acp**: panel message → context read → agent reply with
+`[ACTION: insert-top]` → heading+paragraph landed in the document
+(agent re-read confirmed [p1] "Bridge Test Results", [p2] the body);
+a second `[ACTION: none]` round-trip listed the document correctly.
+18/18 vitest with a fake plugin bridge; LyX + LO suites still green.
+
+18. **The core auth guard blocks non-/api routes too** — the plugin's
+    long-poll endpoints sat behind the bearer token + the OPTIONS
+    preflight (which never carries credentials) 401'd. Fix: core
+    `CompanionServerOptions.preAuthRoutes` registers routes BEFORE the
+    guard; the OO app registers `/bridge/*` there (v1 trade-off: the
+    plugin is a file:// iframe with no secret delivery channel, so the
+    bridge routes are unauthenticated; server binds 127.0.0.1 only;
+    follow-up = deliver the token to the plugin via the served
+    /panel-boot.js and re-enable auth).
+19. **`executeCommand("command", "window.Asc.editor.asc_Undo();")` is
+    a silent no-op**: it does not throw (the plugin's undo op reports
+    `undone:true`) but the document is NOT reverted (verified live:
+    panel Undo button said "Undo sent to ONLYOFFICE", paragraphs
+    remained). v1's honest behavior should be `{undone:false}` so the
+    companion shows the Ctrl+Z hint. NOT yet fixed — the plugin needs
+    a v0.2.1 bump + reinstall. Ctrl+Z always works (one step per edit).
+20. **Companion port is fixed 8790** (the plugin has a port field,
+    default 8790, persisted in localStorage): Electron gets a pinned
+    default via the new panel-package `listenPort` option (PORT env
+    still overrides); dev runs use `PORT=8790 node dist/standalone.js`.
+21. Editor restarts do NOT lose the connection: the v0.2 plugin
+    re-hellos on its 3s retry loop and the companion's
+    `isConnected()` (hello + fresh long-poll within 30s) flips true
+    again. Killing a dev companion leaves stale keep-alive sockets —
+    always find the LISTENING PID (`netstat -ano`) and kill by PID.
+22. Panel shared strings were LO-hardcoded (doc-select title, composer
+    hint, undo title, boot status text) — now parameterized
+    (`CONFIG.appName`); the OO panel reads "ONLYOFFICE connected".
+
 ## Probe artifacts (spike/)
 
 - `probe-plugin/` — the probe plugin sources (config.json, index.html,
