@@ -1,7 +1,7 @@
 {
     "name": "ACP Assist Bridge",
     "guid": "asc.{7E2F9A41-6B3C-4D58-9E7A-1F4B8C6D2E39}",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "variations": [
         {
             "description": "ACP Assist bridge to the companion panel",
