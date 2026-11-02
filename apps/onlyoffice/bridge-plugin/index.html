@@ -8,15 +8,23 @@
     <style>
         body { font: 12px Arial; margin: 8px; }
         #status { margin-bottom: 6px; }
+        #row-port { margin-bottom: 6px; display: flex; align-items: center; gap: 4px; }
+        #row-port input { width: 70px; padding: 2px 4px; font: inherit; }
+        #row-port button { padding: 2px 8px; font: inherit; }
         .ok { color: #070; } .err { color: #c00; }
         #log { white-space: pre-wrap; word-break: break-all;
-               background: #f0f0f0; padding: 4px; height: 260px; overflow: auto;
+               background: #f0f0f0; padding: 4px; height: 220px; overflow: auto;
                font: 11px monospace; }
     </style>
     <script type="text/javascript" src="scripts/code.js"></script>
 </head>
 <body>
     <div id="status">connecting…</div>
+    <div id="row-port">
+        <label for="port">Companion port</label>
+        <input id="port" type="number" min="1" max="65535" value="8790">
+        <button id="b-reconnect" type="button">Reconnect</button>
+    </div>
     <div id="log"></div>
 </body>
 </html>
