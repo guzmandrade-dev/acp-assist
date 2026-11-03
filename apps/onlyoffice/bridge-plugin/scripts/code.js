@@ -1,5 +1,5 @@
 /*
- * ACP Assist Bridge v0.3 (apps/onlyoffice/bridge-plugin).
+ * ACP Assist Bridge v0.3.5 (apps/onlyoffice/bridge-plugin).
  * Dumb transport, same contract as the LibreOffice .oxt bridge: the
  * plugin carries JSON between the editor and the companion; ALL
  * intelligence lives in the companion. The companion owns the port —
@@ -67,8 +67,15 @@
 
     function cmd(fn) {
         return new Promise(function (resolve) {
+            // Safety timeout: a stuck callCommand rejects instead of
+            // wedging the whole long-poll loop forever (verified live:
+            // an unbounded clear loop froze the editor thread once).
+            var settled = false;
+            var timer = setTimeout(function () {
+                if (!settled) { settled = true; resolve({ error: "callCommand timeout (30s)" }); }
+            }, 30000);
             window.Asc.plugin.callCommand(fn, false, false, function (v) {
-                resolve(v);
+                if (!settled) { settled = true; clearTimeout(timer); resolve(v); }
             });
         });
     }
@@ -163,9 +170,12 @@
                 if (typeof Api.GetSheets === "function" &&
                         Api.GetSheets().length > 0) return "cell";
             } catch (e) {}
+            // Slide marker is Api.GetPresentation() — Api.GetCurrentSlide is
+            // an ApiPresentation method, NOT global Api (verified live: a
+            // presentation detected as "word" with the old probe).
             try {
-                if (typeof Api.GetCurrentSlide === "function" &&
-                        Api.GetCurrentSlide()) return "slide";
+                if (typeof Api.GetPresentation === "function" &&
+                        Api.GetPresentation()) return "slide";
             } catch (e) {}
             return "word";
         });
@@ -256,20 +266,47 @@
     /*
      * Source of the shape-text writer: replaces ALL paragraphs of the
      * shape's content with the given lines (one paragraph per line).
+     * RemoveAllElements first (documented); the RemoveElement fallback
+     * is BOUNDED so a placeholder shape whose count does not shrink
+     * can never spin forever (verified live: the unbounded loop froze
+     * the editor's document thread once).
      */
     var SET_SHAPE_PARAS_SRC =
         "function setShapeParas(shape, lines) {" +
         "  var content = shape.GetContent();" +
         "  if (!content) return false;" +
-        "  try {" +
-        "    while (content.GetElementsCount() > 0) { content.RemoveElement(0); }" +
-        "  } catch (e) {" +
-        "    try { content.RemoveAllElements(); } catch (e2) {}" +
+        "  var cleared = false;" +
+        "  try { cleared = content.RemoveAllElements(); } catch (e0) { cleared = false; }" +
+        "  if (!cleared) {" +
+        "    for (var i = 0; i < 500; i++) {" +
+        "      var n = 0;" +
+        "      try { n = content.GetElementsCount(); } catch (e1) { break; }" +
+        "      if (n <= 0) break;" +
+        "      try { content.RemoveElement(0); } catch (e2) { break; }" +
+        "    }" +
         "  }" +
-        "  for (var i = 0; i < lines.length; i++) {" +
+        "  for (var j = 0; j < lines.length; j++) {" +
         "    var p = Api.CreateParagraph();" +
-        "    p.AddText(lines[i]);" +
-        "    content.AddElement(p);" +
+        "    p.AddText(lines[j]);" +
+        // Push(element) is the one-arg append; AddElement takes (pos, el)
+        // (verified live: AddElement(el) alone was a silent no-op).
+        "    var ok = false;" +
+        "    try { ok = content.Push(p); } catch (e3) { ok = false; }" +
+        "    if (!ok) { try { content.AddElement(content.GetElementsCount(), p); ok = true; } catch (e4) {} }" +
+        "    if (!ok) return false;" +
+        "  }" +
+        // Placeholder contents re-grow empty paragraphs around writes
+        // (verified live: titles read back as "\n\n<text>"). Trim leading
+        // empty paragraphs so the written text is the first paragraph.
+        "  for (var k = 0; k < 500; k++) {" +
+        "    if (content.GetElementsCount() <= lines.length) break;" +
+        "    var el0 = null;" +
+        "    try { el0 = content.GetElement(0); } catch (e5) { break; }" +
+        "    if (!el0) break;" +
+        "    var t0 = '';" +
+        "    try { t0 = String(el0.GetText()); } catch (e6) {}" +
+        "    if (t0.trim() !== '') break;" +
+        "    try { content.RemoveElement(0); } catch (e7) { break; }" +
         "  }" +
         "  return true;" +
         "}";
@@ -298,10 +335,12 @@
             "}" +
             "var CAP_R = 200, CAP_C = 40;" +
             "var data = null, selection = null;" +
+            // GetRow()/GetCol() are 1-based (verified live, AGENTS.md rule
+            // 23a): a used range of A1:B2 reports row 1 / col 1.
             "try {" +
             "  var ur2 = active.GetUsedRange();" +
             "  if (ur2) {" +
-            "    var r0 = ur2.GetRow(), c0 = ur2.GetCol();" +
+            "    var r0 = Math.max(0, ur2.GetRow() - 1), c0 = Math.max(0, ur2.GetCol() - 1);" +
             "    var nr = ur2.GetRowsCount(), nc = ur2.GetColumnsCount();" +
             "    var rend = Math.min(nr, CAP_R), cend = Math.min(nc, CAP_C);" +
             "    var values = [], formulas = [];" +
@@ -325,7 +364,7 @@
             "try {" +
             "  var sel = active.GetSelection();" +
             "  if (sel) {" +
-            "    var sr = sel.GetRow(), sc = sel.GetCol();" +
+            "    var sr = Math.max(0, sel.GetRow() - 1), sc = Math.max(0, sel.GetCol() - 1);" +
             "    var snr = sel.GetRowsCount(), snc = sel.GetColumnsCount();" +
             "    var srend = Math.min(snr, CAP_R), scend = Math.min(snc, CAP_C);" +
             "    var svals = [];" +
@@ -360,17 +399,20 @@
             "var slides = [];" +
             "for (var i = 0; i < count && i < 200; i++) {" +
             "  var sl = pres.GetSlideByIndex(i);" +
-            "  var title = null, bodyRaw = null;" +
+            "  var title = null, bodyRaw = null, hasTitle = false, hasBody = false;" +
             "  try {" +
             "    var ts = sl.GetDrawingsByPlaceholderType('title');" +
             "    if (!ts || !ts.length) ts = sl.GetDrawingsByPlaceholderType('ctrTitle');" +
-            "    if (ts && ts.length) { var t = shapeText(ts[0]); title = t ? t : null; }" +
+            "    hasTitle = !!(ts && ts.length);" +
+            "    if (hasTitle) { var t = shapeText(ts[0]); title = t ? t : null; }" +
             "  } catch (e) {}" +
             "  try {" +
             "    var bs = sl.GetDrawingsByPlaceholderType('body');" +
-            "    if (bs && bs.length) { var bt = shapeText(bs[0]); bodyRaw = bt ? bt : null; }" +
+            "    hasBody = !!(bs && bs.length);" +
+            "    if (hasBody) { var bt = shapeText(bs[0]); bodyRaw = bt ? bt : null; }" +
             "  } catch (e2) {}" +
-            "  slides.push({ index: i, current: i === cur, title: title, bodyRaw: bodyRaw });" +
+            "  slides.push({ index: i, current: i === cur, title: title," +
+            "    bodyRaw: bodyRaw, hasTitle: hasTitle, hasBody: hasBody });" +
             "}" +
             "return { count: count, current: cur, slides: slides };"
         )).then(function (r) {
@@ -384,6 +426,8 @@
                     title: s.title ? norm(s.title) : null,
                     bodyPreview: lines[0] || null,
                     bodyParas: lines.length,
+                    hasTitle: !!s.hasTitle,
+                    hasBody: !!s.hasBody,
                 };
             });
             return selectionSnapshot().then(function (sel) {
@@ -584,22 +628,25 @@
             Asc.scope.title = String(args.title || "");
             Asc.scope.body = (args.body || []).map(String);
             return cmd(new Function(
-                SHAPE_TEXT_SRC +
                 SET_SHAPE_PARAS_SRC +
                 "var pres = Api.GetPresentation();" +
                 "var sl = pres.GetSlideByIndex(Asc.scope.index);" +
                 "if (!sl) return { error: 'slide index ' + Asc.scope.index + ' out of range' };" +
+                // Look everything up FIRST; a missing frame must fail
+                // BEFORE any write lands (no partial writes on error).
                 "var ts = sl.GetDrawingsByPlaceholderType('title');" +
                 "if (!ts || !ts.length) ts = sl.GetDrawingsByPlaceholderType('ctrTitle');" +
-                "if (!ts || !ts.length) return { error: 'slide has no title placeholder' };" +
-                "if (Asc.scope.title && !setShapeParas(ts[0], [Asc.scope.title]))" +
-                "  return { error: 'title frame is not writable' };" +
-                "if (Asc.scope.body.length) {" +
-                "  var bs = sl.GetDrawingsByPlaceholderType('body');" +
-                "  if (!bs || !bs.length) return { error: 'slide has no body placeholder' };" +
-                "  if (!setShapeParas(bs[0], Asc.scope.body))" +
-                "    return { error: 'body frame is not writable' };" +
+                "if ((!ts || !ts.length) && Asc.scope.title) {" +
+                "  return { error: 'slide has no title placeholder' };" +
                 "}" +
+                "var bs = sl.GetDrawingsByPlaceholderType('body');" +
+                "if ((!bs || !bs.length) && Asc.scope.body.length) {" +
+                "  return { error: 'slide has no body placeholder' };" +
+                "}" +
+                "if (ts && ts.length && Asc.scope.title && !setShapeParas(ts[0], [Asc.scope.title]))" +
+                "  return { error: 'title frame is not writable' };" +
+                "if (bs && bs.length && Asc.scope.body.length && !setShapeParas(bs[0], Asc.scope.body))" +
+                "  return { error: 'body frame is not writable' };" +
                 "return { count: pres.GetSlidesCount() };"
             )).then(function (r) {
                 if (r.error) throw new Error(r.error);
@@ -749,7 +796,7 @@
             editorType = t;
             status("connecting (" + t + ")…");
             return post("/bridge/hello", {
-                plugin: "acp-bridge", version: "0.3.0", editor: t
+                plugin: "acp-bridge", version: "0.3.5", editor: t
             });
         }).then(function () {
             pollOnce();

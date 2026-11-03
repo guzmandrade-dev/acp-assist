@@ -17,9 +17,9 @@ import { appendFileSync, writeFileSync, existsSync, readFileSync } from "node:fs
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
-const PORT = 8792;
+const PORT = Number(process.env.PORT || 8792);
 const HERE = dirname(fileURLToPath(import.meta.url));
-const LOG = join(HERE, "bridge-server.log");
+const LOG = join(HERE, `bridge-server-${PORT}.log`);
 if (!existsSync(LOG)) writeFileSync(LOG, "");
 
 const state = { hello: null, results: 0, events: 0, lastResult: null, lastEvent: null };
