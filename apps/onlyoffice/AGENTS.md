@@ -352,6 +352,76 @@ setTransition) driven through `spike/probe-server/server.mjs`
     both, rule 31). Placeholder lookup in any new op must check
     `title` AND `ctrTitle`.
 
+## v0.4 design surface (2026-11-03) — built from the P5 probe findings
+
+Bridge plugin v0.4.0 + companion impress adapter (plugin + companion
+ship together — the slide-content WIRE changed: title/body are now
+{text, style?} objects, plain strings still tolerated plugin-side):
+
+- **New impress actions**: `[ACTION: insert-image sN]` (http(s)/data-URI
+  sources, `at:`/`size:` with %-/in-/EMU measurements, defaults 20%
+  wide centered on the current slide), `[ACTION: set-background sN]`
+  (solid/gradient/image), `[ACTION: add-notes sN]`,
+  `[ACTION: delete-slide sN]`. Per-line run styling in every slide
+  content line: `{bold; italic; size=28; color=#rrggbb; font=Georgia}`
+  prefix (tolerant — unknown attrs ignored). The slide context now
+  reports per-slide image counts.
+- **setShapeParas v2** (plugin source): structured {t, st} lines, every
+  run setter guarded, hex→RGB in-source; `forceBlack` (rule 35) now
+  applies per line only when the line has NO explicit color — so a
+  styled synthetic line with `color=` keeps its color.
+- **insertImage op** embeds correctly but RENDERS only after save+
+  reopen (rule 41) — the adapter's action description carries that
+  hint and the agent instructions tell it to say so in the reply.
+- **setBackground** repaints live (rule 42) — no reopen needed.
+- **setTransition is NOT an action** (the factory's parameter shape is
+  undocumented; probed only as availability). Theme/layout application
+  stays OUT (rule 43 corruption).
+- Gates: OO 34/34 vitest (+6: style prefix, image-block parsing +
+  validation + defaults, background parsing, add-notes/delete-slide
+  mapping, structured-line wire), typechecks clean.
+
+## v0.4 LIVE VERIFICATION (2026-11-03, plugin v0.4.2 + companion fix)
+
+Every new v0.4 action ran through the REAL companion (Electron, 8790)
++ vibe-acp and was VISUALLY verified (rule 35) in the user's editor:
+styled rewrite-slide (title "Modern Deck": LARGE bold orange Georgia —
+44pt now correct after the half-point fix, italic body line),
+set-background s1 (white→ff6f3d radial gradient visible on canvas AND
+thumbnail IMMEDIATELY — rule 42 confirmed in the product),
+insert-image s1 (logo embedded; empty frame until save+reopen —
+rule 41 confirmed; renders after reopen, user-verified),
+add-notes s1 (visible in the notes pane), and delete-slide s1 (the
+agent used it unprompted in a multi-action run — old blank slide
+deleted, styled slide survived). The multi-action loop carried the
+new actions cleanly.
+
+The live pass caught three more real bugs — all fixed + re-verified:
+
+46. **The /bridge/next poll-swallowing bug (COMPANION)**: the old
+    timeout handler only responded `if (this.waiter)` — with two
+    overlapping long-polls (a stale fetch from before a reconnect),
+    the first timer nullified the second's waiter, so the second
+    poll's fetch HUNG FOREVER: the plugin's poll loop died while its
+    status text still said "connected", and the companion refused
+    every message. Fix: every poll now gets EXACTLY ONE response
+    from ITS OWN timer (`wrapper`/`mine` closures in
+    plugin-bridge.ts); overlapping polls are safe (each responds on
+    its own schedule). This likely explains several earlier
+    "connected but bridgeAvailable:false" mysteries.
+47. **cmd() timeouts must REJECT, never resolve as data (PLUGIN)**:
+    the old 30s timeout resolved with {error: "..."} — detectEditor
+    assigned that OBJECT to editorType, poisoning every op with
+    "editor '[object Object]'" until a reinstall. Fix: the timeout
+    now rejects (init's catch shows unreachable + retries), and init
+    validates the detected editor id (word/cell/slide) before using
+    it. An `initializing` guard also prevents stacked inits from the
+    reconnect-button/unreachable-retry race.
+48. **ApiRun.SetFontSize takes HALF-POINTS (hps), not points**: the
+    agent's "44pt" landed as 22pt (smaller than the body!). The
+    style prefix stays points (human/LLM friendly); the plugin's
+    lineObj multiplies by 2 before SetFontSize.
+
 ## Probe artifacts (spike/)
 
 - `probe-plugin/` — the probe plugin sources (config.json, index.html,

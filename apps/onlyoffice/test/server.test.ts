@@ -33,10 +33,10 @@ class FakePluginBridge extends PluginBridge {
     anchor: 'B2',
     values: [['', ''], ['', '']],
   };
-  /** Slide state: title + body lines per slide. */
-  slides: Array<{ title: string | null; body: string[] }> = [
-    { title: 'First slide', body: ['one', 'two'] },
-    { title: 'Second slide', body: [] },
+  /** Slide state: title + body lines + images + notes + background per slide. */
+  slides: Array<{ title: string | null; body: string[]; images: string[]; notes: string[]; background: string | null }> = [
+    { title: 'First slide', body: ['one', 'two'], images: [], notes: [], background: null },
+    { title: 'Second slide', body: [], images: [], notes: [], background: null },
   ];
   currentSlide = 0;
   private cursorAt = 0;
@@ -102,6 +102,7 @@ class FakePluginBridge extends PluginBridge {
         bodyParas: s.body.length,
         hasTitle: s.title !== null,
         hasBody: true,
+        images: s.images.length,
       })),
       selectionText: null,
     };
@@ -177,14 +178,49 @@ class FakePluginBridge extends PluginBridge {
         const index = args.index as number;
         const slide = this.slides[index];
         if (!slide) throw new Error(`slide index ${index} out of range`);
-        slide.title = args.title as string;
-        if ((args.body as string[]).length > 0) slide.body = args.body as string[];
+        const title = args.title as { text: string; style?: Record<string, unknown> };
+        const body = (args.body as Array<{ text: string; style?: Record<string, unknown> }>) ?? [];
+        slide.title = title.text;
+        if (body.length > 0) slide.body = body.map((l) => l.text);
         return { count: this.slides.length } as T;
       }
       case 'insertSlideAfter': {
         const index = args.index as number;
-        this.slides.splice(index, 0, { title: args.title as string, body: args.body as string[] });
+        const title = args.title as { text: string; style?: Record<string, unknown> };
+        const body = (args.body as Array<{ text: string; style?: Record<string, unknown> }>) ?? [];
+        this.slides.splice(index, 0, {
+          title: title.text,
+          body: body.map((l) => l.text),
+          images: [],
+          notes: [],
+          background: null,
+        });
         return { count: this.slides.length, insertedAt: index } as T;
+      }
+      case 'insertImage': {
+        const index = (args.index as number | null) ?? this.currentSlide;
+        const slide = this.slides[index];
+        if (!slide) throw new Error(`slide index ${index} out of range`);
+        slide.images.push(String(args.src));
+        return { added: true, images: slide.images.length } as T;
+      }
+      case 'setBackground': {
+        const index = (args.index as number | null) ?? this.currentSlide;
+        const slide = this.slides[index];
+        if (!slide) throw new Error(`slide index ${index} out of range`);
+        slide.background = String(args.kind);
+        return { applied: true, kind: String(args.kind) } as T;
+      }
+      case 'addNotes': {
+        const index = (args.index as number | null) ?? this.currentSlide;
+        const slide = this.slides[index];
+        if (!slide) throw new Error(`slide index ${index} out of range`);
+        slide.notes.push(String(args.text));
+        return { applied: true } as T;
+      }
+      case 'deleteSlide': {
+        this.slides.splice(args.index as number, 1);
+        return { applied: true, slidesBefore: this.slides.length + 1, slidesAfter: this.slides.length } as T;
       }
       default:
         throw new Error(`fake bridge: unknown op '${name}'`);

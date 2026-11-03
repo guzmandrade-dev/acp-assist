@@ -350,8 +350,8 @@ describe('impress adapter', () => {
     count: 2,
     current: 0,
     slides: [
-      { index: 0, current: true, title: 'First', bodyPreview: 'one', bodyParas: 2, hasTitle: true, hasBody: true },
-      { index: 1, current: false, title: null, bodyPreview: null, bodyParas: 0, hasTitle: false, hasBody: true },
+      { index: 0, current: true, title: 'First', bodyPreview: 'one', bodyParas: 2, hasTitle: true, hasBody: true, images: 0 },
+      { index: 1, current: false, title: null, bodyPreview: null, bodyParas: 0, hasTitle: false, hasBody: true, images: 0 },
     ],
     selectionText: null,
   };
@@ -390,9 +390,99 @@ describe('impress adapter', () => {
     await impressAdapter.applyAction(bridge, doc, parseImpressAction('```impress\nT2\nb2\n```\n[ACTION: insert-after s0]'));
 
     expect(calls.map((c) => c.op)).toEqual(['rewriteSlide', 'insertSlideAfter']);
-    expect(calls[0]?.args).toEqual({ index: 0, title: 'T', body: ['b'] });
+    expect(calls[0]?.args).toEqual({ index: 0, title: { text: 'T' }, body: [{ text: 'b' }] });
     // insert-after s0 = the very start: the new slide lands at index 0.
-    expect(calls[1]?.args).toEqual({ index: 0, title: 'T2', body: ['b2'] });
+    expect(calls[1]?.args).toEqual({ index: 0, title: { text: 'T2' }, body: [{ text: 'b2' }] });
+  });
+
+  it('parses the per-line style prefix into run styles', async () => {
+    const reply = [
+      '```impress',
+      '{bold; size=40; color=#ff6f3d; font=Georgia}Quarterly Review',
+      '{italic}First point',
+      'Plain point',
+      '```',
+      '[ACTION: rewrite-slide s1]',
+    ].join('\n');
+    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
+    await impressAdapter.applyAction(recordingBridge(calls), doc, parseImpressAction(reply));
+    expect(calls[0]?.args).toEqual({
+      index: 0,
+      title: { text: 'Quarterly Review', style: { bold: true, size: 40, color: 'ff6f3d', font: 'Georgia' } },
+      body: [
+        { text: 'First point', style: { italic: true } },
+        { text: 'Plain point' },
+      ],
+    });
+  });
+
+  it('parses insert-image blocks (src, at, size) and maps to insertImage', async () => {
+    const reply = [
+      '```impress',
+      'image: https://example.com/logo.png',
+      'at: 10%, 50%',
+      'size: 30% x 30%',
+      '```',
+      '[ACTION: insert-image s2]',
+    ].join('\n');
+    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
+    await impressAdapter.applyAction(recordingBridge(calls), doc, parseImpressAction(reply));
+    expect(calls[0]?.op).toBe('insertImage');
+    expect(calls[0]?.args).toEqual({
+      index: 1,
+      src: 'https://example.com/logo.png',
+      x: Math.round(12192000 * 0.1),
+      y: Math.round(6858000 * 0.5),
+      w: Math.round(12192000 * 0.3),
+      h: Math.round(6858000 * 0.3),
+    });
+  });
+
+  it('defaults insert-image placement and targets the current slide without sN', async () => {
+    const reply = '```impress\nimage: data:image/png;base64,AAA\n```\n[ACTION: insert-image]';
+    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
+    await impressAdapter.applyAction(recordingBridge(calls), doc, parseImpressAction(reply));
+    expect(calls[0]?.op).toBe('insertImage');
+    expect(calls[0]?.args).toEqual({ index: null, src: 'data:image/png;base64,AAA' });
+  });
+
+  it('rejects insert-image with a non-http/data source', async () => {
+    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
+    await expect(
+      impressAdapter.applyAction(
+        recordingBridge(calls),
+        doc,
+        parseImpressAction('```impress\nimage: C:\\Users\\me\\pic.png\n```\n[ACTION: insert-image]'),
+      ),
+    ).rejects.toThrow(/http\(s\):\/\//);
+    expect(calls).toEqual([]);
+  });
+
+  it('parses set-background lines and maps to setBackground', async () => {
+    const cases: Array<[string, Record<string, unknown>]> = [
+      ['background: solid #1a2b4c', { index: 0, kind: 'solid', color: '1a2b4c' }],
+      ['background: gradient #ffffff-#ff6f3d', { index: 0, kind: 'gradient', color: 'ffffff', color2: 'ff6f3d' }],
+      ['background: image https://example.com/bg.png', { index: 0, kind: 'image', src: 'https://example.com/bg.png' }],
+    ];
+    for (const [line, expected] of cases) {
+      const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
+      await impressAdapter.applyAction(
+        recordingBridge(calls),
+        doc,
+        parseImpressAction(`\`\`\`impress\n${line}\n\`\`\`\n[ACTION: set-background s1]`),
+      );
+      expect(calls[0]?.op).toBe('setBackground');
+      expect(calls[0]?.args).toEqual(expected);
+    }
+  });
+
+  it('maps add-notes and delete-slide', async () => {
+    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
+    const bridge = recordingBridge(calls);
+    await impressAdapter.applyAction(bridge, doc, parseImpressAction('```impress\nRemember the demo.\n```\n[ACTION: add-notes s1]'));
+    await impressAdapter.applyAction(bridge, doc, parseImpressAction('[ACTION: delete-slide s2]'));
+    expect(calls[0]?.args).toEqual({ index: 0, text: 'Remember the demo.' });
+    expect(calls[1]?.args).toEqual({ index: 1 });
   });
 
   it('throws before writing when content or the slide address is invalid', async () => {

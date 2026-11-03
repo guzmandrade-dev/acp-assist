@@ -1,5 +1,5 @@
 /*
- * ACP Assist Bridge v0.3.6 (apps/onlyoffice/bridge-plugin).
+ * ACP Assist Bridge v0.4.2 (apps/onlyoffice/bridge-plugin).
  * Dumb transport, same contract as the LibreOffice .oxt bridge: the
  * plugin carries JSON between the editor and the companion; ALL
  * intelligence lives in the companion. The companion owns the port —
@@ -27,6 +27,7 @@
     var POLL_MS = 2000;
     var journal = [];
     var editorType = null;
+    var initializing = false;
     var lastEventKey = null;
     var companion = null;
 
@@ -66,13 +67,16 @@
     }
 
     function cmd(fn) {
-        return new Promise(function (resolve) {
-            // Safety timeout: a stuck callCommand rejects instead of
+        return new Promise(function (resolve, reject) {
+            // Safety timeout: a stuck callCommand REJECTS instead of
             // wedging the whole long-poll loop forever (verified live:
-            // an unbounded clear loop froze the editor thread once).
+            // an unbounded clear loop froze the editor thread once) —
+            // and never resolves as data: detectEditor used to assign
+            // the timeout object to editorType, poisoning every op
+            // with "editor '[object Object]'" (live-verified 2026-11-03).
             var settled = false;
             var timer = setTimeout(function () {
-                if (!settled) { settled = true; resolve({ error: "callCommand timeout (30s)" }); }
+                if (!settled) { settled = true; reject(new Error("callCommand timeout (30s)")); }
             }, 30000);
             window.Asc.plugin.callCommand(fn, false, false, function (v) {
                 if (!settled) { settled = true; clearTimeout(timer); resolve(v); }
@@ -266,12 +270,18 @@
     /*
      * Source of the shape-text writer: replaces ALL paragraphs of the
      * shape's content with the given lines (one paragraph per line).
-     * RemoveAllElements first (documented); the RemoveElement fallback
-     * is BOUNDED so a placeholder shape whose count does not shrink
-     * can never spin forever (verified live: the unbounded loop froze
-     * the editor's document thread once).
+     * v0.4: each line is {t: text, st: {b,i,c,s,f}|null} — styled runs
+     * (bold/italic/color hex/size pt/font family). Plain strings are
+     * still accepted. RemoveAllElements first (documented); the
+     * RemoveElement fallback is BOUNDED so a placeholder shape whose
+     * count does not shrink can never spin forever (verified live: the
+     * unbounded loop froze the editor's document thread once).
      */
     var SET_SHAPE_PARAS_SRC =
+        "function hexRgb(h) {" +
+        "  if (!/^[0-9a-fA-F]{6}$/.test(String(h))) return null;" +
+        "  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];" +
+        "}" +
         "function setShapeParas(shape, lines, forceBlack) {" +
         "  var content = shape.GetContent();" +
         "  if (!content) return false;" +
@@ -286,14 +296,33 @@
         "    }" +
         "  }" +
         "  for (var j = 0; j < lines.length; j++) {" +
+        "    var ln = lines[j];" +
+        "    var text = '', st = null;" +
+        "    if (ln !== null && ln !== undefined) {" +
+        "      if (typeof ln === 'string') text = ln;" +
+        "      else { text = String(ln.t == null ? '' : ln.t); st = ln.st || null; }" +
+        "    }" +
         "    var p = Api.CreateParagraph();" +
-        "    var run = p.AddText(lines[j]);" +
-        // Synthetic rect shapes (insertSlideAfter) render their text in a
-        // theme-default color that came out WHITE on the white fill —
-        // invisible on screen while API reads still returned it (live-
-        // verified 2026-11-03). forceBlack pins an explicit color for
-        // those shapes only; themed placeholders keep their theme color.
-        "    if (forceBlack && run) { try { run.SetColor(0, 0, 0); } catch (ec) {} }" +
+        "    var run = p.AddText(text);" +
+        // Run styling (v0.4): every setter is optional and guarded —
+        // an unsupported property must not kill the whole write.
+        "    if (run) {" +
+        "      if (st && st.b) { try { run.SetBold(true); } catch (ea) {} }" +
+        "      if (st && st.i) { try { run.SetItalic(true); } catch (eb) {} }" +
+        "      if (st && st.s) { try { run.SetFontSize(st.s); } catch (ec) {} }" +
+        "      if (st && st.f) { try { run.SetFontFamily(st.f); } catch (ed) {} }" +
+        "      if (st && st.c) {" +
+        "        var rgb = hexRgb(st.c);" +
+        "        if (rgb) { try { run.SetFill(Api.CreateSolidFill(Api.RGB(rgb[0], rgb[1], rgb[2]))); } catch (ee) {} }" +
+        "      } else if (forceBlack) {" +
+        // Synthetic rect shapes render their text in a theme-default
+        // color that came out WHITE on the white fill — invisible on
+        // screen while API reads still returned it (live-verified
+        // 2026-11-03). forceBlack pins black for those shapes only;
+        // themed placeholders keep their theme color.
+        "        try { run.SetColor(0, 0, 0); } catch (ef) {}" +
+        "      }" +
+        "    }" +
         // Push(element) is the one-arg append; AddElement takes (pos, el)
         // (verified live: AddElement(el) alone was a silent no-op).
         "    var ok = false;" +
@@ -405,7 +434,7 @@
             "var slides = [];" +
             "for (var i = 0; i < count && i < 200; i++) {" +
             "  var sl = pres.GetSlideByIndex(i);" +
-            "  var title = null, bodyRaw = null, hasTitle = false, hasBody = false;" +
+            "  var title = null, bodyRaw = null, hasTitle = false, hasBody = false, images = 0;" +
             "  try {" +
             "    var ts = sl.GetDrawingsByPlaceholderType('title');" +
             "    if (!ts || !ts.length) ts = sl.GetDrawingsByPlaceholderType('ctrTitle');" +
@@ -417,8 +446,9 @@
             "    hasBody = !!(bs && bs.length);" +
             "    if (hasBody) { var bt = shapeText(bs[0]); bodyRaw = bt ? bt : null; }" +
             "  } catch (e2) {}" +
+            "  try { images = sl.GetAllImages().length; } catch (e3) { images = 0; }" +
             "  slides.push({ index: i, current: i === cur, title: title," +
-            "    bodyRaw: bodyRaw, hasTitle: hasTitle, hasBody: hasBody });" +
+            "    bodyRaw: bodyRaw, hasTitle: hasTitle, hasBody: hasBody, images: images });" +
             "}" +
             "return { count: count, current: cur, slides: slides };"
         )).then(function (r) {
@@ -467,6 +497,41 @@
             return r;
         });
     }
+
+        /* Companion-side slide lines are {text, style?} objects; map them
+         * to the compact {t, st} wire the callCommand source reads
+         * (strings still accepted for older companions). */
+        function lineObj(l) {
+            if (l === null || l === undefined) return { t: "" };
+            if (typeof l === "string") return { t: l };
+            var st = l.style || {};
+            return {
+                t: String(l.text == null ? "" : l.text),
+                st: {
+                    b: !!st.bold,
+                    i: !!st.italic,
+                    c: st.color ? String(st.color) : null,
+                    // SetFontSize takes HALF-POINTS (hps); the companion's
+                    // style prefix size= is in points (verified live: 44pt
+                    // landed as 22pt before the x2).
+                    s: st.size ? Math.round(Number(st.size) * 2) : null,
+                    f: st.font ? String(st.font) : null,
+                },
+            };
+        }
+
+        function lineObjs(lines) {
+            return (lines || []).map(lineObj);
+        }
+
+        /** Slide-index args resolver: null index = the current slide. */
+        var SLIDE_BY_INDEX_SRC =
+            "function slideByIndex(pres, idx) {" +
+            "  var i = (idx === null || idx === undefined) ? pres.GetCurSlideIndex() : idx;" +
+            "  var sl = pres.GetSlideByIndex(i);" +
+            "  if (!sl) throw new Error('slide index ' + i + ' out of range');" +
+            "  return sl;" +
+            "}";
 
     var OPS = {
         ping: function () {
@@ -631,8 +696,8 @@
         rewriteSlide: function (args) {
             requireEditor("slide", "rewriteSlide");
             Asc.scope.index = args.index;
-            Asc.scope.title = String(args.title || "");
-            Asc.scope.body = (args.body || []).map(String);
+            Asc.scope.title = lineObj(args.title);
+            Asc.scope.body = lineObjs(args.body);
             return cmd(new Function(
                 SET_SHAPE_PARAS_SRC +
                 "var pres = Api.GetPresentation();" +
@@ -642,21 +707,21 @@
                 // BEFORE any write lands (no partial writes on error).
                 "var ts = sl.GetDrawingsByPlaceholderType('title');" +
                 "if (!ts || !ts.length) ts = sl.GetDrawingsByPlaceholderType('ctrTitle');" +
-                "if ((!ts || !ts.length) && Asc.scope.title) {" +
+                "if ((!ts || !ts.length) && Asc.scope.title.t) {" +
                 "  return { error: 'slide has no title placeholder' };" +
                 "}" +
                 "var bs = sl.GetDrawingsByPlaceholderType('body');" +
                 "if ((!bs || !bs.length) && Asc.scope.body.length) {" +
                 "  return { error: 'slide has no body placeholder' };" +
                 "}" +
-                "if (ts && ts.length && Asc.scope.title && !setShapeParas(ts[0], [Asc.scope.title]))" +
+                "if (ts && ts.length && Asc.scope.title.t && !setShapeParas(ts[0], [Asc.scope.title]))" +
                 "  return { error: 'title frame is not writable' };" +
                 "if (bs && bs.length && Asc.scope.body.length && !setShapeParas(bs[0], Asc.scope.body))" +
                 "  return { error: 'body frame is not writable' };" +
                 "return { count: pres.GetSlidesCount() };"
             )).then(function (r) {
                 if (r.error) throw new Error(r.error);
-                record("rewriteSlide", { index: args.index, title: Asc.scope.title, bodyParas: Asc.scope.body.length });
+                record("rewriteSlide", { index: args.index, title: Asc.scope.title.t, bodyParas: Asc.scope.body.length });
                 return r;
             });
         },
@@ -664,8 +729,8 @@
         insertSlideAfter: function (args) {
             requireEditor("slide", "insertSlideAfter");
             Asc.scope.index = args.index;
-            Asc.scope.title = String(args.title || "");
-            Asc.scope.body = (args.body || []).map(String);
+            Asc.scope.title = lineObj(args.title);
+            Asc.scope.body = lineObjs(args.body);
             return cmd(new Function(
                 SET_SHAPE_PARAS_SRC +
                 "var pres = Api.GetPresentation();" +
@@ -691,7 +756,124 @@
                 "return { count: pres.GetSlidesCount(), insertedAt: Asc.scope.index };"
             )).then(function (r) {
                 if (r.error) throw new Error(r.error);
-                record("insertSlideAfter", { index: args.index, title: Asc.scope.title, bodyParas: Asc.scope.body.length });
+                record("insertSlideAfter", { index: args.index, title: Asc.scope.title.t, bodyParas: Asc.scope.body.length });
+                return r;
+            });
+        },
+
+        /* ---- v0.4 design ops (one callCommand each; P5-probed live) ---- */
+
+        insertImage: function (args) {
+            requireEditor("slide", "insertImage");
+            Asc.scope.p = {
+                index: args.index == null ? null : Number(args.index),
+                src: String(args.src || ""),
+                x: args.x == null ? null : Number(args.x),
+                y: args.y == null ? null : Number(args.y),
+                w: args.w == null ? null : Number(args.w),
+                h: args.h == null ? null : Number(args.h),
+            };
+            return cmd(new Function(
+                SLIDE_BY_INDEX_SRC +
+                "var p = Asc.scope.p;" +
+                "var pres = Api.GetPresentation();" +
+                "var sl = slideByIndex(pres, p.index);" +
+                "var W = 12192000, H = 6858000;" +
+                "try { W = pres.GetWidth(); H = pres.GetHeight(); } catch (e0) {}" +
+                "var w = p.w != null ? p.w : Math.round(W * 0.2);" +
+                "var h = p.h != null ? p.h : w;" +
+                "var x = p.x != null ? p.x : Math.round((W - w) / 2);" +
+                "var y = p.y != null ? p.y : Math.round((H - h) / 2);" +
+                "var img = Api.CreateImage(p.src, w, h);" +
+                "if (!img) return { error: 'CreateImage returned null' };" +
+                "try { img.SetPosition(x, y); } catch (e1) {}" +
+                "var added = sl.AddObject(img);" +
+                "return { added: added, images: sl.GetAllImages().length };"
+            )).then(function (r) {
+                if (r.error) throw new Error(r.error);
+                record("insertImage", { src: String(args.src).slice(0, 120) });
+                return r;
+            });
+        },
+
+        setBackground: function (args) {
+            requireEditor("slide", "setBackground");
+            Asc.scope.p = {
+                index: args.index == null ? null : Number(args.index),
+                kind: String(args.kind || "solid"),
+                c1: String(args.color || ""),
+                c2: String(args.color2 || ""),
+                src: String(args.src || ""),
+            };
+            return cmd(new Function(
+                SLIDE_BY_INDEX_SRC +
+                "function hexRgb(h) {" +
+                "  if (!/^[0-9a-fA-F]{6}$/.test(String(h))) return null;" +
+                "  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];" +
+                "}" +
+                "var p = Asc.scope.p;" +
+                "var pres = Api.GetPresentation();" +
+                "var sl = slideByIndex(pres, p.index);" +
+                "var fill = null;" +
+                "if (p.kind === 'solid') {" +
+                "  var r1 = hexRgb(p.c1);" +
+                "  if (!r1) return { error: 'invalid solid background color' };" +
+                "  fill = Api.CreateSolidFill(Api.RGB(r1[0], r1[1], r1[2]));" +
+                "} else if (p.kind === 'gradient') {" +
+                "  var g1 = hexRgb(p.c1), g2 = hexRgb(p.c2);" +
+                "  if (!g1 || !g2) return { error: 'invalid gradient background colors' };" +
+                "  var gs1 = Api.CreateGradientStop(Api.RGB(g1[0], g1[1], g1[2]), 0);" +
+                "  var gs2 = Api.CreateGradientStop(Api.RGB(g2[0], g2[1], g2[2]), 100000);" +
+                "  fill = Api.CreateRadialGradientFill([gs1, gs2]);" +
+                "} else if (p.kind === 'image') {" +
+                "  if (!p.src) return { error: 'missing background image source' };" +
+                "  fill = Api.CreateBlipFill(p.src, 'stretch');" +
+                "} else {" +
+                "  return { error: 'unknown background kind ' + p.kind };" +
+                "}" +
+                "if (!fill) return { error: 'background fill factory failed' };" +
+                "var ok = sl.SetBackground(fill);" +
+                "return { applied: ok, kind: p.kind };"
+            )).then(function (r) {
+                if (r.error) throw new Error(r.error);
+                record("setBackground", { index: Asc.scope.p.index, kind: Asc.scope.p.kind });
+                return r;
+            });
+        },
+
+        addNotes: function (args) {
+            requireEditor("slide", "addNotes");
+            Asc.scope.p = {
+                index: args.index == null ? null : Number(args.index),
+                text: String(args.text || ""),
+            };
+            return cmd(new Function(
+                SLIDE_BY_INDEX_SRC +
+                "var p = Asc.scope.p;" +
+                "var pres = Api.GetPresentation();" +
+                "var sl = slideByIndex(pres, p.index);" +
+                "var ok = sl.AddNotesText(p.text);" +
+                "return { applied: ok };"
+            )).then(function (r) {
+                if (r.error) throw new Error(r.error);
+                record("addNotes", { index: Asc.scope.p.index, chars: Asc.scope.p.text.length });
+                return r;
+            });
+        },
+
+        deleteSlide: function (args) {
+            requireEditor("slide", "deleteSlide");
+            Asc.scope.index = Number(args.index);
+            return cmd(new Function(
+                "var pres = Api.GetPresentation();" +
+                "var count = pres.GetSlidesCount();" +
+                "var idx = Asc.scope.index;" +
+                "if (idx < 0 || idx >= count) return { error: 'slide index ' + idx + ' out of range' };" +
+                "var ok = pres.GetSlideByIndex(idx).Delete();" +
+                "return { applied: ok, slidesBefore: count, slidesAfter: pres.GetSlidesCount() };"
+            )).then(function (r) {
+                if (r.error) throw new Error(r.error);
+                record("deleteSlide", { index: Asc.scope.index, slidesAfter: r.slidesAfter });
                 return r;
             });
         },
@@ -797,17 +979,30 @@
     }
 
     window.Asc.plugin.init = function () {
+        // The unreachable-retry timer and the Reconnect button can race
+        // (init while an earlier init is mid-flight stacked extra poll/
+        // selection loops and hung callCommands); one init at a time.
+        if (initializing) return;
+        initializing = true;
         companion = companionBase();
         detectEditor().then(function (t) {
+            // Never trust the resolved value blindly: anything that is
+            // not a known editor id is a failure (live-verified: a
+            // timed-out cmd used to leave editorType as an OBJECT).
+            if (t !== "word" && t !== "cell" && t !== "slide") {
+                throw new Error("editor detection failed: " + String(t));
+            }
             editorType = t;
+            initializing = false;
             status("connecting (" + t + ")…");
             return post("/bridge/hello", {
-                plugin: "acp-bridge", version: "0.3.6", editor: t
+                plugin: "acp-bridge", version: "0.4.2", editor: t
             });
         }).then(function () {
             pollOnce();
             selectionTick();
         }).catch(function () {
+            initializing = false;
             status("companion unreachable", "err");
             setTimeout(function () { window.Asc.plugin.init(); }, 3000);
         });

@@ -114,6 +114,8 @@ export interface SlideSummary {
   hasTitle: boolean;
   /** True when a body placeholder frame exists (even if empty). */
   hasBody: boolean;
+  /** Number of images on the slide (v0.4; 0 when none). */
+  images: number;
 }
 
 /** Slide (presentation) document read (the plugin's `context` op). */
@@ -170,17 +172,75 @@ export interface InsertRowColResult {
 
 // --- slide (presentation) op payload types ------------------------------------
 
+/** Optional per-line run styling for slide text (v0.4). */
+export interface SlideRunStyle {
+  bold?: boolean;
+  italic?: boolean;
+  /** Hex color like 'ff6f3d' (no leading #). */
+  color?: string;
+  /** Font size in points. */
+  size?: number;
+  /** Font family name. */
+  font?: string;
+}
+
+/** One slide text line: the text plus optional styling. */
+export interface SlideLine {
+  text: string;
+  style?: SlideRunStyle;
+}
+
 export interface SlideContentArgs {
   /** 0-based slide index. */
   index: number;
-  title: string;
+  title: SlideLine;
   /** Body paragraphs (empty = keep the current body). */
-  body: string[];
+  body: SlideLine[];
 }
 
 export interface SlideEditResult {
   count?: number;
   error?: string;
+}
+
+export interface InsertImageArgs {
+  /** 0-based slide index (null = the current slide). */
+  index: number | null;
+  /** Image source: an http(s) URL or a base64 data:image/... URI. */
+  src: string;
+  /** Position and size in EMU (companion-resolved; the plugin stays dumb). */
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+}
+
+export interface InsertImageResult {
+  added: boolean;
+  images: number;
+}
+
+export interface SetBackgroundArgs {
+  /** 0-based slide index (null = the current slide). */
+  index: number | null;
+  kind: 'solid' | 'gradient' | 'image';
+  /** solid/gradient: hex color like 'ff6f3d'. */
+  color?: string;
+  /** gradient: second hex stop. */
+  color2?: string;
+  /** image: source URL/data URI. */
+  src?: string;
+}
+
+export interface AddNotesArgs {
+  /** 0-based slide index (null = the current slide). */
+  index: number | null;
+  text: string;
+}
+
+export interface DeleteSlideArgs {
+  /** 0-based slide index. */
+  index: number;
 }
 
 // --- the bridge ---------------------------------------------------------------
@@ -243,17 +303,22 @@ export class PluginBridge {
         res.json(next);
         return;
       }
-      const timer = setTimeout(() => {
-        if (this.waiter) {
-          this.waiter = null;
-          res.json({});
-        }
-      }, waitSec * 1000);
-      this.waiter = (job) => {
-        clearTimeout(timer);
-        this.waiter = null;
-        res.json(job);
+      // Every poll must get EXACTLY ONE response from ITS OWN timer —
+      // a conditional `if (this.waiter)` here once swallowed a poll's
+      // response when two long-polls overlapped (a stale fetch from
+      // before a reconnect), hanging the plugin's poll loop forever
+      // while its status still said "connected" (live-found 2026-11-03).
+      const mine = (job: Record<string, unknown> | null) => {
+        if (this.waiter === wrapper) this.waiter = null;
+        res.json(job ?? {});
       };
+      let timer: NodeJS.Timeout;
+      const wrapper = (job: Record<string, unknown> | null) => {
+        clearTimeout(timer);
+        mine(job);
+      };
+      timer = setTimeout(() => mine(null), waitSec * 1000);
+      this.waiter = wrapper;
     });
 
     app.post('/bridge/result', (req, res) => {

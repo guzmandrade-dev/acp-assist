@@ -127,8 +127,12 @@ formulas, cells addressed as `A1`):
 
 | Action | Effect |
 |---|---|
-| `[ACTION: rewrite-slide sN]` | Replace a slide's outline text (title first) |
+| `[ACTION: rewrite-slide sN]` | Replace a slide's outline text (title first; per-line `{bold; color=#ff6f3d; size=28; font=Georgia}` style prefixes supported) |
 | `[ACTION: insert-after sN]` | New slide after `[sN]` (`s0` = the very start; nothing is written if the block is invalid) |
+| `[ACTION: insert-image sN]` | Place an image on slide `[sN]` (current slide without a number) — URL or base64 source, optional `at:`/`size:` placement; the image appears after saving and reopening the file |
+| `[ACTION: set-background sN]` | Slide background: `solid #rrggbb`, `gradient #rrggbb-#rrggbb`, or `image <URL>` |
+| `[ACTION: add-notes sN]` | Add speaker notes to slide `[sN]` |
+| `[ACTION: delete-slide sN]` | Delete slide `[sN]` |
 
 ## Reviewing and undoing edits
 
