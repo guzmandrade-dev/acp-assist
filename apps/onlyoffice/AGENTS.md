@@ -249,6 +249,52 @@ packaged exe boots, serves index/app.js/logo.svg//panel-boot.js (token
     Code first. The gitignored `dist-release/` default stays fine for
     CI and for users who don't keep the repo open in VS Code.
 
+## Live agent round-trips + the v0.3.6 white-text bug (2026-11-03)
+
+Both remaining live gates PASSED through the REAL companion (Electron
+panel app on 8790) + vibe-acp: calc (write-cells "Region"/"Sales" at
+A1/B1 — confirmed by the agent's own step-2 re-read; outline shows the
+sheet's used range grew to A1:B1) and slides (insert-after — visually
+confirmed by the user AFTER the v0.3.6 fix below). The slide round-trip
+caught a real bug the Phase 3 read-backs could not see:
+
+35. **Synthetic-shape text renders INVISIBLE — API reads cannot see
+    rendering.** insertSlideAfter builds its slide from fresh
+    Api.CreateShape('rect') shapes with a white solid fill, and the
+    text written into those shapes rendered in an (apparently
+    theme-default) WHITE color: the user saw empty slides/canvas while
+    every bridge read returned the title text back "clean" — the exact
+    reason Phase 3's read-only verification missed it. v0.3.6 fix:
+    setShapeParas gained a forceBlack param — every run created for the
+    SYNTHETIC shapes gets run.SetColor(0,0,0); themed placeholders
+    (rewriteSlide) keep their theme color. Verified live: the
+    re-inserted "Roadmap" slide is visibly black on canvas + thumbnail.
+    RULE: any change touching how content RENDERS needs a human eyeball
+    on the editor canvas; reads alone prove nothing about visibility.
+    Caveat: rewriting a slide whose shapes came from a v0.3.5-era
+    insert (synthetic, white text) keeps the invisible color — those
+    decks should re-insert rather than rewrite, or delete the affected
+    slide.
+36. **Post-reinstall stall (beyond rule 32):** after Remove + manual
+    .plugin install, a reopened bridge tab showed "connected" but its
+    poll loop was dead — the panel-side /api/status stayed
+    bridgeAvailable:false for minutes while an ESTABLISHED socket sat
+    idle. Clicking the plugin's own Reconnect button revived it
+    immediately. After any reinstall: click Reconnect (or close/reopen
+    the tab) AND confirm the companion's status flips before testing.
+37. **pluginStaleMs (30s) vs the 20s poll window is fragile, and CEF
+    throttles plugin timers in a backgrounded editor window**: while
+    ONLYOFFICE is backgrounded (the user chatting elsewhere), the
+    long-poll cycle can gap > 30s → isConnected() false → the panel
+    shows "not connected" and messages are refused with the misleading
+    "open the plugin" error, even though the plugin is fine. Two real
+    messages failed this way before "keep ONLYOFFICE foreground" fixed
+    it. Follow-up candidates (not done): raise pluginStaleMs (e.g.
+    90s), or drop the gate and let op()'s own 30s timeout decide.
+38. The UNSAVED conversation key (v1, no file path in the sandbox) also
+    shares chat HISTORY across editors: the slide session replayed the
+    calc session's turns. Known v1 behavior, now concretely observed.
+
 ## Probe artifacts (spike/)
 
 - `probe-plugin/` — the probe plugin sources (config.json, index.html,

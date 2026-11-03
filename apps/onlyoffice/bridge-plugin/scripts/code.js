@@ -1,5 +1,5 @@
 /*
- * ACP Assist Bridge v0.3.5 (apps/onlyoffice/bridge-plugin).
+ * ACP Assist Bridge v0.3.6 (apps/onlyoffice/bridge-plugin).
  * Dumb transport, same contract as the LibreOffice .oxt bridge: the
  * plugin carries JSON between the editor and the companion; ALL
  * intelligence lives in the companion. The companion owns the port —
@@ -272,7 +272,7 @@
      * the editor's document thread once).
      */
     var SET_SHAPE_PARAS_SRC =
-        "function setShapeParas(shape, lines) {" +
+        "function setShapeParas(shape, lines, forceBlack) {" +
         "  var content = shape.GetContent();" +
         "  if (!content) return false;" +
         "  var cleared = false;" +
@@ -287,7 +287,13 @@
         "  }" +
         "  for (var j = 0; j < lines.length; j++) {" +
         "    var p = Api.CreateParagraph();" +
-        "    p.AddText(lines[j]);" +
+        "    var run = p.AddText(lines[j]);" +
+        // Synthetic rect shapes (insertSlideAfter) render their text in a
+        // theme-default color that came out WHITE on the white fill —
+        // invisible on screen while API reads still returned it (live-
+        // verified 2026-11-03). forceBlack pins an explicit color for
+        // those shapes only; themed placeholders keep their theme color.
+        "    if (forceBlack && run) { try { run.SetColor(0, 0, 0); } catch (ec) {} }" +
         // Push(element) is the one-arg append; AddElement takes (pos, el)
         // (verified live: AddElement(el) alone was a silent no-op).
         "    var ok = false;" +
@@ -676,10 +682,10 @@
                 "  return shape;" +
                 "}" +
                 "var titleShape = mkShape('title', 457200, 457200, W - 914400, 1371600);" +
-                "if (!setShapeParas(titleShape, [Asc.scope.title]))" +
+                "if (!setShapeParas(titleShape, [Asc.scope.title], true))" +
                 "  return { error: 'title frame is not writable' };" +
                 "var bodyShape = mkShape('body', 457200, 2286000, W - 914400, H - 3200400);" +
-                "if (Asc.scope.body.length) setShapeParas(bodyShape, Asc.scope.body);" +
+                "if (Asc.scope.body.length) setShapeParas(bodyShape, Asc.scope.body, true);" +
                 "pres.AddSlide(sl);" +
                 "try { sl.MoveTo(Asc.scope.index); } catch (e1) {}" +
                 "return { count: pres.GetSlidesCount(), insertedAt: Asc.scope.index };"
@@ -796,7 +802,7 @@
             editorType = t;
             status("connecting (" + t + ")…");
             return post("/bridge/hello", {
-                plugin: "acp-bridge", version: "0.3.5", editor: t
+                plugin: "acp-bridge", version: "0.3.6", editor: t
             });
         }).then(function () {
             pollOnce();
