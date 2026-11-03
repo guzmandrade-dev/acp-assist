@@ -110,6 +110,10 @@ export interface SlideSummary {
   bodyPreview: string | null;
   /** Number of body paragraphs (0 when the slide has no body frame). */
   bodyParas: number;
+  /** True when a title placeholder frame exists (even if empty). */
+  hasTitle: boolean;
+  /** True when a body placeholder frame exists (even if empty). */
+  hasBody: boolean;
 }
 
 /** Slide (presentation) document read (the plugin's `context` op). */

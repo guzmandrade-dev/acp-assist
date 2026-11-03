@@ -157,6 +157,69 @@ a second `[ACTION: none]` round-trip listed the document correctly.
     hint, undo title, boot status text) — now parameterized
     (`CONFIG.appName`); the OO panel reads "ONLYOFFICE connected".
 
+## Phase 3 module adapters — LIVE-VERIFIED 2026-11-02 (plugin v0.3.5)
+
+All three editors are wired end to end and every new op was verified
+live against Desktop Editors (spreadsheet + presentation open, bridge
+plugin v0.3.5 installed, driven through `spike/bridge-server/server.mjs`
+— now PORT-configurable; `drive.mjs` beside it drives single ops).
+Companion gates: OO 28/28 vitest, LyX 147/147, LO 78/78, core 20/20,
+panel 6/6, typechecks clean. The install/reinstall loop (5 rounds
+v0.3.0→v0.3.5) surfaced these rules — all live-verified:
+
+25. **ApiRange.GetRow()/GetCol() are 1-BASED** (rule 23a resolved):
+   a used range of A1:B2 reports row 1 / col 1. GetRangeByNumber(r,c)
+   is 0-based (writeCells A1 wrote exactly A1). GetRowsCount/
+   GetColumnsCount are counts. The plugin now normalizes with
+   GetRow()-1 / GetCol()-1; the data block read matches GetAddress().
+26. **GetEntireRow().Insert('down') / GetEntireColumn().Insert('right')
+   insert whole rows/columns** (rule 23b resolved): verified by
+   reading back shifted values; the editor auto-adjusts formulas after
+   inserts (=A2*2 became =A3*2 after a row insert). writeCells,
+   insertRows, insertCols all verified end to end. The `undo` op
+   returns {undone:false} and the companion shows the Ctrl+Z hint.
+27. **Slide detection needs Api.GetPresentation()** — rule 16
+   CORRECTED: `Api.GetCurrentSlide` is an ApiPresentation method, not
+   global Api, so presentations fell through to "word" (a live v0.3.2
+   bug). detectEditor now: GetSheets → cell, GetPresentation → slide,
+   else word.
+28. **ApiDocumentContent.AddElement takes (pos, element)** — a one-arg
+   AddElement(el) call is a SILENT NO-OP (titles read back empty). The
+   one-arg append is Push(el). setShapeParas pushes with an
+   AddElement(count, el) fallback.
+29. **An UNBOUNDED loop inside callCommand freezes the whole editor**
+   (document thread + plugin iframe; only a process restart clears
+   it). v0.3.2's `while (GetElementsCount() > 0) RemoveElement(0)`
+   did this live. Every loop inside callCommand sources must be
+   bounded (v0.3.3+); `cmd()` also rejects after a 30s timeout so a
+   stuck callCommand can never wedge the long-poll loop permanently.
+30. **Placeholder contents re-grow empty paragraphs around writes**:
+   after RemoveAllElements + Push, titles read back as "\n\n<text>"
+   (two leading empty paragraphs; also invisible empty body lines).
+   setShapeParas trims leading empty paragraphs after writing (bounded
+   loop; stops at the first non-empty or at lines.length).
+31. **Slide ops verified live**: context (GetSlidesCount/
+   GetSlideByIndex/GetCurSlideIndex + GetDrawingsByPlaceholderType
+   'title'/'ctrTitle'/'body' + shape GetContent().GetElement(i)
+   .GetText()); rewriteSlide (lookups BEFORE writes — a missing body
+   placeholder errors atomically, nothing is written: verified by
+   reading back the untouched title); insertSlideAfter (CreateSlide +
+   two rect shapes with title/body placeholders + AddSlide + MoveTo —
+   s0 → index 0 and sN==count → append at end both verified).
+   Slide context reports hasTitle/hasBody so the agent sees which
+   slides can take a body rewrite.
+32. Reinstall gotchas (5 rounds learned): the Plugin Manager does NOT
+   always replace a running install (verify the ON-DISK code, not the
+   panel status); a plugin tab opened before the reinstall keeps
+   running the OLD code until closed and reopened; the panel status
+   line cannot tell versions — trust the hello (`version` in
+   /bridge/hello). Editor restarts do not re-open plugin panels.
+33. v1 slide limitation (by design): no selected-frame `rewrite` —
+    the plugin sandbox cannot address a selected shape yet (needs an
+    ApiSelection probe); the impress vocabulary is rewrite-slide +
+    insert-after only. Calc is active-sheet-only (no sheet switching
+    op). Both are documented in the action instructions themselves.
+
 ## Probe artifacts (spike/)
 
 - `probe-plugin/` — the probe plugin sources (config.json, index.html,

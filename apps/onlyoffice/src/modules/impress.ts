@@ -112,10 +112,12 @@ export const impressAdapter = {
     ];
     for (const slide of doc.slides) {
       const current = slide.current ? ' (current)' : '';
-      const main = `[s${slide.index + 1}]${current} ${slide.title ? `"${slide.title}"` : '(no title frame)'}`;
+      const main = `[s${slide.index + 1}]${current} ${slide.hasTitle ? (slide.title ? `"${slide.title}"` : '(empty title)') : '(no title frame)'}`;
       const detail: string[] = [];
-      if (slide.bodyParas > 0 || slide.bodyPreview !== null) {
+      if (slide.hasBody) {
         detail.push(`body: ${slide.bodyParas} paragraph(s)`);
+      } else {
+        detail.push('no body frame — rewrite-slide cannot set a body on this slide');
       }
       lines.push(main + (detail.length > 0 ? ` | ${detail.join(', ')}` : ''));
       if (slide.bodyPreview) {
@@ -127,7 +129,7 @@ export const impressAdapter = {
 
   renderOutline(doc: SlideDocument): string {
     return doc.slides
-      .map((s) => `[s${s.index + 1}]${s.current ? ' *' : ''} ${s.title ? preview(s.title, 100) : '(untitled)'}`)
+      .map((s) => `[s${s.index + 1}]${s.current ? ' *' : ''} ${s.hasTitle && s.title ? preview(s.title, 100) : '(untitled)'}`)
       .join('\n');
   },
 

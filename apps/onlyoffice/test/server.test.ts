@@ -100,6 +100,8 @@ class FakePluginBridge extends PluginBridge {
         title: s.title,
         bodyPreview: s.body[0] ?? null,
         bodyParas: s.body.length,
+        hasTitle: s.title !== null,
+        hasBody: true,
       })),
       selectionText: null,
     };

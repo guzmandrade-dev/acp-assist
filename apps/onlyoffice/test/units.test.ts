@@ -350,8 +350,8 @@ describe('impress adapter', () => {
     count: 2,
     current: 0,
     slides: [
-      { index: 0, current: true, title: 'First', bodyPreview: 'one', bodyParas: 2 },
-      { index: 1, current: false, title: null, bodyPreview: null, bodyParas: 0 },
+      { index: 0, current: true, title: 'First', bodyPreview: 'one', bodyParas: 2, hasTitle: true, hasBody: true },
+      { index: 1, current: false, title: null, bodyPreview: null, bodyParas: 0, hasTitle: false, hasBody: true },
     ],
     selectionText: null,
   };
