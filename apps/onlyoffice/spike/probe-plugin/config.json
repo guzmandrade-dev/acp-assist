@@ -1,7 +1,7 @@
 {
     "name": "ACP Assist Probe",
     "guid": "asc.{B4F7A1C2-3D4E-4F5A-9B6C-7D8E9F0A1B2C}",
-    "version": "0.1.0",
+    "version": "0.2.1",
     "variations": [
         {
             "description": "ACP Assist Phase 0 probe",

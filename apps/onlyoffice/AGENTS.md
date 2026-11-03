@@ -295,12 +295,72 @@ caught a real bug the Phase 3 read-backs could not see:
     shares chat HISTORY across editors: the slide session replayed the
     calc session's turns. Known v1 behavior, now concretely observed.
 
+## P5 design-probe research (2026-11-03) — v0.4 "modern design + images"
+
+Probed live against Desktop Editors 10.0.0.169 with the probe plugin
+v0.2.1 (P5 command batch: slideInfo, insertImage, setBackground,
+applyTheme, styleTitle, applyLayout, deleteSlide, addNotes,
+setTransition) driven through `spike/probe-server/server.mjs`
+(log beside it). All probes self-contained `new Function(...)` sources
+— see rule 39.
+
+39. **callCommand SERIALIZES the function source — closures do not
+    survive.** A wrapper whose body referenced an outer `fn` variable
+    executed as `ReferenceError` inside the document context and the
+    callCommand callback fired with `undefined` (no error surfaced).
+    Every callCommand body must be a self-contained source string
+    (args via `Asc.scope`) — the bridge plugin's `new Function(src)`
+    pattern is not a style choice, it is a hard requirement. Also:
+    `typeof Api.GetPresentation` still throws if `Api` itself is
+    undefined — guard with `typeof Api === 'undefined'` first.
+40. **The whole design surface EXISTS in the desktop build** (P5
+    slideInfo + live probes): `Api.CreateImage` (URL AND base64 data
+    URI), `CreateBlipFill`, `slide.SetBackground`, `CreateTheme` +
+    all scheme factories + `slide.ApplyTheme`, `ApplyLayout`,
+    `slide.Delete`, `AddNotesText`, `Get/SetSlideShowTransition` +
+    `Api.CreateSlideShowTransition`, run styling (`SetBold`/
+    `SetFontSize`/`SetFontFamily`/`SetFill` on ApiRun; `SetColor`
+    visually verified by the v0.3.6 fix). 11 layouts on the default
+    master (enumerated bounded via `master.GetLayout(i)`; there is no
+    count accessor).
+41. **Images: stored correctly, rendered only after reopen.**
+    `CreateImage` (URL) downloads and embeds byte-exact (ppt/media
+    matched the source file size) and the data URI embeds too — but
+    the LIVE canvas keeps showing EMPTY frames until the document is
+    closed and reopened. Tab switching away/back does NOT repaint;
+    an `ApplyLayout` "nudge" command does NOT repaint. Product
+    implication: v0.4 image ops are viable, but the panel must tell
+    the user images appear after save+reopen (or a live-repaint
+    trigger needs more research — none of the three tried worked).
+42. **`SetBackground` DOES repaint live** (radial gradient verified
+    visible on canvas + thumbnail immediately). So the repaint gap is
+    specific to raster-image content arriving asynchronously after
+    the callCommand transaction.
+43. **`ApplyTheme`/`ApplyLayout` apply but disturbed the existing
+    slide's placeholders**: after applyLayout(0)+applyTheme the
+    title/subtitle prompt text rendered OVERLAPPING (user-verified
+    visual corruption). Not yet separated which of the two caused it
+    — a follow-up probe must test them in isolation before either
+    becomes a product op. Per-slide backgrounds + styled text are
+    the safe design surface; whole-theme changes are NOT ready.
+44. **Notes + transitions fully work**: `AddNotesText` visible in the
+    notes pane immediately; `CreateSlideShowTransition` +
+    `SetSlideShowTransition` apply cleanly. `slide.Delete()` works
+    (1→0 slides, one undo step presumed — deck was discarded).
+45. **The blank deck's title placeholder is `ctrTitle`**, not `title`
+    — the P5 styleTitle probe missed it (the bridge already handles
+    both, rule 31). Placeholder lookup in any new op must check
+    `title` AND `ctrTitle`.
+
 ## Probe artifacts (spike/)
 
 - `probe-plugin/` — the probe plugin sources (config.json, index.html,
-  scripts/code.js: P1–P4 instrumentation, long-poll client, report()).
+  scripts/code.js: P1–P4 + P5 design-probe instrumentation, long-poll
+  client, report()). **v0.2.1** — P5 batch + self-contained callCommand
+  sources (rule 39); installed in the user's editors as v0.2.1.
 - `acp-probe.plugin` — packaged artifact (Compress-Archive + rename).
-  Repackage after editing probe sources.
+  Repackage after editing probe sources. (A stray copy sits on the
+  user's Desktop: `acp-probe-v0.2.plugin`.)
 - `probe-server/server.mjs` — zero-dep Node companion (CORS-open,
   long-poll command channel, /report logging). Start with
   `node server.mjs`; logs to `probe-server.log`.

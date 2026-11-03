@@ -85,8 +85,249 @@
             case "insertText": return insertText(cmd.text || "Hello from ACP probe.\n");
             case "readDoc":    return readDoc();
             case "selection":  return selectionSnapshot();
+            /* ---- P5: slide design probes (2026-11-03) ---- */
+            case "slideInfo":     return slideInfo();
+            case "insertImage":   return insertImage(cmd.src, cmd.x, cmd.y, cmd.w, cmd.h);
+            case "setBackground": return setBackground(cmd);
+            case "applyTheme":    return applyTheme();
+            case "styleTitle":    return styleTitle(cmd);
+            case "applyLayout":   return applyLayout(cmd.index);
+            case "deleteSlide":   return deleteSlide(cmd.index);
+            case "addNotes":      return addNotes(cmd.text);
+            case "setTransition": return setTransition();
             default:           return Promise.reject(new Error("unknown command " + cmd.type));
         }
+    }
+
+    /* ---- P5: slide design probes (2026-11-03) -----------------------
+     * Research probe for v0.4 "modern design + images" support: images,
+     * backgrounds, custom themes, run styling, layouts, slide deletion,
+     * notes, transitions. Every write probe is ONE callCommand = one
+     * undo step; every loop is bounded (AGENTS rules 29/35); rendering
+     * changes get a VISUAL check from the user, reads prove nothing.
+     *
+     * callCommand SERIALIZES the function source and evals it in the
+     * document context - closure variables do NOT survive (found live
+     * 2026-11-03: a wrapper referencing `fn` returned undefined). Every
+     * P5 probe therefore passes a SELF-CONTAINED source built with
+     * new Function(), args in Asc.scope - the same pattern as the
+     * bridge plugin's ops.
+     */
+
+    var SAMPLE_IMG = "https://static.onlyoffice.com/assets/docs/samples/img/onlyoffice_logo.png";
+    // 1x1 red PNG
+    var RED_DOT = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+    var GUARD = "if (typeof Api === 'undefined' || typeof Api.GetPresentation !== 'function') return { error: 'not a presentation' };";
+    var CUR_IDX = "var pres = Api.GetPresentation(); var idx = 0; try { idx = pres.GetCurSlideIndex(); } catch (e) {} var slide = pres.GetSlideByIndex(idx);";
+
+    function slideInfo() {
+        return cmd(new Function(
+            GUARD +
+            "var pres = Api.GetPresentation();" +
+            "var out = { slides: pres.GetSlidesCount() };" +
+            "try { out.width = pres.GetWidth(); out.height = pres.GetHeight(); } catch (e) {}" +
+            "try { out.masters = pres.GetMastersCount(); } catch (e) { out.mastersErr = String(e); }" +
+            "var master = null;" +
+            "try { master = pres.GetMaster(0); } catch (e) { out.masterErr = String(e); }" +
+            "if (master) {" +
+            "  var layouts = [];" +
+            "  for (var i = 0; i < 50; i++) {" +
+            "    var lo = null;" +
+            "    try { lo = master.GetLayout(i); } catch (e) { break; }" +
+            "    if (!lo) break;" +
+            "    layouts.push({ index: i, classType: (function () { try { return lo.GetClassType(); } catch (e) { return null; } })() });" +
+            "  }" +
+            "  out.layouts = layouts;" +
+            "}" +
+            "var slide = null;" +
+            "try { slide = pres.GetSlideByIndex(0); } catch (e) { out.slideErr = String(e); }" +
+            "if (slide) {" +
+            "  out.hasApplyTheme = typeof slide.ApplyTheme === 'function';" +
+            "  out.hasApplyLayout = typeof slide.ApplyLayout === 'function';" +
+            "  out.hasSetBackground = typeof slide.SetBackground === 'function';" +
+            "  out.hasDelete = typeof slide.Delete === 'function';" +
+            "  out.hasAddNotes = typeof slide.AddNotesText === 'function';" +
+            "  out.hasGetSlideShowTransition = typeof slide.GetSlideShowTransition === 'function';" +
+            "  out.hasSetSlideShowTransition = typeof slide.SetSlideShowTransition === 'function';" +
+            "  try { var bg = slide.GetBackground(); out.bgClassType = bg ? bg.GetClassType() : null; } catch (e) { out.bgErr = String(e); }" +
+            "  try { var th = slide.GetTheme(); out.themeClassType = th ? th.GetClassType() : null; } catch (e) { out.themeErr = String(e); }" +
+            "  try { var lo2 = slide.GetLayout(); out.slideLayoutClassType = lo2 ? lo2.GetClassType() : null; } catch (e) {}" +
+            "}" +
+            "out.hasCreateImage = typeof Api.CreateImage === 'function';" +
+            "out.hasCreateBlipFill = typeof Api.CreateBlipFill === 'function';" +
+            "out.hasCreateTheme = typeof Api.CreateTheme === 'function';" +
+            "out.hasCreateThemeColorScheme = typeof Api.CreateThemeColorScheme === 'function';" +
+            "out.hasCreateThemeFormatScheme = typeof Api.CreateThemeFormatScheme === 'function';" +
+            "out.hasCreateThemeFontScheme = typeof Api.CreateThemeFontScheme === 'function';" +
+            "out.hasCreateGradientStop = typeof Api.CreateGradientStop === 'function';" +
+            "return out;"
+        ));
+    }
+
+    function insertImage(src, x, y, w, h) {
+        Asc.scope.p = {
+            src: src === "red" ? RED_DOT : (src || SAMPLE_IMG),
+            x: Number(x) || 600000, y: Number(y) || 600000,
+            w: Number(w) || 1800000, h: Number(h) || 1800000
+        };
+        return cmd(new Function(
+            GUARD +
+            "var p = Asc.scope.p;" +
+            CUR_IDX +
+            "var img = Api.CreateImage(p.src, p.w, p.h);" +
+            "if (!img) return { error: 'CreateImage returned null' };" +
+            "try { img.SetPosition(p.x, p.y); } catch (e) {}" +
+            "var added = slide.AddObject(img);" +
+            "return { added: added, images: slide.GetAllImages().length, slideIndex: idx, src: String(p.src).slice(0, 80) };"
+        ));
+    }
+
+    function setBackground(spec) {
+        Asc.scope.p = spec || {};
+        return cmd(new Function(
+            GUARD +
+            "var p = Asc.scope.p;" +
+            CUR_IDX +
+            "var fill = null;" +
+            "var kind = p.kind || 'solid';" +
+            "if (kind === 'solid') { fill = Api.CreateSolidFill(Api.RGB(230, 240, 255)); }" +
+            "else if (kind === 'gradient') {" +
+            "  var gs1 = Api.CreateGradientStop(Api.RGB(255, 213, 191), 0);" +
+            "  var gs2 = Api.CreateGradientStop(Api.RGB(255, 111, 61), 100000);" +
+            "  fill = Api.CreateRadialGradientFill([gs1, gs2]);" +
+            "} else if (kind === 'image') { fill = Api.CreateBlipFill(p.src || 'https://static.onlyoffice.com/assets/docs/samples/img/presentation_axe.png', 'stretch'); }" +
+            "else { return { error: 'unknown kind ' + kind }; }" +
+            "if (!fill) return { error: 'fill factory returned null for kind ' + kind };" +
+            "var ok = slide.SetBackground(fill);" +
+            "var bgClass = null;" +
+            "try { var bg = slide.GetBackground(); bgClass = bg ? bg.GetClassType() : null; } catch (e) {}" +
+            "return { applied: ok, kind: kind, bgClassType: bgClass };"
+        ));
+    }
+
+    function applyTheme() {
+        return cmd(new Function(
+            GUARD +
+            CUR_IDX +
+            "var master = pres.GetMaster(0);" +
+            "var colorScheme = Api.CreateThemeColorScheme([" +
+            "  Api.RGB(255, 111, 61), Api.RGB(51, 51, 51), Api.RGB(230, 179, 117)," +
+            "  Api.RGB(235, 235, 235), Api.RGB(163, 21, 21), Api.RGB(128, 43, 43)," +
+            "  Api.RGB(0, 0, 0), Api.RGB(128, 128, 128), Api.RGB(176, 196, 222)," +
+            "  Api.RGB(65, 105, 225), Api.RGB(255, 255, 255), Api.RGB(255, 213, 191)" +
+            "], 'ACP probe color scheme');" +
+            "var gs1 = Api.CreateGradientStop(Api.RGB(255, 213, 191), 0);" +
+            "var gs2 = Api.CreateGradientStop(Api.RGB(255, 111, 61), 100000);" +
+            "var fill1 = Api.CreateRadialGradientFill([gs1, gs2]);" +
+            "var fill2 = Api.CreatePatternFill('dashDnDiag', Api.RGB(255, 111, 61), Api.RGB(51, 51, 51));" +
+            "var fill3 = Api.CreateSolidFill(Api.RGB(255, 111, 61));" +
+            "var stroke1 = Api.CreateStroke(1 * 36000, fill1);" +
+            "var stroke2 = Api.CreateStroke(1 * 36000, fill2);" +
+            "var stroke3 = Api.CreateStroke(1 * 36000, fill3);" +
+            "var formatScheme = Api.CreateThemeFormatScheme([fill1, fill2, fill3], [fill1, fill2, fill3], [stroke1, stroke2, stroke3], 'ACP probe format scheme');" +
+            "var fontScheme = Api.CreateThemeFontScheme('Georgia', 'Noto Sans Simplified Chinese', 'Arabic', 'Georgia', 'Noto Serif Simplified Chinese', 'Arabic', 'ACP probe font scheme');" +
+            "var theme = Api.CreateTheme('ACP Probe Theme', master, colorScheme, formatScheme, fontScheme);" +
+            "if (!theme) return { error: 'CreateTheme returned null' };" +
+            "var ok = slide.ApplyTheme(theme);" +
+            "return { applied: ok, themeName: 'ACP Probe Theme' };"
+        ));
+    }
+
+    function styleTitle(spec) {
+        Asc.scope.p = spec || {};
+        return cmd(new Function(
+            GUARD +
+            "var p = Asc.scope.p;" +
+            CUR_IDX +
+            "var ts = slide.GetDrawingsByPlaceholderType('title');" +
+            "if (!ts || !ts.length) return { error: 'no title placeholder on this slide' };" +
+            "var shape = ts[0];" +
+            "var content = shape.GetContent();" +
+            "if (!content) return { error: 'title shape has no content' };" +
+            "var cleared = false;" +
+            "try { cleared = content.RemoveAllElements(); } catch (e) { cleared = false; }" +
+            "if (!cleared) {" +
+            "  for (var i = 0; i < 500; i++) {" +
+            "    var n = 0;" +
+            "    try { n = content.GetElementsCount(); } catch (e1) { break; }" +
+            "    if (n <= 0) break;" +
+            "    try { content.RemoveElement(0); } catch (e2) { break; }" +
+            "  }" +
+            "}" +
+            "var para = Api.CreateParagraph();" +
+            "var run = Api.CreateRun();" +
+            "run.AddText(p.text || 'Styled Title');" +
+            "try { run.SetFontFamily('Georgia'); } catch (e) {}" +
+            "try { run.SetFontSize(40); } catch (e) {}" +
+            "try { run.SetBold(true); } catch (e) {}" +
+            "try { run.SetFill(Api.CreateSolidFill(Api.RGB(255, 111, 61))); } catch (e) {}" +
+            "para.AddElement(run);" +
+            "var pushed = false;" +
+            "try { pushed = content.Push(para); } catch (e3) { pushed = false; }" +
+            "if (!pushed) { try { content.AddElement(content.GetElementsCount(), para); pushed = true; } catch (e4) {} }" +
+            "return { pushed: pushed, text: p.text || 'Styled Title' };"
+        ));
+    }
+
+    function applyLayout(index) {
+        Asc.scope.p = { index: Number(index) || 0 };
+        return cmd(new Function(
+            GUARD +
+            "var p = Asc.scope.p;" +
+            CUR_IDX +
+            "var master = pres.GetMaster(0);" +
+            "var layout = master.GetLayout(p.index);" +
+            "if (!layout) return { error: 'no layout at index ' + p.index };" +
+            "var ok = slide.ApplyLayout(layout);" +
+            "return { applied: ok, layoutIndex: p.index, slideIndex: idx };"
+        ));
+    }
+
+    function deleteSlide(index) {
+        Asc.scope.p = { index: Number(index) };
+        return cmd(new Function(
+            GUARD +
+            "var p = Asc.scope.p;" +
+            "var pres = Api.GetPresentation();" +
+            "var count = pres.GetSlidesCount();" +
+            "if (count <= 0) return { error: 'no slides' };" +
+            "var target = (p.index >= 0 && p.index < count) ? p.index : count - 1;" +
+            "var ok = pres.GetSlideByIndex(target).Delete();" +
+            "return { applied: ok, deletedIndex: target, slidesBefore: count, slidesAfter: pres.GetSlidesCount() };"
+        ));
+    }
+
+    function addNotes(text) {
+        Asc.scope.p = { text: String(text || "Speaker notes from the ACP probe.") };
+        return cmd(new Function(
+            GUARD +
+            "var p = Asc.scope.p;" +
+            CUR_IDX +
+            "var ok = slide.AddNotesText(p.text);" +
+            "return { applied: ok, slideIndex: idx, text: p.text };"
+        ));
+    }
+
+    function setTransition() {
+        return cmd(new Function(
+            GUARD +
+            CUR_IDX +
+            "var out = {" +
+            "  hasGetSlideShowTransition: typeof slide.GetSlideShowTransition === 'function'," +
+            "  hasSetSlideShowTransition: typeof slide.SetSlideShowTransition === 'function'," +
+            "  hasApiCreateSlideShowTransition: typeof Api.CreateSlideShowTransition === 'function'" +
+            "};" +
+            "try { var tr = slide.GetSlideShowTransition(); out.currentClassType = tr ? tr.GetClassType() : null; } catch (e) { out.getErr = String(e); }" +
+            "if (out.hasSetSlideShowTransition) {" +
+            "  try {" +
+            "    var tr2 = out.hasApiCreateSlideShowTransition ? Api.CreateSlideShowTransition() : null;" +
+            "    if (tr2) { out.createdClassType = tr2.GetClassType(); out.applied = slide.SetSlideShowTransition(tr2); }" +
+            "    else { out.applied = false; out.note = 'no CreateSlideShowTransition factory'; }" +
+            "  } catch (e) { out.setErr = String(e); }" +
+            "}" +
+            "return out;"
+        ));
     }
 
     /* ---- P1: insert (one callCommand = one undo step?) ---- */
