@@ -220,6 +220,35 @@ v0.3.0→v0.3.5) surfaced these rules — all live-verified:
     insert-after only. Calc is active-sheet-only (no sheet switching
     op). Both are documented in the action instructions themselves.
 
+## Packaging (2026-11-03) — win-unpacked verified
+
+electron-builder config added to package.json (mirrors the LO app:
+nsis/portable/zip on win, dmg/zip on mac, AppImage/deb/tar.gz on
+linux; `acp-bridge.plugin` rides along as an extraResource). The app
+gained its own brand assets: `public/logo.svg` (ONLYOFFICE-orange
+variant of the shared card+spark logo; wired as `assetsDir` in both
+electron main and standalone) and `build/icon-256.png`/`icon-512.png`/
+`icon.ico` (PIL-generated from the same design — regenerate with a
+script, they are not exported from the SVG).
+
+Packaged win-unpacked verified: asar bundles the app dist, the
+`public/logo.svg` override, `@acp-assist/core` (incl. companion.js)
+and the full `@acp-assist/panel` (dist + all 13 public modules); the
+packaged exe boots, serves index/app.js/logo.svg//panel-boot.js (token
++ OO config) and answers `/api/status` with the bearer token.
+
+34. **VS Code locks freshly packaged output INSIDE the repo**: a VS
+    Code utility process (file watcher; identified via the Restart
+    Manager API) holds an exclusive lock on extracted electron files
+    (`default_app.asar`), so electron-builder's win-unpacked.tmp →
+    win-unpacked rename fails with EPERM/EBUSY and the partial dirs
+    cannot even be deleted. CI is unaffected. Workaround: package with
+    the output directory OUTSIDE the VS Code-watched workspace —
+    `npx electron-builder --dir --publish never
+    -c.directories.output=<abs path outside the repo>` — or close VS
+    Code first. The gitignored `dist-release/` default stays fine for
+    CI and for users who don't keep the repo open in VS Code.
+
 ## Probe artifacts (spike/)
 
 - `probe-plugin/` — the probe plugin sources (config.json, index.html,

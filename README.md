@@ -15,8 +15,9 @@ there is no LLM and no API key inside these apps.
 |---|---|
 | **[LyX ACP Assist](apps/lyx)** | Assistant for [LyX](https://www.lyx.org/) — writes through the LyXServer named pipe and the `application/x-lyx` clipboard format, so LyX itself performs every insertion |
 | **[LibreOffice ACP Assist](apps/libreoffice)** | Assistant for [LibreOffice](https://www.libreoffice.org/) — Writer, Calc, and Impress via a small in-process UNO bridge (`.oxt`) with per-module adapters |
+| **[ONLYOFFICE ACP Assist](apps/onlyoffice)** | Assistant for [ONLYOFFICE Desktop Editors](https://www.onlyoffice.com/desktop.aspx) — Documents, Spreadsheets, and Presentations via a small in-editor JavaScript plugin (`.plugin`) that connects out to the companion |
 
-Both apps share one architecture: the editor stays the **single writer of
+All three apps share one architecture: the editor stays the **single writer of
 truth**, the agent decides intent via a small vocabulary of action tags that
 the app executes mechanically, and every edit is one undo step. The panel is
 a quiet chat surface that floats beside the document.
@@ -26,8 +27,11 @@ a quiet chat surface that floats beside the document.
 ```
 packages/core/    @acp-assist/core: shared ACP client, types, attachment
                   conversion, chat-history persistence, restart replay
+packages/panel/   @acp-assist/panel: the shared companion panel UI + Electron/
+                  standalone shell hosts
 apps/lyx/         LyX companion (Electron + read-only .lyx parser + pipe client)
 apps/libreoffice/  LibreOffice companion (Electron + UNO bridge + module adapters)
+apps/onlyoffice/  ONLYOFFICE companion (Electron + in-editor .plugin bridge)
 ```
 
 npm workspaces: install once at the root (`npm install`), then develop,
