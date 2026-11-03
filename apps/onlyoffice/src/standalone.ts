@@ -17,6 +17,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 createStandaloneServer({
   appName: 'ONLYOFFICE',
   dataDirName: 'oo-acp-assist-dev',
+  // Per-app brand mark served over the shared panel's logo.svg.
+  assetsDir: path.join(__dirname, '..', '..', 'public'),
   createServer: (paths) =>
     createServer({
       publicDir: paths.publicDir,

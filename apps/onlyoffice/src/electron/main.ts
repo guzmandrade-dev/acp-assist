@@ -23,6 +23,8 @@ createElectronMain({
   // follows the editor window while it is focused).
   watchedProcessName: 'editors',
   appDistDir: __dirname,
+  // Per-app brand mark served over the shared panel's logo.svg.
+  assetsDir: path.join(__dirname, '..', '..', 'public'),
   // The in-editor plugin connects OUT to a well-known port (its panel
   // has a port field; this is just the packaged default).
   listenPort: 8790,

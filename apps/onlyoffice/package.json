@@ -15,7 +15,8 @@
     "start": "npm run build && electron ./dist/electron/main.js",
     "test": "npm run build -w @acp-assist/panel && npm run build -w @acp-assist/core && vitest run",
     "test:watch": "vitest",
-    "package:plugin": "node scripts/package-plugin.mjs"
+    "package:plugin": "node scripts/package-plugin.mjs",
+    "package": "npm run build && npm run package:plugin && electron-builder --publish never"
   },
   "engines": {
     "node": ">=22.0.0"
@@ -34,6 +35,59 @@
     "electron-builder": "^26.15.3",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10"
+  },
+  "build": {
+    "appId": "com.guzma.onlyoffice-acp-assist",
+    "productName": "ONLYOFFICE ACP Assist",
+    "directories": {
+      "output": "dist-release"
+    },
+    "files": [
+      "dist/**/*",
+      "public/**/*",
+      "build/icon-256.png",
+      "build/icon.ico",
+      "!test/**",
+      "!spike/**",
+      "!bridge-plugin/**",
+      "!scripts/**"
+    ],
+    "extraResources": [
+      {
+        "from": "acp-bridge.plugin",
+        "to": "acp-bridge.plugin"
+      }
+    ],
+    "icon": "build/icon.ico",
+    "win": {
+      "target": [
+        "nsis",
+        "portable",
+        "zip"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "Office",
+      "icon": "build/icon-512.png"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb",
+        "tar.gz"
+      ],
+      "category": "Office",
+      "icon": "build/icon-256.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false
+    }
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.7.0",
