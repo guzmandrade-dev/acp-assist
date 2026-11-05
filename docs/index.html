@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ACP Assist — Copilot-style assistants for LyX and LibreOffice</title>
-<meta name="description" content="ACP Assist provides floating LLM assistant panels for LyX and LibreOffice. All reasoning is delegated to an external agent over the Agent Client Protocol (ACP); there is no LLM and no API key inside these apps.">
+<title>ACP Assist — Copilot-style assistants for LyX, LibreOffice, and ONLYOFFICE</title>
+<meta name="description" content="ACP Assist provides floating LLM assistant panels for LyX, LibreOffice, and ONLYOFFICE Desktop Editors. All reasoning is delegated to an external agent over the Agent Client Protocol (ACP); there is no LLM and no API key inside these apps.">
 <link rel="icon" type="image/svg+xml" href="logo-lyx.svg">
 <style>
   :root {
@@ -196,9 +196,9 @@
 
 <div class="hero">
   <div class="wrap">
-    <h1>AI assistants that write into LyX and LibreOffice</h1>
+    <h1>AI assistants that write into LyX, LibreOffice, and ONLYOFFICE</h1>
     <p>
-      ACP Assist is a pair of floating companion panels that read your document,
+      ACP Assist is a set of floating companion panels that read your document,
       chat, and write directly into the live editor document. All reasoning is
       delegated to an external agent you already trust — there is no LLM and no
       API key inside these apps.
@@ -215,7 +215,7 @@
 <section id="apps">
   <div class="wrap">
     <h2>Apps</h2>
-    <p class="lead">Two apps, one architecture: the editor stays the single writer of truth, and the panel is a quiet chat surface that floats beside the document.</p>
+    <p class="lead">Three apps, one architecture: the editor stays the single writer of truth, and the panel is a quiet chat surface that floats beside the document.</p>
     <div class="app-list">
       <div class="app">
         <h3><img src="logo-lyx.svg" alt=""> LyX ACP Assist</h3>
@@ -247,6 +247,22 @@
         </ul>
         <p><a href="https://github.com/guzmandrade-dev/acp-assist/tree/main/apps/libreoffice">LibreOffice ACP Assist README →</a></p>
       </div>
+      <div class="app">
+        <h3><img src="logo-onlyoffice.svg" alt=""> ONLYOFFICE ACP Assist</h3>
+        <p>
+          An assistant for <a href="https://www.onlyoffice.com/desktop.aspx">ONLYOFFICE
+          Desktop Editors</a> — Documents, Spreadsheets, and Presentations — via a
+          small in-editor JavaScript bridge (<code>.plugin</code>) that connects out
+          to the companion over localhost. Edits are one undo step each.
+        </p>
+        <ul>
+          <li>Documents, Spreadsheets, Presentations</li>
+          <li>Install the bridge plugin once via the editor's Plugin Manager
+            (the <code>acp-bridge.plugin</code> asset on each release)</li>
+          <li>Tables, images, comments, page breaks, links, and real lists in Documents</li>
+        </ul>
+        <p><a href="https://github.com/guzmandrade-dev/acp-assist/tree/main/apps/onlyoffice">ONLYOFFICE ACP Assist README →</a></p>
+      </div>
     </div>
   </div>
 </section>
@@ -260,7 +276,8 @@
         <strong>The editor stays the single writer of truth.</strong>
         The app never writes the document file directly. For LyX, inserts are
         pasted through LyX itself; for LibreOffice, every operation goes through
-        UNO in a single undo transaction.
+        UNO in a single undo transaction; for ONLYOFFICE, an in-editor plugin
+        applies each op through the Office JavaScript API.
       </li>
       <li>
         <strong>You type one message.</strong> The agent decides whether to reply
@@ -288,9 +305,13 @@
       </tbody>
     </table>
     <p>
-      The LibreOffice app adds module-specific actions — <code>write-cells</code>,
-      <code>insert-rows</code>, <code>insert-cols</code> in Calc, and
-      <code>insert-after sN</code> / <code>rewrite-slide sN</code> in Impress.
+      The LibreOffice and ONLYOFFICE apps add module-specific actions —
+      <code>write-cells</code>, <code>insert-rows</code>, <code>insert-cols</code>
+      in Calc, <code>insert-after sN</code> / <code>rewrite-slide sN</code> /
+      <code>insert-image sN</code> in Presentations, and in Documents the shared
+      rich-content set: <code>insert-table pN</code>, <code>insert-image pN</code>,
+      <code>add-comment pN</code>, <code>page-break pN</code>, inline
+      <code>[text](url)</code> links, and real lists.
     </p>
     <p>
       <strong>Bring your own agent.</strong> Any
@@ -324,7 +345,7 @@
 <section id="get-started">
   <div class="wrap">
     <h2>Get started</h2>
-    <p class="lead">You need Node.js 22+, your editor (LyX 2.5+ or LibreOffice), and an ACP agent CLI.</p>
+    <p class="lead">You need Node.js 22+, your editor (LyX 2.5+, LibreOffice, or ONLYOFFICE Desktop Editors), and an ACP agent CLI.</p>
     <p>
       Install once at the repository root, then run either app from its own
       directory:
@@ -333,8 +354,15 @@
 cd acp-assist
 npm install
 
-cd apps/lyx          # or: cd apps/libreoffice
+cd apps/lyx          # or: cd apps/libreoffice, cd apps/onlyoffice
 npm start            # builds TypeScript and launches the companion</code></pre>
+    <p>
+      For ONLYOFFICE, also install the bridge plugin once: build it with
+      <code>npm run package:plugin</code> in <code>apps/onlyoffice</code>, then in
+      Desktop Editors open <strong>Plugins → Plugin Manager → Install plugin
+      manually</strong> and pick <code>acp-bridge.plugin</code> (also attached to
+      each release).
+    </p>
     <p>
       Open a saved document in your editor, select some text, and type a
       message. The panel shows the active document, selection word count, and
@@ -355,7 +383,8 @@ npm start            # builds TypeScript and launches the companion</code></pre>
       <a href="https://github.com/guzmandrade-dev/acp-assist/releases">Releases</a> ·
       <a href="https://agentclientprotocol.com/">ACP</a> ·
       <a href="https://www.lyx.org/">LyX</a> ·
-      <a href="https://www.libreoffice.org/">LibreOffice</a>
+      <a href="https://www.libreoffice.org/">LibreOffice</a> ·
+      <a href="https://www.onlyoffice.com/desktop.aspx">ONLYOFFICE</a>
     </nav>
   </div>
 </footer>
