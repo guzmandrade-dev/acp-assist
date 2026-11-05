@@ -58,7 +58,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [lyx, libreoffice]
+        app: [lyx, libreoffice, onlyoffice]
     runs-on: windows-latest
     steps:
       - name: Checkout repository
@@ -72,6 +72,11 @@ jobs:
         if: matrix.app == 'libreoffice'
         run: python scripts/package-oxt.py
         working-directory: apps/libreoffice
+
+      - name: Package bridge plugin (.plugin)
+        if: matrix.app == 'onlyoffice'
+        run: node scripts/package-plugin.mjs
+        working-directory: apps/onlyoffice
 
       - name: Upload app icons
         uses: actions/upload-artifact@v4
@@ -91,12 +96,20 @@ jobs:
           path: apps/libreoffice/acp-bridge.oxt
           if-no-files-found: error
 
+      - name: Upload bridge plugin
+        if: matrix.app == 'onlyoffice'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bridge-plugin
+          path: apps/onlyoffice/acp-bridge.plugin
+          if-no-files-found: error
+
   build:
     needs: assets
     strategy:
       fail-fast: false
       matrix:
-        app: [lyx, libreoffice]
+        app: [lyx, libreoffice, onlyoffice]
         os: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
 
@@ -126,6 +139,13 @@ jobs:
         with:
           name: bridge-oxt
           path: apps/libreoffice
+
+      - name: Download bridge plugin
+        if: matrix.app == 'onlyoffice'
+        uses: actions/download-artifact@v4
+        with:
+          name: bridge-plugin
+          path: apps/onlyoffice
 
       - name: Build application
         run: npm run build
@@ -193,6 +213,14 @@ jobs:
         with:
           name: windows-oxt
           path: apps/libreoffice/acp-bridge.oxt
+          if-no-files-found: warn
+
+      - name: Upload bridge plugin with Windows build
+        if: matrix.os == 'windows-latest' && matrix.app == 'onlyoffice'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-plugin
+          path: apps/onlyoffice/acp-bridge.plugin
           if-no-files-found: warn
 
   release:
