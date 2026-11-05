@@ -1,5 +1,5 @@
 /*
- * ACP Assist Bridge v0.5.0 (apps/onlyoffice/bridge-plugin).
+ * ACP Assist Bridge v0.6.0 (apps/onlyoffice/bridge-plugin).
  * Dumb transport, same contract as the LibreOffice .oxt bridge: the
  * plugin carries JSON between the editor and the companion; ALL
  * intelligence lives in the companion. The companion owns the port —
@@ -13,7 +13,8 @@
  *
  * Ops (each edit = ONE callCommand = one undo step):
  *   ping, context, selection, insert, insertTop, insertAfter,
- *   rewriteAt, deleteAt, rewriteSelection, insertTable, undo, journal
+ *   rewriteAt, deleteAt, rewriteSelection, insertTable, insertImageAt,
+ *   addComment, pageBreak, undo, journal
  *   cell (spreadsheet): writeCells, insertRows, insertCols
  *   slide (presentation): rewriteSlide, insertSlideAfter
  *
@@ -97,7 +98,7 @@
             return {
                 style: p.style || null,
                 runs: (p.runs || []).map(function (r) {
-                    return { text: String(r.text), bold: !!r.bold, italic: !!r.italic, code: !!r.code };
+                    return { text: String(r.text), bold: !!r.bold, italic: !!r.italic, code: !!r.code, url: r.url ? String(r.url) : undefined };
                 })
             };
         });
@@ -112,22 +113,35 @@
     var MAKE_PARAS_SRC =
         "var oDocument = Api.GetDocument();" +
         "var made = [];" +
+        "var bulletNum = null; var numNum = null;" +  // real lists via numbering (rule 54)
         "for (var i = 0; i < Asc.scope.paras.length; i++) {" +
         "  var spec = Asc.scope.paras[i];" +
         "  var p = Api.CreateParagraph();" +
         "  if (spec.style) {" +
         "    var sName = spec.style === 'Preformatted Text' ? 'Code' :" +
         "      (spec.style === 'Quotations' ? 'Quote' : spec.style);" +
-        "    try { var st = Api.GetStyle(sName); if (st) { p.SetStyle(st); } } catch (e2) {}" +
+        "    if (sName === 'List' || sName === 'Numbering 1') {" +
+        "      try {" +
+        "        if (sName === 'List') { if (!bulletNum) bulletNum = oDocument.CreateNumbering('bullet'); p.SetNumbering(bulletNum.GetLevel(0)); }" +
+        "        else { if (!numNum) numNum = oDocument.CreateNumbering('numbered'); p.SetNumbering(numNum.GetLevel(0)); }" +
+        "      } catch (eList) {}" +
+        "    } else {" +
+        "      try { var st = Api.GetStyle(sName); if (st) { p.SetStyle(st); } } catch (e2) {}" +
+        "    }" +
         "  }" +
         "  for (var r = 0; r < spec.runs.length; r++) {" +
         "    var run = spec.runs[r];" +
-        "    var oRun = p.AddText(run.text);" +
-        "    try {" +
-        "      if (run.bold) { oRun.SetBold(true); }" +
-        "      if (run.italic) { oRun.SetItalic(true); }" +
-        "      if (run.code) { oRun.SetFontFamily('Consolas'); }" +
-        "    } catch (e3) {}" +
+        "    if (run.url) {" +
+        "      try { var hl = p.AddHyperlink(run.url, ''); hl.SetDisplayedText(run.text); }" +  // rule 53
+        "      catch (eUrl) { p.AddText(run.text); }" +
+        "    } else {" +
+        "      var oRun = p.AddText(run.text);" +
+        "      try {" +
+        "        if (run.bold) { oRun.SetBold(true); }" +
+        "        if (run.italic) { oRun.SetItalic(true); }" +
+        "        if (run.code) { oRun.SetFontFamily('Consolas'); }" +
+        "      } catch (e3) {}" +
+        "    }" +
         "  }" +
         "  made.push(p);" +
         "}";
@@ -724,6 +738,81 @@
             )).then(function (r) {
                 if (r.error) throw new Error(r.error);
                 record("insertTable", { index: args.index, rows: Asc.scope.rows.length });
+                return r;
+            });
+        },
+
+        /* insertImageAt {index, src, w, h}: inline image in a fresh paragraph
+         * after element `index` (-1 = very start). One callCommand = one undo
+         * step (rule 52). w/h in EMU, resolved by the companion. src is an
+         * http(s) URL or data:image/... URI. NEVER return the AddDrawing
+         * value — it is not serializable and poisons the result (rule 52). */
+        insertImageAt: function (args) {
+            requireWord();
+            Asc.scope.index = args.index;
+            Asc.scope.src = String(args.src || "");
+            Asc.scope.w = Number(args.w) || 2520000;   // default ~7cm
+            Asc.scope.h = Number(args.h) || 2520000;
+            return cmd(new Function(
+                "var oDocument = Api.GetDocument();" +
+                "var p = Asc.scope;" +
+                "if (!p.src) return { error: 'insertImageAt needs src' };" +
+                "var count0 = oDocument.GetElementsCount();" +
+                "if (p.index < -1 || p.index >= count0) return { error: 'index ' + p.index + ' out of range (-1..' + (count0 - 1) + ')' };" +
+                "var img = Api.CreateImage(p.src, p.w, p.h);" +
+                "if (!img) return { error: 'CreateImage returned null' };" +
+                "var para = Api.CreateParagraph();" +
+                "para.AddDrawing(img);" +
+                "var pos = p.index + 1; if (pos < 0) pos = 0;" +
+                "if (pos > oDocument.GetElementsCount()) pos = oDocument.GetElementsCount();" +
+                "var added = oDocument.AddElement(pos, para);" +
+                "return { added: !!added, pos: pos, images: oDocument.GetAllImages().length, elements: oDocument.GetElementsCount() };"
+            )).then(function (r) {
+                if (r.error) throw new Error(r.error);
+                record("insertImageAt", { index: args.index });
+                return r;
+            });
+        },
+
+        /* addComment {index, text}: comment on the element at `index`
+         * (rule 55). One callCommand = one undo step. */
+        addComment: function (args) {
+            requireWord();
+            Asc.scope.index = args.index;
+            Asc.scope.text = String(args.text || "");
+            return cmd(new Function(
+                "var oDocument = Api.GetDocument();" +
+                "var p = Asc.scope;" +
+                "var count = oDocument.GetElementsCount();" +
+                "if (p.index < 0 || p.index >= count) return { error: 'index ' + p.index + ' out of range (0..' + (count - 1) + ')' };" +
+                "var el = oDocument.GetElement(p.index);" +
+                "if (el.GetClassType() !== 'paragraph') return { error: 'element ' + p.index + ' is not a paragraph (' + el.GetClassType() + ')' };" +
+                "var c = el.AddComment(p.text);" +
+                "return { added: !!c, comments: oDocument.GetAllComments().length };"
+            )).then(function (r) {
+                if (r.error) throw new Error(r.error);
+                record("addComment", { index: args.index });
+                return r;
+            });
+        },
+
+        /* pageBreak {index}: fresh paragraph containing a page break,
+         * inserted BEFORE element `index` (one undo step). */
+        pageBreak: function (args) {
+            requireWord();
+            Asc.scope.index = args.index;
+            return cmd(new Function(
+                "var oDocument = Api.GetDocument();" +
+                "var p = Asc.scope;" +
+                "var count = oDocument.GetElementsCount();" +
+                "var pos = p.index; if (pos < 0) pos = 0; if (pos > count) pos = count;" +
+                "var para = Api.CreateParagraph();" +
+                "para.AddPageBreak();" +  // rule 56
+                "var added = oDocument.AddElement(pos, para);" +
+                "return { added: !!added, pos: pos, elements: oDocument.GetElementsCount() };"
+            )).then(function (r) {
+                if (r.error) throw new Error(r.error);
+                record("pageBreak", { index: args.index });
                 return r;
             });
         },
