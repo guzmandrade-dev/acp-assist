@@ -422,12 +422,85 @@ The live pass caught three more real bugs — all fixed + re-verified:
     style prefix stays points (human/LLM friendly); the plugin's
     lineObj multiplies by 2 before SetFontSize.
 
+## P6 Writer rich-content probes — LIVE-VERIFIED 2026-11-04 (Writer, Desktop Editors 10.0.0.169)
+
+Driven live via CDP (`--force-renderer-accessibility
+--remote-debugging-port=9222` on DesktopEditors.exe — the debug port
+WORKS with these flags; plain launch exposes no CDP) into the probe
+plugin iframe (`sdkjs-plugins/{B4F7A1C2-…}/index.html`), calling
+`Asc.plugin.callCommand(new Function(src), false, false, cb)` directly
+— no plugin reinstall needed for new probe code. The probe plugin's
+long-poll channel (probe-server :8791) also works once the Plugins tab
+is open (the plugin iframe loads ONLY when the Plugins panel is
+visible; open the tab via DOM click on `li.ribtab` "Plugins" in the
+documenteditor iframe, then click the plugin's toolbar button).
+Scratch doc: `C:\Users\guzma\Temp\p6-probe.docx`. New rules:
+
+49. **The whole Writer rich-content surface EXISTS** (all `function`
+    live): `Api.CreateTable/CreateImage/CreateNumbering/CreateChart/
+    CreateShape/CreateParagraph/CreateRun/AddComment/RGB/
+    CreateSolidFill/CreateStroke`; `doc.Push/AddElement/InsertContent/
+    GetAllTables/GetAllImages/GetAllParagraphs/GetAllComments/
+    CreateNumbering/RemoveElement`; `para.AddDrawing/AddHyperlink/
+    AddComment/AddPageBreak/AddColumnBreak/AddLineBreak/SetNumbering/
+    GetNumbering/SetStyle/GetStyle/GetElement(sCount)/GetClassType`.
+50. **`Api.CreateTable(a, b)` is empirically (rows, cols)** —
+    `CreateTable(3,2)` gave `Rows.length=3`, `GetColumnsCount()=2`,
+    each row 2 cells. The docs claim (nCol, nRow); trust the read-back
+    (`Rows.length`/`GetColumnsCount()`), not the parameter names.
+51. **Tables**: build + fill + insert in ONE callCommand =
+    **ONE undo step** (single Ctrl+Z removed the whole table,
+    verified by read-back). Fill: `cell.AddText(txt)` works;
+    `cell.GetContent().GetElement(0).AddText(...)` also works.
+    Cell styling: `SetBackgroundColor(Api.RGB(r,g,b))` (works),
+    `SetShd`, `SetVerticalAlign`, `SetCellBorderTop/Bottom/Left/Right`,
+    `SetCellMargin*`; table-level `SetTableBorder*` (e.g.
+    `SetTableBorderTop`) exists, `SetBorders` does NOT. Insert at a
+    position: `doc.AddElement(pos, table)` (table counts as ONE
+    document element, `GetClassType()==="table"`); append: `doc.Push`.
+    Read: `doc.GetAllTables()` → `t.Rows.length`, `t.GetRow(r).
+    GetCellsCount()`, `GetCell(c).GetText()` — **cell text has a
+    trailing `\t` or `\r\n` — normalize on read**.
+52. **Images in Writer**: `Api.CreateImage(src, w, h)` (src = http(s)
+    URL OR base64 data URI — both verified; w/h in EMU, 36000/in) +
+    `para.AddDrawing(img)` inserts inline; read back via
+    `doc.GetAllImages()` (classType "image"). **PITFALL: AddDrawing's
+    RETURN VALUE is not returnByValue-serializable — including it in
+    the callCommand result makes the whole result `undefined`** (the
+    drawing still lands). Never return the AddDrawing value. One
+    callCommand image insert = ONE Ctrl+Z (verified). **Images do NOT
+    repaint live in Writer either** (screenshot pixel-scan: 7 images
+    in doc, 0 red pixels on canvas — same as rule 41): they render
+    after save+reopen; the action description must say so.
+53. **Hyperlinks**: `para.AddHyperlink(url, screenTip)` appends a
+    `hyperlink` element (element kinds: run/hyperlink/run). Read side:
+    `GetDisplayedText()` + `GetScreenTipText()` exist; **`GetLink`/
+    `GetHyperlink` are undefined** — the URL getter name is still
+    unprobed (display text only for now).
+54. **Real lists**: `doc.CreateNumbering("bullet"|"numbered")` →
+    `num.GetLevel(0)` (classType "numberingLevel") →
+    `para.SetNumbering(lvl)` (returns true); read `para.GetNumbering()`
+    (truthy). Replaces LO's literal "• " prefix approach.
+55. **Comments**: `para.AddComment("text")` → classType "comment";
+    `doc.GetAllComments().length` counts them; `comment.GetText()`
+    reads the text (`GetAuthor` unprobed/n/a).
+56. **Breaks**: `para.AddLineBreak()/AddPageBreak()/AddColumnBreak()`
+    all work (GetText shows `\r` for line break, `\r\r\r\n` for
+    page/col breaks).
+57. **Element classification for /document reads**:
+    `doc.GetElement(i).GetClassType()` ∈ {"paragraph","table",...};
+    a table is ONE element at its position; paragraphs read
+    `GetText()` with `\r\r\n` quirks (rule 7/17 — normalize).
+
 ## Probe artifacts (spike/)
 
 - `probe-plugin/` — the probe plugin sources (config.json, index.html,
-  scripts/code.js: P1–P4 + P5 design-probe instrumentation, long-poll
-  client, report()). **v0.2.1** — P5 batch + self-contained callCommand
-  sources (rule 39); installed in the user's editors as v0.2.1.
+  scripts/code.js: P1–P4 + P5 design-probe + P6 writer-rich-content
+  command batch (2026-11-04), long-poll client, report()). **v0.2.1**
+  installed in the user's editors; the P6 commands were also synced
+  into the extracted copy under `%LOCALAPPDATA%\...\sdkjs-plugins\{B4F7A1C2-…}\scripts\code.js`
+  (editing the extracted files IS picked up on next editor start — the
+  `addons` hash is only enforced at Plugin-Manager install time).
 - `acp-probe.plugin` — packaged artifact (Compress-Archive + rename).
   Repackage after editing probe sources. (A stray copy sits on the
   user's Desktop: `acp-probe-v0.2.plugin`.)

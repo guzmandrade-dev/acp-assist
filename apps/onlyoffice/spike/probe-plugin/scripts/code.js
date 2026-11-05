@@ -95,6 +95,16 @@
             case "deleteSlide":   return deleteSlide(cmd.index);
             case "addNotes":      return addNotes(cmd.text);
             case "setTransition": return setTransition();
+            /* ---- P6: writer rich-content probes (2026-11-04) ---- */
+            case "p6info":    return p6info();
+            case "p6table":   return p6table(cmd);
+            case "p6image":   return p6image(cmd);
+            case "p6link":    return p6link(cmd);
+            case "p6list":    return p6list(cmd);
+            case "p6comment": return p6comment(cmd);
+            case "p6break":   return p6break(cmd);
+            case "p6undo":    return p6undo(cmd);
+            case "p6read":    return p6read();
             default:           return Promise.reject(new Error("unknown command " + cmd.type));
         }
     }
@@ -326,6 +336,243 @@
             "    else { out.applied = false; out.note = 'no CreateSlideShowTransition factory'; }" +
             "  } catch (e) { out.setErr = String(e); }" +
             "}" +
+            "return out;"
+        ));
+    }
+
+    /* ---- P6: Writer rich-content probes (2026-11-04) ------------------
+     * Tables / images / hyperlinks / numbering / comments / breaks in a
+     * WORD document. Same hygiene as P5: one callCommand per op, bounded
+     * loops, self-contained new Function(src) sources (rule 39), args via
+     * Asc.scope. WORD_GUARD rejects non-word editors cleanly.
+     */
+
+    var WORD_GUARD = "if (typeof Api === 'undefined' || typeof Api.GetDocument !== 'function') return { error: 'not a word document' };";
+
+    function p6info() {
+        return cmd(new Function(
+            WORD_GUARD +
+            "var doc = Api.GetDocument();" +
+            "var p = doc.GetElement ? doc.GetElement(0) : null;" +
+            "function t(o, n) { try { return typeof o[n]; } catch (e) { return 'err'; } }" +
+            "return {" +
+            "  Api: { CreateTable: t(Api, 'CreateTable'), CreateImage: t(Api, 'CreateImage'), CreateNumbering: t(Api, 'CreateNumbering'), CreateChart: t(Api, 'CreateChart'), CreateShape: t(Api, 'CreateShape'), CreateParagraph: t(Api, 'CreateParagraph'), CreateRun: t(Api, 'CreateRun'), AddComment: t(Api, 'AddComment'), RGB: t(Api, 'RGB'), CreateSolidFill: t(Api, 'CreateSolidFill') }," +
+            "  doc: { Push: t(doc, 'Push'), AddElement: t(doc, 'AddElement'), InsertContent: t(doc, 'InsertContent'), CreateNumbering: t(doc, 'CreateNumbering'), GetAllTables: t(doc, 'GetAllTables'), GetAllImages: t(doc, 'GetAllImages'), GetAllParagraphs: t(doc, 'GetAllParagraphs'), RemoveElement: t(doc, 'RemoveElement') }," +
+            "  para: p ? { AddDrawing: t(p, 'AddDrawing'), AddHyperlink: t(p, 'AddHyperlink'), AddComment: t(p, 'AddComment'), AddPageBreak: t(p, 'AddPageBreak'), AddColumnBreak: t(p, 'AddColumnBreak'), AddLineBreak: t(p, 'AddLineBreak'), SetNumbering: t(p, 'SetNumbering'), GetNumbering: t(p, 'GetNumbering'), SetStyle: t(p, 'SetStyle'), GetStyle: t(p, 'GetStyle'), AddElement: t(p, 'AddElement'), GetElement: t(p, 'GetElement'), GetElementsCount: t(p, 'GetElementsCount'), GetClassType: t(p, 'GetClassType') } : null," +
+            "  elements: doc.GetElementsCount()" +
+            "};"
+        ));
+    }
+
+    function p6table(spec) {
+        Asc.scope.p = spec || {};
+        return cmd(new Function(
+            WORD_GUARD +
+            "var p = Asc.scope.p;" +
+            "var doc = Api.GetDocument();" +
+            "var nCol = Number(p.cols) || 3, nRow = Number(p.rows) || 2;" +
+            "var t = Api.CreateTable(nCol, nRow);" +
+            "if (!t) return { error: 'CreateTable null' };" +
+            "var out = { colsArg: nCol, rowsArg: nRow };" +
+            "try { out.cols = t.GetColumnsCount(); } catch (e) { out.colsErr = String(e); }" +
+            "try { out.rows = t.Rows.length; } catch (e) { out.rowsErr = String(e); }" +
+            "try { out.hasSetTableBorderTop = typeof t.SetTableBorderTop; out.hasSetBorders = typeof t.SetBorders; out.hasSetWidth = typeof t.SetWidth; out.hasSetTableLook = typeof t.SetTableLook; } catch (e) {}" +
+            // fill every cell with row,col text
+            "for (var r = 0; r < nRow && r < 20; r++) {" +
+            "  var row = t.GetRow(r);" +
+            "  for (var c = 0; c < nCol && c < 20; c++) {" +
+            "    var cell = row.GetCell(c);" +
+            "    var txt = 'r' + r + 'c' + c;" +
+            "    var done = false;" +
+            "    try { cell.AddText(txt); done = true; } catch (e1) {" +
+            "      try { var content = cell.GetContent(); content.GetElement(0).AddText(txt); done = true; } catch (e2) { out.fillErr = String(e2); }" +
+            "    }" +
+            "    if (r === 0 && c === 0) {" +
+            "      try { cell.SetBackgroundColor(Api.RGB(255, 230, 180)); out.shade = 'SetBackgroundColor ok'; } catch (e3) {" +
+            "        try { cell.SetShd('FFE6B4'); out.shade = 'SetShd hex ok'; } catch (e4) { out.shadeErr = String(e4); }" +
+            "      }" +
+            "      try { cell.SetVerticalAlign('top'); out.valign = true; } catch (e5) {}" +
+            "    }" +
+            "  }" +
+            "}" +
+            // insert at position (after paragraph p.pos if given) else append
+            "var pos = (typeof p.pos === 'number') ? p.pos : doc.GetElementsCount();" +
+            "var added = false;" +
+            "try { added = doc.AddElement(pos, t); } catch (e6) {" +
+            "  try { added = doc.Push(t); out.fallback = 'Push'; } catch (e7) { out.addErr = String(e7); }" +
+            "}" +
+            "out.added = added; out.pos = pos;" +
+            "try { out.tablesInDoc = doc.GetAllTables().length; } catch (e8) {}" +
+            "try { out.cell00 = t.GetRow(0).GetCell(0).GetText(); } catch (e9) { out.cellErr = String(e9); }" +
+            "try { out.classType = t.GetClassType(); } catch (e10) {}" +
+            "try { out.elements = doc.GetElementsCount(); } catch (e11) {}" +
+            "return out;"
+        ));
+    }
+
+    function p6image(spec) {
+        Asc.scope.p = { src: (spec && spec.src === "red") ? RED_DOT : ((spec && spec.src) || SAMPLE_IMG) };
+        return cmd(new Function(
+            WORD_GUARD +
+            "var p = Asc.scope.p;" +
+            "var doc = Api.GetDocument();" +
+            "var img = Api.CreateImage(p.src, 2 * 36000, 2 * 36000);" +
+            "if (!img) return { error: 'CreateImage null' };" +
+            "var out = { imgClass: (function(){try{return img.GetClassType();}catch(e){return null;}})() };" +
+            "var para = Api.CreateParagraph();" +
+            "var added = false;" +
+            "try { added = para.AddDrawing(img); } catch (e1) { out.addErr = String(e1); }" +
+            "try { doc.Push(para); } catch (e2) { out.pushErr = String(e2); }" +
+            "try { out.imagesInDoc = doc.GetAllImages().length; } catch (e3) { out.imgsErr = String(e3); }" +
+            "try { out.drawingsOnPara = para.GetAllDrawings ? para.GetAllDrawings().length : 'n/a'; } catch (e4) {}" +
+            "out.added = added; out.elements = doc.GetElementsCount();" +
+            "return out;"
+        ));
+    }
+
+    function p6link(spec) {
+        Asc.scope.p = { url: (spec && spec.url) || "https://example.com", text: (spec && spec.text) || "example link" };
+        return cmd(new Function(
+            WORD_GUARD +
+            "var p = Asc.scope.p;" +
+            "var doc = Api.GetDocument();" +
+            "var para = Api.CreateParagraph();" +
+            "para.AddText('see ');" +
+            "var hl = null;" +
+            "try { hl = para.AddHyperlink(p.url, p.text); } catch (e1) { return { error: 'AddHyperlink: ' + e1 }; }" +
+            "var out = { hlClass: null, paraText: null, nEls: null };" +
+            "try { out.hlClass = hl ? hl.GetClassType() : null; } catch (e2) {}" +
+            "try { out.paraText = para.GetText(); } catch (e3) {}" +
+            "try { out.nEls = para.GetElementsCount();" +
+            "  var kinds = [];" +
+            "  for (var i = 0; i < out.nEls && i < 20; i++) { try { kinds.push(para.GetElement(i).GetClassType()); } catch (e4) {} }" +
+            "  out.elKinds = kinds; } catch (e5) {}" +
+            "doc.Push(para);" +
+            "out.elements = doc.GetElementsCount();" +
+            "return out;"
+        ));
+    }
+
+    function p6list(spec) {
+        Asc.scope.p = { kind: (spec && spec.kind) || "bullet" };
+        return cmd(new Function(
+            WORD_GUARD +
+            "var p = Asc.scope.p;" +
+            "var doc = Api.GetDocument();" +
+            "var out = { kind: p.kind };" +
+            "var num = null;" +
+            "try { num = doc.CreateNumbering(p.kind); } catch (e1) {" +
+            "  try { num = Api.CreateNumbering(p.kind); } catch (e2) { out.numErr = String(e2); }" +
+            "}" +
+            "if (!num) return out;" +
+            "try { out.numClass = num.GetClassType(); } catch (e3) {}" +
+            "var lvl = null;" +
+            "try { lvl = num.GetLevel(0); out.lvlClass = lvl ? lvl.GetClassType() : null; } catch (e4) { out.lvlErr = String(e4); }" +
+            "var para = Api.CreateParagraph();" +
+            "para.AddText('list item one');" +
+            "var set = false;" +
+            "try { set = para.SetNumbering(lvl); } catch (e5) { out.setErr = String(e5); }" +
+            "out.set = set;" +
+            "doc.Push(para);" +
+            "try { out.hasGetNumbering = typeof para.GetNumbering; } catch (e6) {}" +
+            "return out;"
+        ));
+    }
+
+    function p6comment(spec) {
+        Asc.scope.p = { text: (spec && spec.text) || "P6 probe comment" };
+        return cmd(new Function(
+            WORD_GUARD +
+            "var p = Asc.scope.p;" +
+            "var doc = Api.GetDocument();" +
+            "var para = Api.CreateParagraph();" +
+            "para.AddText('comment target');" +
+            "doc.Push(para);" +
+            "var out = { paraAddComment: typeof para.AddComment, apiAddComment: typeof Api.AddComment, docAddComment: typeof doc.AddComment };" +
+            "var c = null;" +
+            "try { c = para.AddComment(p.text); } catch (e1) { out.paraErr = String(e1); }" +
+            "if (!c) { try { c = Api.AddComment(para, p.text); } catch (e2) { out.apiErr = String(e2); } }" +
+            "out.commentClass = null;" +
+            "try { out.commentClass = c ? c.GetClassType() : null; } catch (e3) {}" +
+            "try { var all = doc.GetAllComments ? doc.GetAllComments() : null; out.comments = all ? all.length : 'n/a'; } catch (e4) { out.commentsErr = String(e4); }" +
+            "return out;"
+        ));
+    }
+
+    function p6break(spec) {
+        return cmd(new Function(
+            WORD_GUARD +
+            "var doc = Api.GetDocument();" +
+            "var para = Api.CreateParagraph();" +
+            "var out = {};" +
+            "para.AddText('before-line');" +
+            "try { para.AddLineBreak(); out.line = true; } catch (e1) { out.lineErr = String(e1); }" +
+            "para.AddText('after-line');" +
+            "try { para.AddPageBreak(); out.page = true; } catch (e2) { out.pageErr = String(e2); }" +
+            "try { para.AddColumnBreak(); out.col = true; } catch (e3) { out.colErr = String(e3); }" +
+            "doc.Push(para);" +
+            "try { out.text = para.GetText(); } catch (e4) {}" +
+            "out.elements = doc.GetElementsCount();" +
+            "return out;"
+        ));
+    }
+
+    function p6undo(spec) {
+        // Does executeMethod('Undo') work from a plugin? Count steps to revert.
+        Asc.scope.p = { max: Number((spec && spec.max) || 10) };
+        return new Promise(function (resolve) {
+            var out = { max: Asc.scope.p.max, steps: [] };
+            function readState(cb) {
+                cmd(new Function(
+                    WORD_GUARD +
+                    "var doc = Api.GetDocument();" +
+                    "var tables = 0, images = 0, els = doc.GetElementsCount();" +
+                    "try { tables = doc.GetAllTables().length; } catch (e) {}" +
+                    "try { images = doc.GetAllImages().length; } catch (e) {}" +
+                    "return { els: els, tables: tables, images: images };"
+                )).then(function (s) { cb(s); }).catch(function (e) { cb({ err: String(e) }); });
+            }
+            function undoOnce(cb) {
+                try {
+                    window.Asc.plugin.executeMethod("Undo", [], function (v) { cb({ ok: v }); });
+                } catch (e) { cb({ err: String(e) }); }
+            }
+            readState(function (s0) {
+                out.start = s0;
+                var i = 0;
+                function step() {
+                    if (i >= out.max) { resolve(out); return; }
+                    i++;
+                    undoOnce(function (u) {
+                        setTimeout(function () {
+                            readState(function (s) {
+                                out.steps.push({ undo: u, state: s });
+                                step();
+                            });
+                        }, 300);
+                    });
+                }
+                step();
+            });
+        });
+    }
+
+    function p6read() {
+        return cmd(new Function(
+            WORD_GUARD +
+            "var doc = Api.GetDocument();" +
+            "var count = doc.GetElementsCount();" +
+            "var els = [];" +
+            "for (var i = 0; i < count && i < 100; i++) {" +
+            "  var el = doc.GetElement(i);" +
+            "  var rec = { i: i };" +
+            "  try { rec.classType = el.GetClassType(); } catch (e) {}" +
+            "  try { rec.text = String(el.GetText()).slice(0, 80); } catch (e) {}" +
+            "  els.push(rec);" +
+            "}" +
+            "var out = { count: count, els: els };" +
+            "try { out.tables = doc.GetAllTables().length; } catch (e) { out.tablesErr = String(e); }" +
+            "try { out.images = doc.GetAllImages().length; } catch (e) { out.imagesErr = String(e); }" +
             "return out;"
         ));
     }
