@@ -4,7 +4,7 @@ import http from 'node:http';
 import type { Server } from 'node:http';
 import { PluginBridge } from '../src/bridge/plugin-bridge.js';
 import { parseAction } from '../src/server.js';
-import { parseContentBlock, extractContentBlock } from '../src/modules/markdown.js';
+import { parseContentBlock, extractContentBlock, parseTableBlock } from '../src/modules/markdown.js';
 import { writerAdapter } from '../src/modules/writer.js';
 import { calcAdapter, parseCalcAction } from '../src/modules/calc.js';
 import { impressAdapter, parseImpressAction } from '../src/modules/impress.js';
@@ -163,6 +163,40 @@ describe('parseAction', () => {
   });
 });
 
+/** Writer insert-table grammar + markdown-table parsing. */
+describe('insert-table action', () => {
+  it('parses insert-table with its markdown-table block', () => {
+    const reply = [
+      'Adding a table.',
+      '```writer',
+      '| Name | Role |',
+      '| --- | --- |',
+      '| Ada | Eng |',
+      '| Grace | Math |',
+      '```',
+      '[ACTION: insert-table p2]',
+    ].join('\n');
+    const outcome = parseAction(reply);
+    expect(outcome.action).toBe('insert-table');
+    expect(outcome.target).toBe(2);
+    expect(outcome.block).toBeNull();
+    expect(outcome.table).toEqual([
+      ['Name', 'Role'],
+      ['Ada', 'Eng'],
+      ['Grace', 'Math'],
+    ]);
+  });
+
+  it('parses pipe rows, drops the separator row and tag lines', () => {
+    const block = ['| A | B |', '|:-:|---:|', '| 1 | 2 |', '', '| 3 | 4 |'].join('\n');
+    expect(parseTableBlock(block)).toEqual([['A', 'B'], ['1', '2'], ['3', '4']]);
+  });
+
+  it('skips non-pipe lines and trims cells', () => {
+    expect(parseTableBlock('intro text\n|  x  |y|  ')).toEqual([['x', 'y']]);
+  });
+});
+
 /** Markdown-lite content parsing (shared dialect with the LO app). */
 describe('parseContentBlock', () => {
   it('maps headings, bullets, quotes, code fences and inline runs', () => {
@@ -235,11 +269,35 @@ describe('writerAdapter.applyAction', () => {
     await writerAdapter.applyAction(bridge, doc, true, { action: 'rewrite', module: 'writer', target: null, block: [content] });
     await writerAdapter.applyAction(bridge, doc, false, { action: 'delete-at', module: 'writer', target: 2, block: null });
 
+    await writerAdapter.applyAction(bridge, doc, false, {
+      action: 'insert-table', module: 'writer', target: 2, block: null,
+      table: [['H1', 'H2'], ['a', 'b']],
+    });
+
     expect(calls.map((c) => c.op)).toEqual([
-      'insert', 'insertTop', 'insertAfter', 'rewriteAt', 'rewriteSelection', 'deleteAt',
+      'insert', 'insertTop', 'insertAfter', 'rewriteAt', 'rewriteSelection', 'deleteAt', 'insertTable',
     ]);
     expect(calls[2]?.args).toEqual({ paragraphs: [content], index: 1 });
     expect(calls[5]?.args).toEqual({ index: 1 });
+    expect(calls[6]?.args).toEqual({ index: 1, rows: [['H1', 'H2'], ['a', 'b']], header: true });
+  });
+
+  it('maps insert-table p0 to index -1 (very start)', async () => {
+    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
+    const bridge = recordingBridge(calls);
+    await writerAdapter.applyAction(bridge, doc, false, {
+      action: 'insert-table', module: 'writer', target: 0, block: null, table: [['only']],
+    });
+    expect(calls[0]?.args).toEqual({ index: -1, rows: [['only']], header: false });
+  });
+
+  it('rejects insert-table without a table block before writing', async () => {
+    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
+    const bridge = recordingBridge(calls);
+    await expect(
+      writerAdapter.applyAction(bridge, doc, false, { action: 'insert-table', module: 'writer', target: 1, block: null, table: [] }),
+    ).rejects.toThrow(/markdown table/);
+    expect(calls).toEqual([]);
   });
 
   it('throws before writing when content or preconditions are missing', async () => {

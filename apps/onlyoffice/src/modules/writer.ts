@@ -10,7 +10,7 @@
  * ONLYOFFICE, so the agent instructions say undo instead.
  */
 
-import type { PluginBridge, WriterDocument, BlockParagraph, EditResult } from '../bridge/plugin-bridge.js';
+import type { PluginBridge, WriterDocument, BlockParagraph, EditResult, InsertTableArgs, InsertTableResult, TableSummary } from '../bridge/plugin-bridge.js';
 import { actionInstructions, preview } from './markdown.js';
 
 /** Body size above which only the outline + previews are attached. */
@@ -21,10 +21,13 @@ export interface WriterOutcome {
   module: 'writer';
   action:
     | 'none' | 'continue'
-    | 'insert' | 'insert-top' | 'insert-after' | 'rewrite' | 'rewrite-at' | 'delete-at';
+    | 'insert' | 'insert-top' | 'insert-after' | 'rewrite' | 'rewrite-at' | 'delete-at'
+    | 'insert-table';
   /** Parsed content paragraphs; null for actions without content. */
   block: BlockParagraph[] | null;
-  /** 1-based paragraph address for insert-after/rewrite-at/delete-at. */
+  /** Parsed table rows for insert-table (markdown-table block); else null. */
+  table?: string[][] | null;
+  /** 1-based paragraph address for insert-after/rewrite-at/delete-at/insert-table. */
   target: number | null;
   tagNote?: string | null;
 }
@@ -40,11 +43,25 @@ function styleVocabulary(texts: string[], styles: Array<string | null> | undefin
   return [...seen];
 }
 
+/** Describe a table element for the context line (e.g. "table 3x2: Name | Role"). */
+function tableLabel(doc: WriterDocument, i: number): string | null {
+  if (doc.kinds?.[i] !== 'table') return null;
+  const t = doc.tables?.find((t2) => t2.index === i);
+  if (!t || t.error) return 'table';
+  const head = t.header && t.header.length ? `: ${t.header.join(' | ')}` : '';
+  return `table ${t.rows}x${t.cols}${head}`;
+}
+
 /** Render the [pN] outline with previews. */
-function renderOutline(texts: string[], styles: Array<string | null> | undefined): string {
+function renderOutline(doc: WriterDocument): string {
   const lines: string[] = [];
-  texts.forEach((text, i) => {
-    const style = styles?.[i];
+  doc.texts.forEach((text, i) => {
+    const style = doc.styles?.[i];
+    const tbl = tableLabel(doc, i);
+    if (tbl) {
+      lines.push(`[p${i + 1}] (${tbl})`);
+      return;
+    }
     const tag = style && style !== 'Normal' ? ` (${style})` : '';
     lines.push(`[p${i + 1}]${tag} ${preview(text)}`);
   });
@@ -52,10 +69,15 @@ function renderOutline(texts: string[], styles: Array<string | null> | undefined
 }
 
 /** Body text with [pN] prefixes — full fidelity for normal-size docs. */
-function renderFullBody(texts: string[], styles: Array<string | null> | undefined): string {
+function renderFullBody(doc: WriterDocument): string {
   const lines: string[] = [];
-  texts.forEach((text, i) => {
-    const style = styles?.[i];
+  doc.texts.forEach((text, i) => {
+    const style = doc.styles?.[i];
+    const tbl = tableLabel(doc, i);
+    if (tbl) {
+      lines.push(`[p${i + 1}] (${tbl})`);
+      return;
+    }
     const tag = style && style !== 'Normal' ? ` (${style})` : '';
     lines.push(`[p${i + 1}]${tag} ${text}`);
   });
@@ -84,6 +106,9 @@ export const writerAdapter = {
         '  this (with several paragraphs) to split one paragraph.',
         '- [ACTION: delete-at pN] to DELETE the entire paragraph [pN]:',
         '  NO ```writer block, just the tag.',
+        '- [ACTION: insert-table pN] to insert a TABLE right AFTER paragraph',
+        '  [pN] (p0 = very start of the document): include a ```writer block',
+        '  with a markdown table (| a | b | lines; first row = header).',
       ],
       contentFormat: [
         'Content format (```writer block): markdown-lite, one paragraph per line.',
@@ -91,10 +116,13 @@ export const writerAdapter = {
         'triple-backtick code sections (kept verbatim), and inline **bold**,',
         '*italic*, `code`. Plain lines keep the document default style.',
         'Prefer paragraph styles that already appear in the document context.',
+        'For insert-table the same block holds the table instead: pipe-separated',
+        'rows, e.g. "| Name | Age |" then "| --- | --- |" then data rows.',
       ],
       undoMode: 'undo-only',
       leadRules: [
         '- The document context lists paragraphs as [pN] ids with their styles.',
+        '- Tables appear in the context as [pN] (table RxC: header cells).',
       ],
       rules: [
         '- For rewrite: output the complete replacement of the selection.',
@@ -109,7 +137,7 @@ export const writerAdapter = {
       'Document context',
       '================',
       'File: (active ONLYOFFICE document)',
-      `Paragraphs: ${doc.paragraphs}`,
+      `Paragraphs: ${doc.paragraphs}${doc.tables?.length ? `, Tables: ${doc.tables.length}` : ''}${doc.images ? `, Images: ${doc.images}` : ''}`,
       '',
     ].join('\n');
 
@@ -120,15 +148,15 @@ export const writerAdapter = {
 
     const bodySize = doc.texts.reduce((n, t) => n + t.length, 0);
     if (bodySize <= OUTLINE_ONLY_BODY_LIMIT) {
-      return head + vocabBlock + `Full document ([pN] ids address paragraphs):\n${renderFullBody(doc.texts, styles)}\n`;
+      return head + vocabBlock + `Full document ([pN] ids address elements):\n${renderFullBody(doc)}\n`;
     }
     return (
       head +
       vocabBlock +
-      `The document is LARGE (${doc.paragraphs} paragraphs), so only this\n` +
+      `The document is LARGE (${doc.paragraphs} elements), so only this\n` +
       `outline is attached (previews are truncated). Ask the user or use the\n` +
       `outline structure to plan edits; the [pN] addresses are still valid.\n` +
-      `${renderOutline(doc.texts, styles)}\n`
+      `${renderOutline(doc)}\n`
     );
   },
 
@@ -150,13 +178,20 @@ export const writerAdapter = {
         `[ACTION: ${outcome.action}] needs a \`\`\`writer content block; the reply contained none.`,
       );
     }
+    if (outcome.action === 'insert-table' && (!outcome.table || outcome.table.length === 0)) {
+      throw new Error(
+        '[ACTION: insert-table] needs a ```writer block with a markdown table (| a | b | rows).',
+      );
+    }
     if (outcome.action === 'rewrite' && !hasSelection) {
       throw new Error('[ACTION: rewrite] but the document has no active selection.');
     }
-    const addressed = outcome.action === 'insert-after' || outcome.action === 'rewrite-at' || outcome.action === 'delete-at';
+    const addressed =
+      outcome.action === 'insert-after' || outcome.action === 'rewrite-at' ||
+      outcome.action === 'delete-at' || outcome.action === 'insert-table';
     if (addressed) {
-      if (!outcome.target || outcome.target < 1) {
-        throw new Error(`[ACTION: ${outcome.action}] needs a valid paragraph number (e.g. ${outcome.action} p3).`);
+      if (outcome.target === null || outcome.target < 0) {
+        throw new Error(`[ACTION: ${outcome.action}] needs a valid paragraph number (e.g. ${outcome.action} p3; p0 = very start).`);
       }
       if (outcome.target > doc.paragraphs) {
         throw new Error(`Paragraph [p${outcome.target}] does not exist (document has ${doc.paragraphs}).`);
@@ -183,6 +218,16 @@ export const writerAdapter = {
       case 'delete-at':
         await bridge.op<EditResult>('deleteAt', { index: outcome.target! - 1 });
         break;
+      case 'insert-table': {
+        const rows = outcome.table ?? [];
+        const args: InsertTableArgs = {
+          index: outcome.target === 0 ? -1 : outcome.target! - 1,
+          rows,
+          header: rows.length > 1,
+        };
+        const r = await bridge.op<InsertTableResult>('insertTable', args as unknown as Record<string, unknown>);
+        return `[ACTION: insert-table p${outcome.target} — ${rows.length}x${Math.max(...rows.map((row) => row.length))} table at element ${r.pos}]`;
+      }
       default:
         throw new Error(`unsupported action ${outcome.action}`);
     }

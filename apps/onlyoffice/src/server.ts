@@ -53,7 +53,7 @@ import {
 import { writerAdapter, type WriterOutcome } from './modules/writer.js';
 import { calcAdapter, parseCalcAction, type CalcOutcome } from './modules/calc.js';
 import { impressAdapter, parseImpressAction, type ImpressOutcome } from './modules/impress.js';
-import { extractContentBlock, parseContentBlock } from './modules/markdown.js';
+import { extractContentBlock, parseContentBlock, parseTableBlock } from './modules/markdown.js';
 import { TIMINGS } from './timings.js';
 
 export type {
@@ -370,7 +370,7 @@ export function notConnectedError() {
 
 /** Writer grammar: [ACTION: name] or [ACTION: name pN] + ```writer block. */
 const parseTag = createParseActionTag({
-  actions: 'delete-at|rewrite-at|insert-after|insert-top|rewrite|insert|none|continue',
+  actions: 'delete-at|rewrite-at|insert-after|insert-top|insert-table|rewrite|insert|none|continue',
   targetPattern: '(?:\\s+p(\\d+))?',
 });
 
@@ -378,14 +378,18 @@ export function parseAction(reply: string): WriterOutcome {
   const tag = parseTag(reply);
   const action = tag.action as WriterOutcome['action'];
   const target = tag.target !== null ? Number.parseInt(tag.target, 10) : null;
-  const contentActions: string[] = ['insert', 'insert-top', 'insert-after', 'rewrite', 'rewrite-at'];
+  const contentActions: string[] = ['insert', 'insert-top', 'insert-after', 'rewrite', 'rewrite-at', 'insert-table'];
   const needsContent = contentActions.includes(action);
   const rawBlock = needsContent ? extractContentBlock(reply) : null;
   return {
     module: 'writer' as const,
     action,
     target,
-    block: needsContent ? (rawBlock !== null ? parseContentBlock(rawBlock) : null) : null,
+    block:
+      needsContent && action !== 'insert-table'
+        ? (rawBlock !== null ? parseContentBlock(rawBlock) : null)
+        : null,
+    table: action === 'insert-table' && rawBlock !== null ? parseTableBlock(rawBlock) : null,
     tagNote: actionTagNote(tag.rawTag ?? undefined, `[ACTION: ${action}${target !== null ? ` p${target}` : ''}]`),
   };
 }

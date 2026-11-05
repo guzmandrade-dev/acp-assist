@@ -54,11 +54,30 @@ export interface BlockParagraph {
 export interface WriterDocument {
   editor: 'word';
   paragraphs: number;
-  /** Normalized paragraph texts (0-based order, trailing newlines stripped). */
+  /** Normalized element texts (0-based order, trailing newlines stripped).
+   * Tables read as "" here — see kinds/tables. */
   texts: string[];
   /** Paragraph style names in the same order (best effort; may be nulls). */
   styles?: (string | null)[];
+  /** Element class per index ("paragraph" | "table" | ...) — rules 51/57. */
+  kinds?: string[];
+  /** Table summaries for kind==="table" elements (element index + dims +
+   * first-row cell texts). */
+  tables?: TableSummary[];
+  /** Image count in the document (GetAllImages). */
+  images?: number;
   selection: { selectionType: string; selectedText: string };
+}
+
+/** One table in a Writer document (read side). */
+export interface TableSummary {
+  /** 0-based document element index (== the [pN]-1 address space). */
+  index: number;
+  rows: number;
+  cols: number;
+  /** First-row cell texts (the header), normalized. */
+  header?: string[];
+  error?: string;
 }
 
 /** One sheet of a cell (spreadsheet) document read. */
@@ -147,6 +166,21 @@ export interface EditResult {
   elements?: number;
   /** rewrite-at / delete-at: the replaced/removed paragraph's old text. */
   oldText?: string;
+}
+
+/** insertTable op: build + fill + insert a table after paragraph `index`
+ * (0-based; -1 = very start). One callCommand = one undo step (rule 51). */
+export interface InsertTableArgs {
+  index: number;
+  rows: string[][];
+  header?: boolean;
+}
+
+export interface InsertTableResult {
+  added: boolean;
+  pos: number;
+  tables: number;
+  elements: number;
 }
 
 // --- cell (spreadsheet) op payload types --------------------------------------
