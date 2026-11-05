@@ -302,16 +302,20 @@
         <tr><td><code>[ACTION: rewrite-at pN]</code></td><td>Replace paragraph <code>[pN]</code> (verified first)</td></tr>
         <tr><td><code>[ACTION: delete-at pN]</code></td><td>Delete paragraph <code>[pN]</code></td></tr>
         <tr><td><code>[ACTION: move pN pM]</code></td><td>Move paragraph <code>[pN]</code> to after <code>[pM]</code></td></tr>
+        <tr><td><code>[ACTION: insert-table pN]</code></td><td>Insert a table after <code>[pN]</code> (markdown table in the block; <code>p0</code> = document start) — Writer, LibreOffice &amp; ONLYOFFICE</td></tr>
+        <tr><td><code>[ACTION: insert-image pN]</code></td><td>Insert an image after <code>[pN]</code> (URL or pasted image; sized automatically) — Writer &amp; Presentations, LibreOffice &amp; ONLYOFFICE</td></tr>
+        <tr><td><code>[ACTION: add-comment pN]</code></td><td>Attach a comment to paragraph <code>[pN]</code> — Writer, LibreOffice &amp; ONLYOFFICE</td></tr>
+        <tr><td><code>[ACTION: page-break pN]</code></td><td>Start paragraph <code>[pN]</code> on a new page — Writer, LibreOffice &amp; ONLYOFFICE</td></tr>
       </tbody>
     </table>
     <p>
       The LibreOffice and ONLYOFFICE apps add module-specific actions —
       <code>write-cells</code>, <code>insert-rows</code>, <code>insert-cols</code>
-      in Calc, <code>insert-after sN</code> / <code>rewrite-slide sN</code> /
-      <code>insert-image sN</code> in Presentations, and in Documents the shared
-      rich-content set: <code>insert-table pN</code>, <code>insert-image pN</code>,
-      <code>add-comment pN</code>, <code>page-break pN</code>, inline
-      <code>[text](url)</code> links, and real lists.
+      in Calc, and <code>insert-after sN</code> / <code>rewrite-slide sN</code> /
+      <code>insert-image sN</code> / <code>set-background sN</code> in
+      Presentations. In Documents, content blocks also carry inline
+      <code>[text](url)</code> links, real <code>-</code>/<code>1.</code> lists,
+      tables, and images as above.
     </p>
     <p>
       <strong>Bring your own agent.</strong> Any
