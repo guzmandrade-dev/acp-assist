@@ -247,6 +247,58 @@ def main():
           code == 200 and out.get("undone") and paras == before,
           f"paras={paras}")
 
+    # --- edit: insert-table p1 (untracked so undo is observable) ------------
+    code, out = http("POST", "/edit", token=TOKEN, payload={
+        "mode": "insert-table", "target": 1, "tracked": False,
+        "rows": [["H1", "H2"], ["a", "b"], ["c", "d"]],
+        "header": True,
+    })
+    tables = doc.getTextTables()
+    t0 = tables.getByIndex(0) if tables.getCount() else None
+    code_doc, docread = http("GET", "/document", token=TOKEN)
+    kinds = [p.get("kind") for p in docread.get("paragraphs", [])]
+    tbl_entry = docread["paragraphs"][1] if len(docread.get("paragraphs", [])) > 1 else {}
+    check("edit insert-table p1 inserts a filled table after p1",
+          code == 200 and out.get("applied")
+          and tables.getCount() == 1
+          and t0 is not None
+          and t0.getCellByName("A1").getString() == "H1"
+          and t0.getCellByName("B3").getString() == "d"
+          and kinds[1] == "table"
+          and tbl_entry.get("rows") == 3 and tbl_entry.get("cols") == 2
+          and tbl_entry.get("header") == ["H1", "H2"],
+          f"tables={tables.getCount()} kinds={kinds} entry={tbl_entry}")
+
+    # --- undo reverts the table insert as one transaction -------------------
+    code, out = http("POST", "/undo", token=TOKEN)
+    check("undo reverts the table insert as one transaction",
+          code == 200 and out.get("undone") and doc.getTextTables().getCount() == 0,
+          f"tables={doc.getTextTables().getCount()}")
+
+    # --- insert-table p0 = very start; bad target refused -------------------
+    code, out = http("POST", "/edit", token=TOKEN, payload={
+        "mode": "insert-table", "target": 0, "tracked": False,
+        "rows": [["T"]],
+    })
+    code_doc, docread = http("GET", "/document", token=TOKEN)
+    check("edit insert-table p0 inserts at the very start",
+          code == 200 and out.get("applied")
+          and docread["paragraphs"][0].get("kind") == "table",
+          f"first={docread['paragraphs'][0] if docread.get('paragraphs') else None}")
+    http("POST", "/undo", token=TOKEN)
+    code, out = http("POST", "/edit", token=TOKEN, payload={
+        "mode": "insert-table", "target": 99, "rows": [["x"]],
+    })
+    check("insert-table out-of-range target refused",
+          code == 500 and "does not exist" in str(out.get("error")),
+          f"code={code} out={out}")
+    code, out = http("POST", "/edit", token=TOKEN, payload={
+        "mode": "insert-table", "target": 1, "rows": [],
+    })
+    check("insert-table with empty rows refused",
+          code == 500 and "requires rows" in str(out.get("error")),
+          f"code={code} out={out}")
+
     # --- events long-poll sees selection-changed
     events_result = {}
 

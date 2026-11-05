@@ -205,17 +205,48 @@ def _view_cursor_style(doc):
         return None
 
 
+def _table_header_preview(table, max_cells=8):
+    """First-row cell texts of a TextTable, normalized (rule 46)."""
+    try:
+        cols = table.getColumns().getCount()
+        cells = []
+        for c in range(min(cols, max_cells)):
+            cell = table.getCellByName(f"{_col_letters(c)}1")
+            cells.append(cell.getString().replace("\r\n", " ").replace("\t", " ").strip())
+        return cells
+    except Exception:
+        return []
+
+
 def _writer_paragraphs(doc, preview=False):
-    """All paragraphs as {i, text, style}; text truncated in preview mode
-    (normalized BEFORE truncating, so a preview built from an already
-    collected full list is identical to a preview-mode walk)."""
+    """All top-level text elements as {i, kind, text, style}; text truncated
+    in preview mode (normalized BEFORE truncating, so a preview built from
+    an already collected full list is identical to a preview-mode walk).
+    Tables (rule 46: the enumeration yields them as non-Paragraph elements)
+    and graphics are classified by kind so /document never crashes on them
+    and the agent can see them; tables carry rows/cols/header."""
     out = []
     for i, p in enumerate(doc.getText().createEnumeration()):
+        if p.supportsService("com.sun.star.text.TextTable"):
+            out.append({
+                "i": i,
+                "kind": "table",
+                "text": "",
+                "style": "",
+                "rows": p.getRows().getCount(),
+                "cols": p.getColumns().getCount(),
+                "header": _table_header_preview(p),
+            })
+            continue
+        if p.supportsService("com.sun.star.text.TextGraphicObject"):
+            out.append({"i": i, "kind": "image", "text": "", "style": ""})
+            continue
         t = p.getString().replace("\r\n", "\n")
         if preview and len(t) > PREVIEW_LEN:
             t = t[:PREVIEW_LEN] + "…"
         out.append({
             "i": i,
+            "kind": "paragraph",
             "text": t,
             "style": str(p.getPropertyValue("ParaStyleName")),
         })
@@ -881,6 +912,10 @@ def _read_document(desktop):
     base["paragraphs"] = paras
     base["truncated"] = truncated
     base["selection"] = sel
+    try:
+        base["images"] = doc.getGraphicObjects().getCount()
+    except Exception:
+        base["images"] = 0
     return base
 
 
@@ -1100,7 +1135,7 @@ def _edit_calc(desktop, payload):
 
 
 WRITER_MODES = ("insert", "insert-top", "insert-after",
-                "rewrite", "rewrite-at", "delete-at")
+                "rewrite", "rewrite-at", "delete-at", "insert-table")
 CALC_MODES = ("write-cells", "insert-rows", "insert-cols")
 IMPRESS_MODES = ("rewrite-frame", "rewrite-slide", "insert-slide-after")
 
@@ -1124,7 +1159,7 @@ def _edit_writer(desktop, payload):
     ctrl = doc.getCurrentController()
 
     paragraphs = payload.get("paragraphs")
-    if mode != "delete-at" and not paragraphs:
+    if mode not in ("delete-at", "insert-table") and not paragraphs:
         raise RuntimeError(f"mode {mode!r} requires paragraphs")
     target = payload.get("target")
     # Request-local paragraph list: the existence check, the target lookup,
@@ -1132,9 +1167,11 @@ def _edit_writer(desktop, payload):
     # _writer_paragraphs/_nth_paragraph call used to re-walk from
     # paragraph 0 — one delete-at walked the document up to 4 times).
     paras_pre = None
-    if mode in ("insert-after", "rewrite-at", "delete-at"):
-        if not isinstance(target, int) or target < 1:
-            raise RuntimeError(f"mode {mode!r} requires a 1-based target")
+    if mode in ("insert-after", "rewrite-at", "delete-at", "insert-table"):
+        # insert-table also accepts target 0 = insert at the very start
+        min_target = 0 if mode == "insert-table" else 1
+        if not isinstance(target, int) or target < min_target:
+            raise RuntimeError(f"mode {mode!r} requires a target (pN; insert-table also allows 0 = start)")
         paras_pre = list(text.createEnumeration())
         if target > len(paras_pre):
             raise RuntimeError(
@@ -1181,6 +1218,38 @@ def _edit_writer(desktop, payload):
                 raise RuntimeError("the active selection is empty")
             vc.setString("")  # delete the selection; view cursor at its start
             _write_paragraphs(doc, vc, paragraphs, break_mode="between")
+
+        elif mode == "insert-table":
+            # Verified by the P6 probes (rule 40): create + initialize +
+            # insertTextContent + cell setString, all inside the one undo
+            # context above = ONE undo step (clean under RecordChanges too).
+            rows = payload.get("rows") or []
+            if not rows:
+                raise RuntimeError("mode 'insert-table' requires rows")
+            header = bool(payload.get("header", False))
+            n_rows = len(rows)
+            n_cols = max(len(r) for r in rows)
+            table = doc.createInstance("com.sun.star.text.TextTable")
+            table.initialize(n_rows, n_cols)
+            if target == 0:
+                vc.gotoStart(False)
+            else:
+                vc.gotoRange(paras_pre[target - 1].getEnd(), False)
+            text.insertTextContent(vc, table, False)
+            for r, row in enumerate(rows):
+                for c, val in enumerate(row):
+                    cell = table.getCellByName(f"{_col_letters(c)}{r + 1}")
+                    cell.setString("" if val is None else str(val))
+                    if header and r == 0:
+                        # Shading must never abort the fill: try both property
+                        # names (CellBackColor is unknown on some builds).
+                        try:
+                            cell.setPropertyValue("CellBackColor", 0xE6E6E6)
+                        except Exception:
+                            try:
+                                cell.setPropertyValue("BackColor", 0xE6E6E6)
+                            except Exception:
+                                pass
 
         elif mode == "delete-at":
             para = paras_pre[target - 1]
