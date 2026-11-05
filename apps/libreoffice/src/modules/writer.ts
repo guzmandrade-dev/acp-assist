@@ -10,6 +10,11 @@
  */
 
 import type { BridgeClient, BridgeDocument, BlockParagraph, EditMode, WriterParagraph } from '../bridge/client.js';
+import { defaultImageSizeCm, parseDataUri } from '@acp-assist/core';
+import type { ImageBlock } from './markdown.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { actionInstructions, preview } from './markdown.js';
 import type { ActionOutcome, AppliedAction, ModuleAdapter, SelectionInfo } from './types.js';
 
@@ -57,6 +62,34 @@ function renderFullBody(doc: BridgeDocument): string {
   return lines.join('\n');
 }
 
+/**
+ * Resolve an insert-image src for the UNO bridge: http(s) URLs pass through
+ * (GraphicURL fetches them); data: URIs are written to a temp file and passed
+ * as file:// URLs (rule 41). Sizes come back in 1/100 mm (cm * 1000).
+ */
+function resolveImageSrcForUno(image: ImageBlock): { src: string; width?: number; height?: number } {
+  let bytes: Uint8Array | null = null;
+  let src = image.src;
+  if (/^data:/i.test(image.src)) {
+    const parsed = parseDataUri(image.src);
+    if (!parsed) throw new Error('[ACTION: insert-image] has a malformed data: URI.');
+    bytes = parsed.bytes;
+    const ext = parsed.mime === 'image/png' ? '.png' : parsed.mime === 'image/jpeg' ? '.jpg' : parsed.mime === 'image/gif' ? '.gif' : parsed.mime === 'image/svg+xml' ? '.svg' : '.img';
+    const file = path.join(os.tmpdir(), `acp-assist-img-${Date.now()}${ext}`);
+    fs.writeFileSync(file, bytes);
+    src = 'file:///' + file.split('\\').join('/');
+  } else if (/^https?:\/\//i.test(image.src)) {
+    // size sniffing needs the bytes; fire-and-forget is fine — the bridge
+    // falls back to the image's natural size when width/height are absent
+  } else {
+    throw new Error('[ACTION: insert-image] source must be an http(s):// URL or a data:image/... URI (local file paths cannot be read).');
+  }
+  const size = defaultImageSizeCm(bytes);
+  const widthCm = image.widthCm ?? size.widthCm;
+  const heightCm = image.heightCm ?? size.heightCm;
+  return { src, width: Math.round(widthCm * 1000), height: Math.round(heightCm * 1000) };
+}
+
 export const writerAdapter: ModuleAdapter = {
   id: 'writer',
 
@@ -82,6 +115,14 @@ export const writerAdapter: ModuleAdapter = {
         '- [ACTION: insert-table pN] to insert a TABLE right AFTER paragraph',
         '  [pN] (p0 = very start of the document): include a ```writer block',
         '  with a markdown table (| a | b | lines; first row = header).',
+        '- [ACTION: insert-image pN] to insert an IMAGE right AFTER paragraph',
+        '  [pN] (p0 = very start): include a ```writer block with an',
+        '  `image: <url or data:image/...>` line plus optional `width:`/`height:`',
+        '  (cm/in/px).',
+        '- [ACTION: add-comment pN] to attach a COMMENT to paragraph [pN]:',
+        '  include a ```writer block with the comment text.',
+        '- [ACTION: page-break pN] to start paragraph [pN] on a NEW PAGE:',
+        '  NO ```writer block, just the tag.',
       ],
       contentFormat: [
         'Content format (```writer block): markdown-lite, one paragraph per line.',
@@ -91,6 +132,8 @@ export const writerAdapter: ModuleAdapter = {
         'Prefer paragraph styles that already appear in the document context.',
         'For insert-table the same block holds the table instead: pipe-separated',
         'rows, e.g. "| Name | Age |" then "| --- | --- |" then data rows.',
+        'Inline links: [link text](https://example.com) inside any line.',
+        'List items ("- " bullets, "1. " numbered) become REAL lists.',
       ],
       undoMode: 'tracked-changes',
       leadRules: [
@@ -167,6 +210,14 @@ export const writerAdapter: ModuleAdapter = {
         '[ACTION: insert-table] needs a ```writer block with a markdown table (| a | b | rows).',
       );
     }
+    if (outcome.action === 'insert-image' && !outcome.image?.src) {
+      throw new Error(
+        '[ACTION: insert-image] needs a ```writer block with an `image: <url|data:...>` line.',
+      );
+    }
+    if (outcome.action === 'add-comment' && !outcome.comment) {
+      throw new Error('[ACTION: add-comment] needs a ```writer block with the comment text.');
+    }
     if (needsContent && (!outcome.block || outcome.block.length === 0)) {
       throw new Error(
         `[ACTION: ${outcome.action}] needs a \`\`\`writer content block; the reply contained none.`,
@@ -177,9 +228,11 @@ export const writerAdapter: ModuleAdapter = {
     }
     const addressed =
       outcome.action === 'insert-after' || outcome.action === 'rewrite-at' ||
-      outcome.action === 'delete-at' || outcome.action === 'insert-table';
+      outcome.action === 'delete-at' || outcome.action === 'insert-table' ||
+      outcome.action === 'insert-image' || outcome.action === 'add-comment' ||
+      outcome.action === 'page-break';
     if (addressed) {
-      if (outcome.target === null || outcome.target < (outcome.action === 'insert-table' ? 0 : 1)) {
+      if (outcome.target === null || outcome.target < ((outcome.action === 'insert-table' || outcome.action === 'insert-image') ? 0 : 1)) {
         throw new Error(`[ACTION: ${outcome.action}] needs a valid paragraph number (e.g. ${outcome.action} p3; insert-table also allows p0 = very start).`);
       }
       const count = doc.paragraphs?.length ?? 0;
@@ -189,6 +242,15 @@ export const writerAdapter: ModuleAdapter = {
     }
 
     const mode = outcome.action as EditMode;
+    let imageSrc: string | undefined;
+    let imageW: number | undefined;
+    let imageH: number | undefined;
+    if (outcome.action === 'insert-image' && outcome.image) {
+      const resolved = resolveImageSrcForUno(outcome.image);
+      imageSrc = resolved.src;
+      imageW = resolved.width;
+      imageH = resolved.height;
+    }
     await bridge.edit({
       mode,
       target: outcome.target,
@@ -196,6 +258,10 @@ export const writerAdapter: ModuleAdapter = {
       paragraphs: needsContent ? outcome.block ?? undefined : undefined,
       rows: outcome.action === 'insert-table' ? outcome.table ?? undefined : undefined,
       header: outcome.action === 'insert-table' ? (outcome.table ?? []).length > 1 : undefined,
+      src: imageSrc,
+      width: imageW,
+      height: imageH,
+      text: outcome.action === 'add-comment' ? outcome.comment ?? undefined : undefined,
     });
 
     const parts: string[] = [outcome.action];

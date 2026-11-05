@@ -46,6 +46,8 @@ describe('parseAction', () => {
       block: null,
       grid: null,
       table: null,
+      image: null,
+      comment: null,
       tagNote: null,
     });
   });
@@ -169,12 +171,24 @@ describe('parseContentBlock', () => {
     expect(paras.map((p) => p.style)).toEqual([
       'Heading 2',
       null,
-      null,
+      'List',
       'Quotations',
       'Preformatted Text',
     ]);
-    expect(paras[2].runs[0].text).toBe('• item one');
+    expect(paras[2].runs[0].text).toBe('item one');
     expect(paras[4].runs[0].text).toBe('let x = 1;');
+  });
+
+  it('maps numbered items to Numbering 1 and parses inline links', () => {
+    const paras = parseContentBlock('1. first\n2. second\nsee [the docs](https://example.com) now');
+    expect(paras[0].style).toBe('Numbering 1');
+    expect(paras[1].style).toBe('Numbering 1');
+    const last = paras[2];
+    expect(last.runs.map((r) => [r.text, r.url])).toEqual([
+      ['see ', undefined],
+      ['the docs', 'https://example.com'],
+      [' now', undefined],
+    ]);
   });
 
   it('joins consecutive plain lines into one paragraph', () => {
@@ -462,6 +476,41 @@ describe('writerAdapter applyAction insert-table', () => {
       ),
     ).rejects.toThrow(/markdown table/);
     expect(calls2).toEqual([]);
+  });
+
+  it('maps insert-image / add-comment / page-break to edit modes', async () => {
+    const calls: EditPayload[] = [];
+    const doc = writerDoc([['a', 'Standard'], ['b', 'Standard']]);
+    const RED = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    await writerAdapter.applyAction(recordingBridge(calls), doc,
+      { hasSelection: false, text: null, cursorStyle: null, calc: null },
+      { action: 'insert-image', target: 1, address: null, block: null, grid: null, image: { src: RED }, tagNote: null, startedAt: '' });
+    await writerAdapter.applyAction(recordingBridge(calls), doc,
+      { hasSelection: false, text: null, cursorStyle: null, calc: null },
+      { action: 'add-comment', target: 2, address: null, block: null, grid: null, comment: 'note', tagNote: null, startedAt: '' });
+    await writerAdapter.applyAction(recordingBridge(calls), doc,
+      { hasSelection: false, text: null, cursorStyle: null, calc: null },
+      { action: 'page-break', target: 2, address: null, block: null, grid: null, tagNote: null, startedAt: '' });
+    const [img, com, pb] = calls;
+    expect(img?.mode).toBe('insert-image');
+    expect(img?.target).toBe(1);
+    expect(String(img?.src)).toMatch(/^file:\/\/\/.*\.png$/);
+    expect(img?.width).toBeGreaterThan(0);
+    expect(com?.mode).toBe('add-comment');
+    expect(com?.text).toBe('note');
+    expect(pb?.mode).toBe('page-break');
+    expect(pb?.target).toBe(2);
+  });
+
+  it('parses insert-image / add-comment tags and blocks', () => {
+    const img = parseAction('```writer\nimage: https://x/y.png\nwidth: 4cm\n```\n[ACTION: insert-image p2]');
+    expect(img.action).toBe('insert-image');
+    expect(img.image).toEqual({ src: 'https://x/y.png', widthCm: 4, heightCm: undefined });
+    const com = parseAction('```writer\nnote text\n```\n[ACTION: add-comment p1]');
+    expect(com.comment).toBe('note text');
+    const pb = parseAction('[ACTION: page-break p2]');
+    expect(pb.action).toBe('page-break');
+    expect(pb.block).toBeNull();
   });
 });
 // --- Calc adapter ---------------------------------------------------------------

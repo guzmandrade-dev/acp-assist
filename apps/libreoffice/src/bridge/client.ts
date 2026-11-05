@@ -255,6 +255,8 @@ export interface BlockRun {
   bold?: boolean;
   italic?: boolean;
   code?: boolean;
+  /** Inline hyperlink target ([text](url) syntax). */
+  url?: string;
 }
 
 /** One paragraph the agent wants written, with its style and inline runs. */
@@ -289,6 +291,13 @@ export interface EditPayload {
   rows?: string[][];
   /** Writer insert-table: shade the first row as the header. */
   header?: boolean;
+  /** Writer insert-image: GraphicURL (file:// or http(s)://). */
+  src?: string;
+  /** Writer insert-image: size in 1/100 mm. */
+  width?: number;
+  height?: number;
+  /** Writer add-comment: the comment text. */
+  text?: string;
   /** Impress/Draw: 0-based slide index (rewrite-frame, rewrite-slide). */
   slide?: number;
   /** Impress/Draw: 0-based shape index on the slide (rewrite-frame). */

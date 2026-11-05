@@ -8,11 +8,12 @@
  */
 
 import type { BlockParagraph, BlockRun } from '../bridge/client.js';
+import { sizeToCm } from '@acp-assist/core';
 import { ACTION_HEADER, actionTagNote, createParseActionTag } from '@acp-assist/core';
 
 // Shared with the LyX app via @acp-assist/core; re-exported here so the
 // module adapters keep their single markdown.js import point.
-export { ACTION_HEADER, actionTagNote, actionInstructions, createParseActionTag, preview } from '@acp-assist/core';
+export { ACTION_HEADER, actionTagNote, actionInstructions, createParseActionTag, preview , sizeToCm } from '@acp-assist/core';
 
 /**
  * Line-level action-tag test with the tolerant header: tags are
@@ -65,6 +66,14 @@ export function parseInline(line: string): BlockRun[] {
 
   while (i < line.length) {
     const rest = line.slice(i);
+    const linkMatch = rest.match(/^\[([^\]]+)\]\(([^)\s]+)\)/);
+    if (linkMatch) {
+      const text = linkMatch[1] ?? '';
+      runs.push({ text, url: linkMatch[2] ?? '' });
+      prev = text.endsWith(' ') ? ' ' : text.slice(-1);
+      i += linkMatch[0].length;
+      continue;
+    }
     const codeMatch = rest.match(/^`([^`\n]+)`/);
     if (codeMatch?.[1] !== undefined) {
       push(codeMatch[1], true);
@@ -99,7 +108,7 @@ export function parseInline(line: string): BlockRun[] {
     // Consume up to the next marker.
     const next = (() => {
       let j = i;
-      while (j < line.length && !'`*'.includes(line.charAt(j))) j++;
+      while (j < line.length && !'`*['.includes(line.charAt(j))) j++;
       return j;
     })();
     push(line.slice(i, next), false);
@@ -159,7 +168,7 @@ export function parseContentBlock(block: string): BlockParagraph[] {
     }
 
     const heading = line.match(/^(#{1,6})\s+(.*)$/);
-    const bullet = line.match(/^\s*[-*+]\s+(.*)$/);
+    const bullet = line.match(/^\s*(?:([-*+])|(\d+[.)]))\s+(.*)$/);
     const quote = line.match(/^>\s?(.*)$/);
 
     if (heading) {
@@ -170,10 +179,11 @@ export function parseContentBlock(block: string): BlockParagraph[] {
       continue;
     }
     if (bullet) {
-      // List item: keep the bullet visible as plain text (Writer list
-      // styles with numbering are a later refinement).
+
+      // List item: real list styles (OO numbering / LO List, Numbering 1).
       flush();
-      paragraphs.push({ style: null, runs: parseInline(`• ${(bullet[1] ?? '').trim()}`) });
+      const ordered = !!bullet[2];
+      paragraphs.push({ style: ordered ? 'Numbering 1' : 'List', runs: parseInline((bullet[3] ?? '').trim()) });
       continue;
     }
     if (quote) {
@@ -260,4 +270,34 @@ export function parseTableBlock(block: string): string[][] {
     rows.pop();
   }
   return rows;
+}
+
+/**
+ * Parse a ```writer block used by [ACTION: insert-image] into
+ * { src, widthCm?, heightCm? }. Lines: `image: <url|data:...>` (required),
+ * optional `width:`/`height:` (cm/in/px). Other lines are ignored.
+ */
+/** Parsed insert-image block: source URL/data-URI plus optional size in cm. */
+export interface ImageBlock {
+  src: string;
+  widthCm?: number;
+  heightCm?: number;
+}
+
+export function parseImageBlock(block: string): ImageBlock | null {
+  let src: string | null = null;
+  let widthCm: number | undefined;
+  let heightCm: number | undefined;
+  for (const raw of block.replace(/\r\n/g, '\n').split('\n')) {
+    if (ACTION_TAG_LINE.test(raw)) continue;
+    const m = /^\s*(image|width|height)\s*:\s*(.+?)\s*$/i.exec(raw);
+    if (!m) continue;
+    const key = (m[1] ?? '').toLowerCase();
+    const val = m[2] ?? '';
+    if (key === 'image' && val) src = val;
+    else if (key === 'width') widthCm = sizeToCm(val) ?? undefined;
+    else if (key === 'height') heightCm = sizeToCm(val) ?? undefined;
+  }
+  if (!src) return null;
+  return { src, widthCm, heightCm };
 }

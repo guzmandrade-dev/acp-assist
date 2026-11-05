@@ -5,6 +5,7 @@
  * new adapters, not new architectures.
  */
 
+import type { ImageBlock } from './markdown.js';
 import type { BridgeClient, BridgeDocument, BlockParagraph, CalcInfo, SlidesSelectionShape } from '../bridge/client.js';
 
 /** Action vocabulary (Writer tags first, then Calc, then Impress). */
@@ -19,6 +20,9 @@ export type AgentAction =
   | 'rewrite-at'
   | 'delete-at'
   | 'insert-table'
+  | 'insert-image'
+  | 'add-comment'
+  | 'page-break'
   // Calc
   | 'write-cells'
   | 'insert-rows'
@@ -37,6 +41,10 @@ export interface ActionOutcome {
   grid: string[][] | null;
   /** Writer insert-table: parsed markdown-table rows; null otherwise. */
   table?: string[][] | null;
+  /** Writer insert-image: parsed image block; null otherwise. */
+  image?: ImageBlock | null;
+  /** Writer add-comment: comment text; null otherwise. */
+  comment?: string | null;
   /** Writer: 1-based paragraph address for insert-after/rewrite-at/delete-at.
    * Impress: the [sN] slide number (rewrite-slide, insert-after; s0 = start). */
   target: number | null;

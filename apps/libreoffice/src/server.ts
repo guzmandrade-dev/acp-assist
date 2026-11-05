@@ -34,7 +34,7 @@ import { calcAdapter, parseCalcAction } from './modules/calc.js';
 import { impressAdapter, parseImpressAction } from './modules/impress.js';
 import { genericAdapter } from './modules/generic.js';
 import type { ModuleAdapter, AgentAction, ActionOutcome, SelectionInfo } from './modules/types.js';
-import { extractContentBlock, parseContentBlock, parseTableBlock } from './modules/markdown.js';
+import { extractContentBlock, parseContentBlock, parseTableBlock, parseImageBlock, ACTION_TAG_LINE } from './modules/markdown.js';
 import {
   actionTagNote,
   buildAttachmentBlock,
@@ -559,7 +559,7 @@ function readSelection(doc: BridgeDocument): SelectionInfo {
  * missing colon — tagNote reports the auto-correction. The B5 layered
  * resolution and capture extraction live in the core factory. */
 const parseTag = createParseActionTag({
-  actions: 'delete-at|rewrite-at|insert-after|insert-top|insert-table|rewrite|insert|none|continue',
+  actions: 'delete-at|rewrite-at|insert-after|insert-top|insert-table|insert-image|add-comment|page-break|rewrite|insert|none|continue',
   targetPattern: '(?:\\s+p(\\d+))?',
 });
 
@@ -567,7 +567,7 @@ export function parseAction(reply: string): ActionOutcome {
   const tag = parseTag(reply);
   const action = tag.action as AgentAction;
   const target = tag.target !== null ? Number.parseInt(tag.target, 10) : null;
-  const contentActions: AgentAction[] = ['insert', 'insert-top', 'insert-after', 'rewrite', 'rewrite-at', 'insert-table'];
+  const contentActions: AgentAction[] = ['insert', 'insert-top', 'insert-after', 'rewrite', 'rewrite-at', 'insert-table', 'insert-image', 'add-comment'];
   const needsContent = contentActions.includes(action);
   const rawBlock = needsContent ? extractContentBlock(reply) : null;
   return {
@@ -575,11 +575,21 @@ export function parseAction(reply: string): ActionOutcome {
     target,
     address: null,
     block:
-      needsContent && action !== 'insert-table'
+      needsContent && action !== 'insert-table' && action !== 'insert-image' && action !== 'add-comment'
         ? (rawBlock !== null ? parseContentBlock(rawBlock) : null)
         : null,
     grid: null,
     table: action === 'insert-table' && rawBlock !== null ? parseTableBlock(rawBlock) : null,
+    image: action === 'insert-image' && rawBlock !== null ? parseImageBlock(rawBlock) : null,
+    comment:
+      action === 'add-comment' && rawBlock !== null
+        ? rawBlock
+            .replace(/\r\n/g, '\n')
+            .split('\n')
+            .filter((l) => l.trim() !== '' && !ACTION_TAG_LINE.test(l))
+            .join('\n')
+            .trim()
+        : null,
     tagNote: actionTagNote(tag.rawTag ?? undefined, `[ACTION: ${action}${target !== null ? ` p${target}` : ''}]`),
   };
 }
