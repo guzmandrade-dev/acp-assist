@@ -940,3 +940,50 @@ prompts/parsers, and the app-shaped frames/meta (`frame` +
   undo, UNO-verified), real UNO selections reaching the panel
   channel and the panel's indicator updating live with zero console
   errors, plus a full agent chat through the panel on eventPush.
+
+## P6 Writer rich-content probes (2026-11-04) — LIVE-verified over the UNO socket
+
+Probed directly via pyuno against headless LO 26.8 (scratch profile
+`lo-acp-bridge`, `--accept=socket,host=localhost,port=2002;urp;`, bundled
+`program\python.exe`; scripts in `C:\Users\guzma\Temp\p6_lo*.py`). All ops
+work; rules:
+
+40. **Tables**: `doc.createInstance("com.sun.star.text.TextTable")` +
+    `table.initialize(rows, cols)` + `text.insertTextContent(cursor, table, False)`;
+    fill via `table.getCellByName("A1").setString(...)`; read via
+    `doc.getTextTables()` (cells likewise). One `enterUndoContext` around
+    insert+fill = ONE undo step (verified by counting `um.undo()` calls;
+    the only extra step was text inserted OUTSIDE the context). Under
+    `RecordChanges` the table insert produced 1 redline and undid cleanly.
+    Borders: per-side props (`TopBorder` etc.) take a full
+    `com.sun.star.table.BorderLine2` (Color REQUIRED — an unset Color
+    throws bare IllegalArgumentException); `TableBorder2.InnerHorizontalLine`
+    does NOT exist — use the per-side properties or the old `TableBorder`
+    struct.
+41. **Images**: `doc.createInstance("com.sun.star.text.TextGraphicObject")` +
+    `GraphicURL = uno.systemPathToFileUrl(path)` (file:// works natively —
+    local paths are no problem in LO) + `AnchorType = AS_CHARACTER` +
+    `Width/Height` in 1/100 mm + `insertTextContent` — one undo step
+    (verified). Read-side: `doc.getGraphicObjects().getCount()`;
+    reading `GraphicURL` back is NOT supported — count only.
+42. **Hyperlinks**: select the range, `range.setPropertyValue("HyperLinkURL", url)`
+    — works; read back via paragraph text-portion enumeration
+    (`portion.getPropertyValue("HyperLinkURL")` per portion).
+43. **Lists**: `para.setPropertyValue("ParaStyleName", "List")` (bullet) /
+    `"Numbering 1"` (numbered) — both verified. **"List Bullet" does NOT
+    exist** in the default template (IllegalArgumentException) — do not
+    hardcode it; enumerate `StyleFamilies/ParagraphStyles` names containing
+    "List"/"Numbering" or use the two verified names. `NumberingRules`
+    via `doc.createInstance("com.sun.star.text.NumberingRules")` also sets,
+    but `com.sun.star.text.NumberingType` constants are not importable in
+    this pyuno — prefer the paragraph styles.
+44. **Comments**: `doc.createInstance("com.sun.star.text.TextField.Annotation")`,
+    set `Author` + `Content`, `text.insertTextContent(cursor, anno, False)` —
+    verified; read via `doc.getTextFields()` enumeration (`Author`/`Content`).
+45. **Page break**: `para.setPropertyValue("BreakType", BreakType.PAGE_BEFORE)`
+    — verified.
+46. **Read-side gap (bridge)**: the main-text enumeration yields TABLES as
+    non-Paragraph elements too — `_writer_paragraphs` must classify by
+    `supportsService("com.sun.star.text.Paragraph")` and separately report
+    `getTextTables()`/`getGraphicObjects()` counts + previews, or the agent
+    cannot see inserted tables/images.
