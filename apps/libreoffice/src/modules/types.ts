@@ -18,6 +18,7 @@ export type AgentAction =
   | 'rewrite'
   | 'rewrite-at'
   | 'delete-at'
+  | 'insert-table'
   // Calc
   | 'write-cells'
   | 'insert-rows'
@@ -34,6 +35,8 @@ export interface ActionOutcome {
   block: BlockParagraph[] | null;
   /** Calc: parsed TSV rows; null for actions without content. */
   grid: string[][] | null;
+  /** Writer insert-table: parsed markdown-table rows; null otherwise. */
+  table?: string[][] | null;
   /** Writer: 1-based paragraph address for insert-after/rewrite-at/delete-at.
    * Impress: the [sN] slide number (rewrite-slide, insert-after; s0 = start). */
   target: number | null;

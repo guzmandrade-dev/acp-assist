@@ -151,6 +151,12 @@ export interface WriterParagraph {
   i: number;
   text: string;
   style: string;
+  /** Element kind (rule 46): "paragraph" (default), "table" or "image".
+   * Tables carry rows/cols/header and read as empty text. */
+  kind?: string;
+  rows?: number;
+  cols?: number;
+  header?: string[];
 }
 
 /** One sheet in a Calc document. */
@@ -239,6 +245,8 @@ export interface BridgeDocument {
   cursorStyle?: string | null;
   /** True when the paragraph list is preview-truncated (lazy fetch). */
   truncated?: boolean;
+  /** Writer only: number of graphic objects in the document. */
+  images?: number;
 }
 
 /** One run of inline-formatted text inside a block paragraph. */
@@ -257,7 +265,7 @@ export interface BlockParagraph {
 }
 
 export type EditMode =
-  | 'insert' | 'insert-top' | 'insert-after' | 'rewrite' | 'rewrite-at' | 'delete-at'
+  | 'insert' | 'insert-top' | 'insert-after' | 'rewrite' | 'rewrite-at' | 'delete-at' | 'insert-table'
   // Calc
   | 'write-cells' | 'insert-rows' | 'insert-cols'
   // Impress / Draw
@@ -276,8 +284,11 @@ export interface EditPayload {
   /** Writer: content paragraphs; required for every mode except delete-at.
    * Impress rewrite-frame sends plain strings instead of run structures. */
   paragraphs?: BlockParagraph[] | string[];
-  /** Calc: TSV rows of cells for write-cells (strings; '=' prefix = formula). */
+  /** Calc: TSV rows of cells for write-cells (strings; '=' prefix = formula).
+   * Writer insert-table: the table rows (first row = header when header). */
   rows?: string[][];
+  /** Writer insert-table: shade the first row as the header. */
+  header?: boolean;
   /** Impress/Draw: 0-based slide index (rewrite-frame, rewrite-slide). */
   slide?: number;
   /** Impress/Draw: 0-based shape index on the slide (rewrite-frame). */

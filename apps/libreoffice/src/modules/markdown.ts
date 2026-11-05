@@ -234,3 +234,30 @@ export function parseTsvBlock(block: string): string[][] {
   }
   return rows;
 }
+/**
+ * Parse a ```writer block used by [ACTION: insert-table] into table rows.
+ * Markdown-table syntax: `| a | b |` lines; the separator row
+ * (`| --- | --- |`) is dropped; the first row is the header. Lines that
+ * do not contain a pipe are skipped. Cell text is kept literal (no inline
+ * markup inside cells in v1).
+ */
+export function parseTableBlock(block: string): string[][] {
+  const rows: string[][] = [];
+  for (const raw of block.replace(/\r\n/g, '\n').split('\n')) {
+    if (ACTION_TAG_LINE.test(raw)) continue;
+    const line = raw.trim();
+    if (!line.includes('|')) continue;
+    let cells = line.split('|').map((c) => c.trim());
+    // drop the empty edges produced by the leading/trailing pipes
+    if (cells.length > 0 && cells[0] === '') cells.shift();
+    if (cells.length > 0 && cells[cells.length - 1] === '') cells.pop();
+    if (cells.length === 0) continue;
+    // separator row: every cell is only dashes/colons/spaces
+    if (cells.every((c) => /^:?-{3,}:?$/.test(c) || /^[-: ]+$/.test(c) && c.includes('-'))) continue;
+    rows.push(cells);
+  }
+  while (rows.length > 0 && (rows[rows.length - 1] ?? []).every((c) => c === '')) {
+    rows.pop();
+  }
+  return rows;
+}

@@ -9,7 +9,7 @@
  * as tracked changes.
  */
 
-import type { BridgeClient, BridgeDocument, BlockParagraph, EditMode } from '../bridge/client.js';
+import type { BridgeClient, BridgeDocument, BlockParagraph, EditMode, WriterParagraph } from '../bridge/client.js';
 import { actionInstructions, preview } from './markdown.js';
 import type { ActionOutcome, AppliedAction, ModuleAdapter, SelectionInfo } from './types.js';
 
@@ -29,12 +29,21 @@ function styleVocabulary(doc: BridgeDocument): string[] {
   return [...seen];
 }
 
-/** Render the [pN] outline: every paragraph with its style and preview. */
+/** Context line suffix for one element: style tag, or a table/image label. */
+function elementLabel(p: WriterParagraph): string {
+  if (p.kind === 'table') {
+    const head = p.header && p.header.length ? `: ${p.header.join(' | ')}` : '';
+    return ` (table ${p.rows ?? '?'}x${p.cols ?? '?'}${head})`;
+  }
+  if (p.kind === 'image') return ' (image)';
+  return p.style && p.style !== 'Standard' ? ` (${p.style})` : '';
+}
+
+/** Render the [pN] outline: every element with its style/kind and preview. */
 export function renderOutline(doc: BridgeDocument): string {
   const lines: string[] = [];
   for (const p of doc.paragraphs ?? []) {
-    const style = p.style && p.style !== 'Standard' ? ` (${p.style})` : '';
-    lines.push(`[p${p.i + 1}]${style} ${preview(p.text)}`);
+    lines.push(`[p${p.i + 1}]${elementLabel(p)} ${preview(p.text)}`);
   }
   return lines.join('\n');
 }
@@ -43,8 +52,7 @@ export function renderOutline(doc: BridgeDocument): string {
 function renderFullBody(doc: BridgeDocument): string {
   const lines: string[] = [];
   for (const p of doc.paragraphs ?? []) {
-    const style = p.style && p.style !== 'Standard' ? ` (${p.style})` : '';
-    lines.push(`[p${p.i + 1}]${style} ${p.text}`);
+    lines.push(`[p${p.i + 1}]${elementLabel(p)} ${p.text}`);
   }
   return lines.join('\n');
 }
@@ -71,6 +79,9 @@ export const writerAdapter: ModuleAdapter = {
         '  this (with several paragraphs) to split one paragraph.',
         '- [ACTION: delete-at pN] to DELETE the entire paragraph [pN]:',
         '  NO ```writer block, just the tag.',
+        '- [ACTION: insert-table pN] to insert a TABLE right AFTER paragraph',
+        '  [pN] (p0 = very start of the document): include a ```writer block',
+        '  with a markdown table (| a | b | lines; first row = header).',
       ],
       contentFormat: [
         'Content format (```writer block): markdown-lite, one paragraph per line.',
@@ -78,10 +89,13 @@ export const writerAdapter: ModuleAdapter = {
         'triple-backtick code sections (kept verbatim), and inline **bold**,',
         '*italic*, `code`. Plain lines keep the document default style.',
         'Prefer paragraph styles that already appear in the document context.',
+        'For insert-table the same block holds the table instead: pipe-separated',
+        'rows, e.g. "| Name | Age |" then "| --- | --- |" then data rows.',
       ],
       undoMode: 'tracked-changes',
       leadRules: [
-        '- The document context lists paragraphs as [pN] ids with their styles.',
+        '- The document context lists elements as [pN] ids with their styles;',
+        '  tables appear as [pN] (table RxC: header cells), images as (image).',
       ],
       rules: [
         '- For rewrite: output the complete replacement of the selection.',
@@ -101,6 +115,7 @@ export const writerAdapter: ModuleAdapter = {
       `File: ${filePath ?? '(unsaved document)'}`,
       `Title: ${doc.title}`,
       `Cursor paragraph style: ${doc.cursorStyle ?? 'Standard'}`,
+      `Elements: ${(doc.paragraphs ?? []).length}${doc.images ? `, Images: ${doc.images}` : ''}`,
       '',
     ].join('\n');
 
@@ -147,6 +162,11 @@ export const writerAdapter: ModuleAdapter = {
     const contentModes: EditMode[] = ['insert', 'insert-top', 'insert-after', 'rewrite', 'rewrite-at'];
     const needsContent = contentModes.includes(outcome.action as EditMode);
 
+    if (outcome.action === 'insert-table' && (!outcome.table || outcome.table.length === 0)) {
+      throw new Error(
+        '[ACTION: insert-table] needs a ```writer block with a markdown table (| a | b | rows).',
+      );
+    }
     if (needsContent && (!outcome.block || outcome.block.length === 0)) {
       throw new Error(
         `[ACTION: ${outcome.action}] needs a \`\`\`writer content block; the reply contained none.`,
@@ -155,10 +175,12 @@ export const writerAdapter: ModuleAdapter = {
     if (outcome.action === 'rewrite' && !sel.hasSelection) {
       throw new Error('[ACTION: rewrite] but the document has no active selection.');
     }
-    const addressed = outcome.action === 'insert-after' || outcome.action === 'rewrite-at' || outcome.action === 'delete-at';
+    const addressed =
+      outcome.action === 'insert-after' || outcome.action === 'rewrite-at' ||
+      outcome.action === 'delete-at' || outcome.action === 'insert-table';
     if (addressed) {
-      if (!outcome.target || outcome.target < 1) {
-        throw new Error(`[ACTION: ${outcome.action}] needs a valid paragraph number (e.g. ${outcome.action} p3).`);
+      if (outcome.target === null || outcome.target < (outcome.action === 'insert-table' ? 0 : 1)) {
+        throw new Error(`[ACTION: ${outcome.action}] needs a valid paragraph number (e.g. ${outcome.action} p3; insert-table also allows p0 = very start).`);
       }
       const count = doc.paragraphs?.length ?? 0;
       if (outcome.target > count) {
@@ -172,6 +194,8 @@ export const writerAdapter: ModuleAdapter = {
       target: outcome.target,
       tracked: true,
       paragraphs: needsContent ? outcome.block ?? undefined : undefined,
+      rows: outcome.action === 'insert-table' ? outcome.table ?? undefined : undefined,
+      header: outcome.action === 'insert-table' ? (outcome.table ?? []).length > 1 : undefined,
     });
 
     const parts: string[] = [outcome.action];

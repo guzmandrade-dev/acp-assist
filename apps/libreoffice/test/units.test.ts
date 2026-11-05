@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseAction } from '../src/server.js';
 import { calcAdapter, parseCalcAction } from '../src/modules/calc.js';
-import { extractContentBlock, parseContentBlock, parseInline, parseTsvBlock } from '../src/modules/markdown.js';
+import { extractContentBlock, parseContentBlock, parseInline, parseTableBlock, parseTsvBlock } from '../src/modules/markdown.js';
 import { writerAdapter } from '../src/modules/writer.js';
 import type { BridgeClient, BridgeDocument } from '../src/bridge/client.js';
 
@@ -45,8 +45,29 @@ describe('parseAction', () => {
       address: null,
       block: null,
       grid: null,
+      table: null,
       tagNote: null,
     });
+  });
+
+  it('parses insert-table with its markdown-table block', () => {
+    const reply = [
+      'Adding a table.',
+      '```writer',
+      '| Name | Role |',
+      '| --- | --- |',
+      '| Ada | Eng |',
+      '```',
+      '[ACTION: insert-table p2]',
+    ].join('\n');
+    const out = parseAction(reply);
+    expect(out.action).toBe('insert-table');
+    expect(out.target).toBe(2);
+    expect(out.block).toBeNull();
+    expect(out.table).toEqual([
+      ['Name', 'Role'],
+      ['Ada', 'Eng'],
+    ]);
   });
 
   it('parses insert with a content block', () => {
@@ -371,6 +392,76 @@ describe('writerAdapter context', () => {
     expect(
       writerAdapter.buildSelectionBlock({ hasSelection: true, text: 'sel text', cursorStyle: 'Standard', calc: null }),
     ).toContain('sel text');
+  });
+
+  it('renders table and image elements in the context', () => {
+    const doc = writerDoc([['Intro', 'Standard']], {
+      paragraphs: [
+        { i: 0, text: 'Intro', style: 'Standard', kind: 'paragraph' },
+        { i: 1, text: '', style: '', kind: 'table', rows: 3, cols: 2, header: ['Name', 'Role'] },
+        { i: 2, text: '', style: '', kind: 'image' },
+        { i: 3, text: 'Outro', style: 'Standard', kind: 'paragraph' },
+      ],
+      images: 1,
+    });
+    const ctx = writerAdapter.buildContextBlock(doc, doc.url);
+    expect(ctx).toContain('[p2] (table 3x2: Name | Role)');
+    expect(ctx).toContain('[p3] (image)');
+    expect(ctx).toContain('Images: 1');
+  });
+});
+
+describe('parseTableBlock', () => {
+  it('parses pipe rows and drops the separator row', () => {
+    const block = ['| A | B |', '|:-:|---:|', '| 1 | 2 |', '', '| 3 | 4 |'].join('\n');
+    expect(parseTableBlock(block)).toEqual([['A', 'B'], ['1', '2'], ['3', '4']]);
+  });
+
+  it('skips non-pipe lines and trims cells', () => {
+    expect(parseTableBlock('intro text\n|  x  |y|  ')).toEqual([['x', 'y']]);
+  });
+});
+
+describe('writerAdapter applyAction insert-table', () => {
+  const recordingBridge = (calls: EditPayload[]) =>
+    ({
+      async edit(payload: EditPayload) {
+        calls.push(payload);
+        return {};
+      },
+    }) as unknown as BridgeClient;
+
+  it('maps insert-table to the insert-table edit mode with rows + header', async () => {
+    const calls: EditPayload[] = [];
+    const doc = writerDoc([['a', 'Standard'], ['b', 'Standard']]);
+    const out = parseAction('```writer\n| H1 | H2 |\n| --- | --- |\n| a | b |\n```\n[ACTION: insert-table p1]');
+    const r = await writerAdapter.applyAction(recordingBridge(calls), doc, { hasSelection: false, text: null, cursorStyle: null, calc: null }, out);
+    expect(calls).toEqual([
+      { mode: 'insert-table', target: 1, tracked: true, paragraphs: undefined, rows: [['H1', 'H2'], ['a', 'b']], header: true },
+    ]);
+    expect(r.description).toBe('[ACTION: insert-table p1]');
+  });
+
+  it('accepts p0 (very start) and rejects a missing table block before writing', async () => {
+    const calls: EditPayload[] = [];
+    const doc = writerDoc([['a', 'Standard']]);
+    await writerAdapter.applyAction(
+      recordingBridge(calls), doc,
+      { hasSelection: false, text: null, cursorStyle: null, calc: null },
+      { action: 'insert-table', target: 0, address: null, block: null, grid: null, table: [['only']], tagNote: null, startedAt: '' },
+    );
+    expect(calls[0]?.target).toBe(0);
+    expect(calls[0]?.header).toBe(false);
+
+    const calls2: EditPayload[] = [];
+    await expect(
+      writerAdapter.applyAction(
+        recordingBridge(calls2), doc,
+        { hasSelection: false, text: null, cursorStyle: null, calc: null },
+        { action: 'insert-table', target: 1, address: null, block: null, grid: null, table: [], tagNote: null, startedAt: '' },
+      ),
+    ).rejects.toThrow(/markdown table/);
+    expect(calls2).toEqual([]);
   });
 });
 // --- Calc adapter ---------------------------------------------------------------
