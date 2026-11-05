@@ -510,3 +510,27 @@ Scratch doc: `C:\Users\guzma\Temp\p6-probe.docx`. New rules:
 - The probe plugin remains installed in the user's Desktop Editors
   (Plugins tab → "ACP Assist Probe") for future sessions. Remove via
   Plugin Manager if needed.
+## Writer rich content v0.5/v0.6 (built + live-verified 2026-11-05)
+
+Bridge plugin v0.5.0/v0.6.0 + companion writer adapter (commits after
+2026-11-04): `[ACTION: insert-table pN]`, `[ACTION: insert-image pN]`,
+`[ACTION: add-comment pN]`, `[ACTION: page-break pN]`, inline
+`[text](url)` link runs, and REAL lists (`- ` → List, `1. ` → Numbering 1
+via doc.CreateNumbering). All live-verified through the spike
+bridge-server on 10.0.0.169; one callCommand = one undo step for every
+new op. New rules:
+
+58. **Paragraph GetText() drops runs adjacent to hyperlink elements** —
+    a paragraph "see [x](url) now" read back as "x now" (the run before
+    the hyperlink vanished from GetText). Read links via the element walk
+    (GetElement(i).GetClassType() === "hyperlink" + GetDisplayedText())
+    when exact text matters; context previews may miss such runs.
+59. **AddHyperlink(link, screenTip) creates an EMPTY hyperlink** — the
+    display text is set separately via `hl.SetDisplayedText(text)`
+    (rule 53 verified: display text reads back via GetDisplayedText).
+60. **The plugin's extracted copy can be edited in place** for live
+    testing: changes under
+    `%LOCALAPPDATA%\...\sdkjs-plugins\{7E2F9A41-…}\scripts\code.js` are
+    picked up on the next editor start (the `addons` hash is only
+    enforced at Plugin-Manager install time). For the product, repackage
+    `acp-bridge.plugin` (zip + rename) and install via Plugin Manager.

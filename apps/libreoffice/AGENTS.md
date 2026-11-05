@@ -987,3 +987,17 @@ work; rules:
     `supportsService("com.sun.star.text.Paragraph")` and separately report
     `getTextTables()`/`getGraphicObjects()` counts + previews, or the agent
     cannot see inserted tables/images.
+
+## Writer rich content (built + live-verified 2026-11-05, e2e 56/56)
+
+Bridge + companion (commits after 2026-11-04): `[ACTION: insert-table pN]`,
+`[ACTION: insert-image pN]`, `[ACTION: add-comment pN]`,
+`[ACTION: page-break pN]`, inline `[text](url)` link runs, real lists
+(`- ` → "List", `1. ` → "Numbering 1" via ParaStyleName — rule 43).
+47. **Table cell shading uses `BackColor`** on this build;
+    `CellBackColor` is an UnknownPropertyException. Guarded fallback in
+    the bridge so shading can never abort a fill (found live: the throw
+    aborted the cell loop mid-table).
+48. **AS_CHARACTER graphics live INSIDE their paragraph** — the main-text
+    enumeration never yields them as top-level elements; the read side is
+    the `images` count on /document (getGraphicObjects), not a kind entry.
