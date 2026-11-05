@@ -65,6 +65,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Generate app icons
+        # onlyoffice icons are committed (generated once from public/logo.svg);
+        # its scripts/ has no generate-icon.ps1.
+        if: matrix.app != 'onlyoffice'
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-icon.ps1
         working-directory: apps/${{ matrix.app }}
 
