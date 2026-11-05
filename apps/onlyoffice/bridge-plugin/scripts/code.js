@@ -1,5 +1,5 @@
 /*
- * ACP Assist Bridge v0.4.2 (apps/onlyoffice/bridge-plugin).
+ * ACP Assist Bridge v0.5.0 (apps/onlyoffice/bridge-plugin).
  * Dumb transport, same contract as the LibreOffice .oxt bridge: the
  * plugin carries JSON between the editor and the companion; ALL
  * intelligence lives in the companion. The companion owns the port —
@@ -13,7 +13,7 @@
  *
  * Ops (each edit = ONE callCommand = one undo step):
  *   ping, context, selection, insert, insertTop, insertAfter,
- *   rewriteAt, deleteAt, rewriteSelection, undo, journal
+ *   rewriteAt, deleteAt, rewriteSelection, insertTable, undo, journal
  *   cell (spreadsheet): writeCells, insertRows, insertCols
  *   slide (presentation): rewriteSlide, insertSlideAfter
  *
@@ -548,16 +548,42 @@
                 var count = oDocument.GetElementsCount();
                 var texts = [];
                 var styles = [];
+                var kinds = [];
+                var tables = [];
                 for (var i = 0; i < count && i < 500; i++) {
                     var el = oDocument.GetElement(i);
+                    var kind = "paragraph";
+                    try { kind = el.GetClassType(); } catch (e0) {}
+                    kinds.push(kind);
                     var t = "";
                     try { t = el.GetText(); } catch (e) {}
                     texts.push(String(t));
                     var s = null;
                     try { s = el.GetStyle().GetName(); } catch (e2) {}
                     styles.push(s);
+                    if (kind === "table") {
+                        // compact preview: dims + first-row cells
+                        var preview = [];
+                        try {
+                            var row0 = el.GetRow(0);
+                            var nc = row0.GetCellsCount();
+                            for (var c = 0; c < nc && c < 8; c++) {
+                                preview.push(String(row0.GetCell(c).GetText()).replace(/[\\r\\n\\t]+/g, " ").trim());
+                            }
+                            tables.push({
+                                index: i,
+                                rows: el.Rows.length,
+                                cols: el.GetColumnsCount(),
+                                header: preview
+                            });
+                        } catch (e3) {
+                            tables.push({ index: i, error: String(e3) });
+                        }
+                    }
                 }
-                return { paragraphs: count, texts: texts, styles: styles };
+                var images = 0;
+                try { images = oDocument.GetAllImages().length; } catch (e4) {}
+                return { paragraphs: count, texts: texts, styles: styles, kinds: kinds, tables: tables, images: images };
             }).then(function (r) {
                 r.texts = r.texts.map(norm);
                 return selectionSnapshot().then(function (sel) {
@@ -650,6 +676,54 @@
             )).then(function (r) {
                 if (r.error) throw new Error(r.error);
                 record("deleteAt", { index: args.index, oldText: norm(r.oldText) });
+                return r;
+            });
+        },
+
+        /* insertTable {index, rows, header}: build + fill + insert a table
+         * in ONE callCommand (one undo step, rule 51). index is the
+         * 0-based paragraph AFTER which the table lands (index+1 element
+         * position; -1 = very start of the document). rows is string[][];
+         * header shades the first row. CreateTable is empirically
+         * (rows, cols) — rule 50. */
+        insertTable: function (args) {
+            requireWord();
+            Asc.scope.index = args.index;
+            Asc.scope.rows = (args.rows || []).map(function (row) {
+                return (row || []).map(function (c) { return String(c); });
+            });
+            Asc.scope.header = !!args.header;
+            return cmd(new Function(
+                "var oDocument = Api.GetDocument();" +
+                "var p = Asc.scope;" +
+                "var nRow = p.rows.length;" +
+                "var nCol = 0;" +
+                "for (var r = 0; r < nRow; r++) { if (p.rows[r].length > nCol) nCol = p.rows[r].length; }" +
+                "if (nRow < 1 || nCol < 1) return { error: 'empty table' };" +
+                "var count0 = oDocument.GetElementsCount();" +
+                "if (p.index < -1 || p.index >= count0) return { error: 'index ' + p.index + ' out of range (-1..' + (count0 - 1) + ')' };" +
+                "var t = Api.CreateTable(nRow, nCol);" +  // (rows, cols) — rule 50
+                "if (!t) return { error: 'CreateTable returned null' };" +
+                "for (var r2 = 0; r2 < nRow; r2++) {" +
+                "  var row = t.GetRow(r2);" +
+                "  for (var c = 0; c < nCol; c++) {" +
+                "    var cell = row.GetCell(c);" +
+                "    var txt = (p.rows[r2][c] === undefined || p.rows[r2][c] === null) ? '' : String(p.rows[r2][c]);" +
+                "    try { cell.AddText(txt); }" +
+                "    catch (e1) { cell.GetContent().GetElement(0).AddText(txt); }" +
+                "    if (p.header && r2 === 0) {" +
+                "      try { cell.SetBackgroundColor(Api.RGB(230, 230, 230)); } catch (e2) {}" +
+                "    }" +
+                "  }" +
+                "}" +
+                "var pos = p.index + 1;" +
+                "if (pos < 0) pos = 0;" +
+                "if (pos > oDocument.GetElementsCount()) pos = oDocument.GetElementsCount();" +
+                "var added = oDocument.AddElement(pos, t);" +
+                "return { added: !!added, pos: pos, tables: oDocument.GetAllTables().length, elements: oDocument.GetElementsCount() };"
+            )).then(function (r) {
+                if (r.error) throw new Error(r.error);
+                record("insertTable", { index: args.index, rows: Asc.scope.rows.length });
                 return r;
             });
         },
