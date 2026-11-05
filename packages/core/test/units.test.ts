@@ -323,3 +323,51 @@ describe('extractAttachmentText', () => {
     await fs.rm(dir, { recursive: true, force: true });
   });
 });
+// --- image helpers (writer insert-image) ---------------------------------------
+
+import { parseDataUri, toDataUri, sniffImageSize, sizeToCm, defaultImageSizeCm } from '../src/index.js';
+
+describe('image helpers', () => {
+  it('round-trips data URIs', () => {
+    const bytes = new Uint8Array([1, 2, 3, 250]);
+    const uri = toDataUri('image/png', bytes);
+    const parsed = parseDataUri(uri);
+    expect(parsed?.mime).toBe('image/png');
+    expect([...(parsed?.bytes ?? [])]).toEqual([1, 2, 3, 250]);
+    expect(parseDataUri('not a uri')).toBeNull();
+  });
+
+  it('sniffs PNG/GIF/JPEG sizes', () => {
+    // 2x3 PNG
+    const png = new Uint8Array(24);
+    [0x89, 0x50, 0x4e, 0x47].forEach((b, i) => (png[i] = b));
+    png[16] = 0; png[17] = 0; png[18] = 0; png[19] = 2;
+    png[20] = 0; png[21] = 0; png[22] = 0; png[23] = 3;
+    expect(sniffImageSize(png)).toEqual({ width: 2, height: 3 });
+    // 4x5 GIF
+    const gif = new Uint8Array(24);
+    [0x47, 0x49, 0x46].forEach((b, i) => (gif[i] = b));
+    gif[6] = 4; gif[7] = 0; gif[8] = 5; gif[9] = 0;
+    expect(sniffImageSize(gif)).toEqual({ width: 4, height: 5 });
+    // JPEG: SOI + APP0 (len 16 covers its own 2 bytes) + SOF0 (h=6, w=7)
+    const jpg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xc0, 0, 11, 8, 0, 6, 0, 7]);
+    expect(sniffImageSize(jpg)).toEqual({ width: 7, height: 6 });
+    expect(sniffImageSize(new Uint8Array([1, 2, 3]))).toBeNull();
+  });
+
+  it('parses sizes and computes default display size', () => {
+    expect(sizeToCm('10cm')).toBeCloseTo(10);
+    expect(sizeToCm('2in')).toBeCloseTo(5.08);
+    expect(sizeToCm('96px')).toBeCloseTo(2.54);
+    expect(sizeToCm('nonsense')).toBeNull();
+    // 960x480 px at 96dpi = 25.4x12.7cm -> capped to 16cm wide
+    const png = new Uint8Array(24);
+    [0x89, 0x50, 0x4e, 0x47].forEach((b, i) => (png[i] = b));
+    png[19] = 0xc0; png[18] = 0x03; // 960
+    png[23] = 0xe0; png[22] = 0x01; // 480
+    const size = defaultImageSizeCm(png);
+    expect(size.widthCm).toBeCloseTo(16);
+    expect(size.heightCm).toBeCloseTo(8);
+    expect(defaultImageSizeCm(null)).toEqual({ widthCm: 10, heightCm: 10 });
+  });
+});
