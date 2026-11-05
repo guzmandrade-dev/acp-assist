@@ -33,6 +33,7 @@ from com.sun.star.awt.FontSlant import NONE as FONT_SLANT_NONE
 from com.sun.star.awt.FontSlant import ITALIC as FONT_SLANT_ITALIC
 from com.sun.star.task import XJobExecutor
 from com.sun.star.text.ControlCharacter import PARAGRAPH_BREAK
+from com.sun.star.text.TextContentAnchorType import AS_CHARACTER
 from com.sun.star.view import XSelectionChangeListener
 
 APP_NAME = "LibreOffice ACP Assist"
@@ -988,6 +989,9 @@ def _write_paragraphs(doc, cursor, paragraphs, break_mode):
                                         FONT_SLANT_ITALIC if run.get("italic") else FONT_SLANT_NONE)
                 if run.get("code"):
                     cursor.setPropertyValue("CharFontName", _MONO_FONT)
+                if run.get("url"):
+                    # inline hyperlink on the just-written run (rule 42)
+                    cursor.setPropertyValue("HyperLinkURL", str(run["url"]))
                 cursor.goRight(len(s), False)
             except Exception:
                 pass
@@ -1135,7 +1139,8 @@ def _edit_calc(desktop, payload):
 
 
 WRITER_MODES = ("insert", "insert-top", "insert-after",
-                "rewrite", "rewrite-at", "delete-at", "insert-table")
+                "rewrite", "rewrite-at", "delete-at", "insert-table",
+                "insert-image", "add-comment", "page-break")
 CALC_MODES = ("write-cells", "insert-rows", "insert-cols")
 IMPRESS_MODES = ("rewrite-frame", "rewrite-slide", "insert-slide-after")
 
@@ -1159,7 +1164,7 @@ def _edit_writer(desktop, payload):
     ctrl = doc.getCurrentController()
 
     paragraphs = payload.get("paragraphs")
-    if mode not in ("delete-at", "insert-table") and not paragraphs:
+    if mode not in ("delete-at", "insert-table", "insert-image", "add-comment", "page-break") and not paragraphs:
         raise RuntimeError(f"mode {mode!r} requires paragraphs")
     target = payload.get("target")
     # Request-local paragraph list: the existence check, the target lookup,
@@ -1167,11 +1172,12 @@ def _edit_writer(desktop, payload):
     # _writer_paragraphs/_nth_paragraph call used to re-walk from
     # paragraph 0 — one delete-at walked the document up to 4 times).
     paras_pre = None
-    if mode in ("insert-after", "rewrite-at", "delete-at", "insert-table"):
-        # insert-table also accepts target 0 = insert at the very start
-        min_target = 0 if mode == "insert-table" else 1
+    if mode in ("insert-after", "rewrite-at", "delete-at", "insert-table",
+                "insert-image", "add-comment", "page-break"):
+        # insert-table/insert-image also accept target 0 = very start
+        min_target = 0 if mode in ("insert-table", "insert-image") else 1
         if not isinstance(target, int) or target < min_target:
-            raise RuntimeError(f"mode {mode!r} requires a target (pN; insert-table also allows 0 = start)")
+            raise RuntimeError(f"mode {mode!r} requires a target (pN; insert-table/insert-image also allow 0 = start)")
         paras_pre = list(text.createEnumeration())
         if target > len(paras_pre):
             raise RuntimeError(
@@ -1250,6 +1256,45 @@ def _edit_writer(desktop, payload):
                                 cell.setPropertyValue("BackColor", 0xE6E6E6)
                             except Exception:
                                 pass
+
+        elif mode == "insert-image":
+            # P6 rule 41: TextGraphicObject + GraphicURL (file:// or http) +
+            # AS_CHARACTER; Width/Height in 1/100 mm (companion-resolved).
+            src = payload.get("src")
+            if not src:
+                raise RuntimeError("mode 'insert-image' requires src")
+            graphic = doc.createInstance("com.sun.star.text.TextGraphicObject")
+            graphic.setPropertyValue("GraphicURL", str(src))
+            graphic.setPropertyValue("AnchorType", AS_CHARACTER)
+            w = payload.get("width")
+            h = payload.get("height")
+            if isinstance(w, (int, float)) and w > 0:
+                graphic.setPropertyValue("Width", int(w))
+            if isinstance(h, (int, float)) and h > 0:
+                graphic.setPropertyValue("Height", int(h))
+            if target == 0:
+                vc.gotoStart(False)
+            else:
+                vc.gotoRange(paras_pre[target - 1].getEnd(), False)
+            text.insertTextContent(vc, graphic, False)
+
+        elif mode == "add-comment":
+            # P6 rule 44: TextField.Annotation at the paragraph start.
+            ctext = payload.get("text")
+            if not ctext:
+                raise RuntimeError("mode 'add-comment' requires text")
+            anno = doc.createInstance("com.sun.star.text.TextField.Annotation")
+            anno.setPropertyValue("Author", "ACP Assist")
+            anno.setPropertyValue("Content", str(ctext))
+            para = paras_pre[target - 1]
+            vc.gotoRange(para.getStart(), False)
+            text.insertTextContent(vc, anno, False)
+
+        elif mode == "page-break":
+            # P6 rule 45: page break BEFORE paragraph [pN].
+            from com.sun.star.style.BreakType import PAGE_BEFORE
+            para = paras_pre[target - 1]
+            para.setPropertyValue("BreakType", PAGE_BEFORE)
 
         elif mode == "delete-at":
             para = paras_pre[target - 1]

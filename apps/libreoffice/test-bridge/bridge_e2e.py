@@ -299,6 +299,59 @@ def main():
           code == 500 and "requires rows" in str(out.get("error")),
           f"code={code} out={out}")
 
+    # --- edit: insert-image p1 (data URI -> file by the companion; here a
+    #     temp file URL directly) ------------------------------------------
+    import tempfile
+    png_path = os.path.join(tempfile.gettempdir(), "e2e_red.png")
+    with open(png_path, "wb") as f:
+        f.write(bytes.fromhex(
+            "89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de"
+            "0000000c4944415478da63f8cfc0000000030001 5ccdff690000000049454e44ae426082".replace(" ", "")))
+    code, out = http("POST", "/edit", token=TOKEN, payload={
+        "mode": "insert-image", "target": 1, "tracked": False,
+        "src": "file:///" + png_path.replace("\\", "/"),
+        "width": 1000, "height": 1000,
+    })
+    gos = doc.getGraphicObjects()
+    code_doc, docread = http("GET", "/document", token=TOKEN)
+    check("edit insert-image p1 inserts a graphic after p1",
+          code == 200 and out.get("applied") and gos.getCount() == 1
+          and docread.get("images") == 1,
+          f"graphics={gos.getCount()} doc-images={docread.get('images')}")
+    http("POST", "/undo", token=TOKEN)
+    check("undo reverts the image insert",
+          doc.getGraphicObjects().getCount() == 0)
+
+    # --- edit: add-comment p1 -----------------------------------------------
+    code, out = http("POST", "/edit", token=TOKEN, payload={
+        "mode": "add-comment", "target": 1, "tracked": False, "text": "e2e comment",
+    })
+    fields = doc.getTextFields()
+    texts = []
+    enum = fields.createEnumeration() if hasattr(fields, "createEnumeration") else fields
+    while enum.hasMoreElements():
+        texts.append(enum.nextElement().getPropertyValue("Content"))
+    check("edit add-comment p1 attaches an annotation",
+          code == 200 and out.get("applied") and "e2e comment" in texts,
+          f"fields={texts}")
+    http("POST", "/undo", token=TOKEN)
+
+    # --- edit: page-break p2 -------------------------------------------------
+    from com.sun.star.style.BreakType import PAGE_BEFORE
+    enum_pb = list(text.createEnumeration())
+    paras_pb = [p for p in enum_pb if p.supportsService("com.sun.star.text.Paragraph")]
+    code, out = http("POST", "/edit", token=TOKEN, payload={
+        "mode": "page-break", "target": 2, "tracked": False,
+    })
+    enum_pb2 = list(text.createEnumeration())
+    paras_pb2 = [p for p in enum_pb2 if p.supportsService("com.sun.star.text.Paragraph")]
+    bt = paras_pb2[1].getPropertyValue("BreakType") if len(paras_pb2) > 1 else None
+    check("edit page-break p2 sets PAGE_BEFORE on p2",
+          code == 200 and out.get("applied")
+          and bt is not None and str(bt) == str(PAGE_BEFORE),
+          f"break={bt}")
+    http("POST", "/undo", token=TOKEN)
+
     # --- events long-poll sees selection-changed
     events_result = {}
 
