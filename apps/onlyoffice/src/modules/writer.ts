@@ -10,8 +10,10 @@
  * ONLYOFFICE, so the agent instructions say undo instead.
  */
 
-import type { PluginBridge, WriterDocument, BlockParagraph, EditResult, InsertTableArgs, InsertTableResult, TableSummary } from '../bridge/plugin-bridge.js';
+import type { PluginBridge, WriterDocument, BlockParagraph, EditResult, InsertTableArgs, InsertTableResult, TableSummary, InsertImageAtArgs, InsertImageAtResult, AddCommentArgs, AddCommentResult, PageBreakArgs, PageBreakResult } from '../bridge/plugin-bridge.js';
 import { actionInstructions, preview } from './markdown.js';
+import type { ImageBlock } from './markdown.js';
+import { defaultImageSizeCm, parseDataUri, sniffImageSize } from '@acp-assist/core';
 
 /** Body size above which only the outline + previews are attached. */
 const OUTLINE_ONLY_BODY_LIMIT = 16_000;
@@ -22,11 +24,15 @@ export interface WriterOutcome {
   action:
     | 'none' | 'continue'
     | 'insert' | 'insert-top' | 'insert-after' | 'rewrite' | 'rewrite-at' | 'delete-at'
-    | 'insert-table';
+    | 'insert-table' | 'insert-image' | 'add-comment' | 'page-break';
   /** Parsed content paragraphs; null for actions without content. */
   block: BlockParagraph[] | null;
   /** Parsed table rows for insert-table (markdown-table block); else null. */
   table?: string[][] | null;
+  /** Parsed image spec for insert-image; else null. */
+  image?: ImageBlock | null;
+  /** Comment text for add-comment; else null. */
+  comment?: string | null;
   /** 1-based paragraph address for insert-after/rewrite-at/delete-at/insert-table. */
   target: number | null;
   tagNote?: string | null;
@@ -109,6 +115,14 @@ export const writerAdapter = {
         '- [ACTION: insert-table pN] to insert a TABLE right AFTER paragraph',
         '  [pN] (p0 = very start of the document): include a ```writer block',
         '  with a markdown table (| a | b | lines; first row = header).',
+        '- [ACTION: insert-image pN] to insert an IMAGE right AFTER paragraph',
+        '  [pN] (p0 = very start): include a ```writer block with an',
+        '  `image: <url or data:image/...>` line plus optional `width:`/`height:`',
+        '  (cm/in/px). Images appear in the editor after save + reopen.',
+        '- [ACTION: add-comment pN] to attach a COMMENT to paragraph [pN]:',
+        '  include a ```writer block with the comment text.',
+        '- [ACTION: page-break pN] to start paragraph [pN] on a NEW PAGE:',
+        '  NO ```writer block, just the tag.',
       ],
       contentFormat: [
         'Content format (```writer block): markdown-lite, one paragraph per line.',
@@ -118,6 +132,8 @@ export const writerAdapter = {
         'Prefer paragraph styles that already appear in the document context.',
         'For insert-table the same block holds the table instead: pipe-separated',
         'rows, e.g. "| Name | Age |" then "| --- | --- |" then data rows.',
+        'Inline links: [link text](https://example.com) inside any line.',
+        'List items ("- " bullets, "1. " numbered) become REAL lists.',
       ],
       undoMode: 'undo-only',
       leadRules: [
@@ -183,12 +199,22 @@ export const writerAdapter = {
         '[ACTION: insert-table] needs a ```writer block with a markdown table (| a | b | rows).',
       );
     }
+    if (outcome.action === 'insert-image' && !outcome.image?.src) {
+      throw new Error(
+        '[ACTION: insert-image] needs a ```writer block with an `image: <url|data:...>` line.',
+      );
+    }
+    if (outcome.action === 'add-comment' && !outcome.comment) {
+      throw new Error('[ACTION: add-comment] needs a ```writer block with the comment text.');
+    }
     if (outcome.action === 'rewrite' && !hasSelection) {
       throw new Error('[ACTION: rewrite] but the document has no active selection.');
     }
     const addressed =
       outcome.action === 'insert-after' || outcome.action === 'rewrite-at' ||
-      outcome.action === 'delete-at' || outcome.action === 'insert-table';
+      outcome.action === 'delete-at' || outcome.action === 'insert-table' ||
+      outcome.action === 'insert-image' || outcome.action === 'add-comment' ||
+      outcome.action === 'page-break';
     if (addressed) {
       if (outcome.target === null || outcome.target < 0) {
         throw new Error(`[ACTION: ${outcome.action}] needs a valid paragraph number (e.g. ${outcome.action} p3; p0 = very start).`);
@@ -227,6 +253,42 @@ export const writerAdapter = {
         };
         const r = await bridge.op<InsertTableResult>('insertTable', args as unknown as Record<string, unknown>);
         return `[ACTION: insert-table p${outcome.target} — ${rows.length}x${Math.max(...rows.map((row) => row.length))} table at element ${r.pos}]`;
+      }
+      case 'insert-image': {
+        const image = outcome.image!;
+        // Resolve bytes once for size sniffing; pass the original src through
+        // (the plugin can fetch http(s) itself — verified in the P5/P6 probes).
+        let bytes: Uint8Array | null = null;
+        if (/^data:/i.test(image.src)) {
+          bytes = parseDataUri(image.src)?.bytes ?? null;
+        } else if (/^https?:\/\//i.test(image.src)) {
+          try {
+            const buf = await (await fetch(image.src)).arrayBuffer();
+            bytes = new Uint8Array(buf);
+          } catch { bytes = null; }
+        }
+        const size = defaultImageSizeCm(bytes);
+        const widthCm = image.widthCm ?? size.widthCm;
+        const heightCm = image.heightCm ?? size.heightCm;
+        const emu = (cm: number) => Math.round(cm * 360000);
+        const args: InsertImageAtArgs = {
+          index: outcome.target === 0 ? -1 : outcome.target! - 1,
+          src: image.src,
+          w: emu(widthCm),
+          h: emu(heightCm),
+        };
+        const r = await bridge.op<InsertImageAtResult>('insertImageAt', args as unknown as Record<string, unknown>);
+        return `[ACTION: insert-image p${outcome.target} — ${widthCm.toFixed(1)}x${heightCm.toFixed(1)}cm image at element ${r.pos} (appears after save+reopen)]`;
+      }
+      case 'add-comment': {
+        const args: AddCommentArgs = { index: outcome.target! - 1, text: outcome.comment ?? '' };
+        await bridge.op<AddCommentResult>('addComment', args as unknown as Record<string, unknown>);
+        return `[ACTION: add-comment p${outcome.target}]`;
+      }
+      case 'page-break': {
+        const args: PageBreakArgs = { index: Math.max(0, outcome.target! - 1) };
+        await bridge.op<PageBreakResult>('pageBreak', args as unknown as Record<string, unknown>);
+        return `[ACTION: page-break p${outcome.target}]`;
       }
       default:
         throw new Error(`unsupported action ${outcome.action}`);

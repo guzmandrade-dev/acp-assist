@@ -41,6 +41,8 @@ export interface BlockRun {
   bold?: boolean;
   italic?: boolean;
   code?: boolean;
+  /** Inline hyperlink target ([text](url) syntax). */
+  url?: string;
 }
 
 /** One paragraph the agent wants written: style name + inline runs. */
@@ -180,6 +182,45 @@ export interface InsertTableResult {
   added: boolean;
   pos: number;
   tables: number;
+  elements: number;
+}
+
+/** insertImageAt op (Writer): inline image in a fresh paragraph after
+ * element `index` (-1 = very start). src = http(s) URL or data:image URI;
+ * w/h in EMU. */
+export interface InsertImageAtArgs {
+  index: number;
+  src: string;
+  w: number;
+  h: number;
+}
+
+export interface InsertImageAtResult {
+  added: boolean;
+  pos: number;
+  images: number;
+  elements: number;
+}
+
+/** addComment op (Writer): comment on the paragraph at `index`. */
+export interface AddCommentArgs {
+  index: number;
+  text: string;
+}
+
+export interface AddCommentResult {
+  added: boolean;
+  comments: number;
+}
+
+/** pageBreak op (Writer): page-break paragraph before element `index`. */
+export interface PageBreakArgs {
+  index: number;
+}
+
+export interface PageBreakResult {
+  added: boolean;
+  pos: number;
   elements: number;
 }
 

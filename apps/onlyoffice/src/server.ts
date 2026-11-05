@@ -53,7 +53,7 @@ import {
 import { writerAdapter, type WriterOutcome } from './modules/writer.js';
 import { calcAdapter, parseCalcAction, type CalcOutcome } from './modules/calc.js';
 import { impressAdapter, parseImpressAction, type ImpressOutcome } from './modules/impress.js';
-import { extractContentBlock, parseContentBlock, parseTableBlock } from './modules/markdown.js';
+import { extractContentBlock, parseContentBlock, parseTableBlock, parseImageBlock, ACTION_TAG_LINE } from './modules/markdown.js';
 import { TIMINGS } from './timings.js';
 
 export type {
@@ -370,7 +370,7 @@ export function notConnectedError() {
 
 /** Writer grammar: [ACTION: name] or [ACTION: name pN] + ```writer block. */
 const parseTag = createParseActionTag({
-  actions: 'delete-at|rewrite-at|insert-after|insert-top|insert-table|rewrite|insert|none|continue',
+  actions: 'delete-at|rewrite-at|insert-after|insert-top|insert-table|insert-image|add-comment|page-break|rewrite|insert|none|continue',
   targetPattern: '(?:\\s+p(\\d+))?',
 });
 
@@ -378,7 +378,7 @@ export function parseAction(reply: string): WriterOutcome {
   const tag = parseTag(reply);
   const action = tag.action as WriterOutcome['action'];
   const target = tag.target !== null ? Number.parseInt(tag.target, 10) : null;
-  const contentActions: string[] = ['insert', 'insert-top', 'insert-after', 'rewrite', 'rewrite-at', 'insert-table'];
+  const contentActions: string[] = ['insert', 'insert-top', 'insert-after', 'rewrite', 'rewrite-at', 'insert-table', 'insert-image', 'add-comment'];
   const needsContent = contentActions.includes(action);
   const rawBlock = needsContent ? extractContentBlock(reply) : null;
   return {
@@ -386,10 +386,15 @@ export function parseAction(reply: string): WriterOutcome {
     action,
     target,
     block:
-      needsContent && action !== 'insert-table'
+      needsContent && action !== 'insert-table' && action !== 'insert-image' && action !== 'add-comment'
         ? (rawBlock !== null ? parseContentBlock(rawBlock) : null)
         : null,
     table: action === 'insert-table' && rawBlock !== null ? parseTableBlock(rawBlock) : null,
+    image: action === 'insert-image' && rawBlock !== null ? parseImageBlock(rawBlock) : null,
+    comment:
+      action === 'add-comment' && rawBlock !== null
+        ? rawBlock.replace(/\r\n/g, '\n').split('\n').filter((l) => l.trim() !== '' && !ACTION_TAG_LINE.test(l)).join('\n').trim()
+        : null,
     tagNote: actionTagNote(tag.rawTag ?? undefined, `[ACTION: ${action}${target !== null ? ` p${target}` : ''}]`),
   };
 }

@@ -195,6 +195,24 @@ describe('insert-table action', () => {
   it('skips non-pipe lines and trims cells', () => {
     expect(parseTableBlock('intro text\n|  x  |y|  ')).toEqual([['x', 'y']]);
   });
+
+  it('parses insert-image / add-comment / page-break tags and blocks', () => {
+    const img = parseAction(
+      '```writer\nimage: data:image/png;base64,AAAA\nwidth: 4cm\n```\n[ACTION: insert-image p3]',
+    );
+    expect(img.action).toBe('insert-image');
+    expect(img.target).toBe(3);
+    expect(img.image).toEqual({ src: 'data:image/png;base64,AAAA', widthCm: 4, heightCm: undefined });
+
+    const com = parseAction('```writer\nneeds review\nsecond line\n```\n[ACTION: add-comment p1]');
+    expect(com.action).toBe('add-comment');
+    expect(com.comment).toBe('needs review\nsecond line');
+
+    const pb = parseAction('[ACTION: page-break p2]');
+    expect(pb.action).toBe('page-break');
+    expect(pb.target).toBe(2);
+    expect(pb.block).toBeNull();
+  });
 });
 
 /** Markdown-lite content parsing (shared dialect with the LO app). */
@@ -223,7 +241,8 @@ describe('parseContentBlock', () => {
       { text: 'code', bold: false, italic: false, code: true },
       { text: '.', bold: false, italic: false, code: false },
     ]);
-    expect(paras[2]?.runs[0]?.text).toBe('• item one');
+    expect(paras[2]?.style).toBe('List');
+    expect(paras[2]?.runs[0]?.text).toBe('item one');
     expect(paras[3]).toEqual({ style: 'Quote', runs: [{ text: 'a quote', bold: false, italic: false, code: false }] });
     expect(paras[4]).toEqual({ style: 'Code', runs: [{ text: 'verbatim line' }] });
   });
@@ -298,6 +317,28 @@ describe('writerAdapter.applyAction', () => {
       writerAdapter.applyAction(bridge, doc, false, { action: 'insert-table', module: 'writer', target: 1, block: null, table: [] }),
     ).rejects.toThrow(/markdown table/);
     expect(calls).toEqual([]);
+  });
+
+  it('maps insert-image / add-comment / page-break to plugin ops', async () => {
+    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
+    const bridge = recordingBridge(calls);
+    const RED = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    await writerAdapter.applyAction(bridge, doc, false, {
+      action: 'insert-image', module: 'writer', target: 2, block: null,
+      image: { src: RED }, // 1x1 png -> 1px at 96dpi -> ~0.026cm
+    });
+    await writerAdapter.applyAction(bridge, doc, false, {
+      action: 'add-comment', module: 'writer', target: 1, block: null, comment: 'note',
+    });
+    await writerAdapter.applyAction(bridge, doc, false, {
+      action: 'page-break', module: 'writer', target: 2, block: null,
+    });
+    expect(calls.map((c) => c.op)).toEqual(['insertImageAt', 'addComment', 'pageBreak']);
+    expect(calls[0]?.args.index).toBe(1);
+    expect(String(calls[0]?.args.src)).toBe(RED);
+    expect(calls[0]?.args.w).toBeGreaterThan(0);
+    expect(calls[1]?.args).toEqual({ index: 0, text: 'note' });
+    expect(calls[2]?.args).toEqual({ index: 1 });
   });
 
   it('throws before writing when content or preconditions are missing', async () => {
