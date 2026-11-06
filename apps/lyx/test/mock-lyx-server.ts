@@ -110,7 +110,10 @@ export class MockLyxServer {
     this.transport = child;
 
     const ready = new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('mock transport did not start')), 15_000);
+      // Generous timeout: on Windows the transport is a PowerShell child
+      // process, and cold starts on a loaded CI runner can exceed 15s
+      // (flake observed 2026-11-06: two files timing out at exactly 15s).
+      const timer = setTimeout(() => reject(new Error('mock transport did not start')), 60_000);
       const onLine = (line: string) => {
         if (line === 'READY') {
           clearTimeout(timer);
