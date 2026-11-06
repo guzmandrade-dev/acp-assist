@@ -215,7 +215,7 @@
 <section id="apps">
   <div class="wrap">
     <h2>Apps</h2>
-    <p class="lead">Three apps, one architecture: the editor stays the single writer of truth, and the panel is a quiet chat surface that floats beside the document.</p>
+    <p class="lead">One desktop app — <strong>ACP Assist</strong> — with an in-app switcher for the three editors below. The architecture is the same for each: the editor stays the single writer of truth, and the panel is a quiet chat surface that floats beside the document.</p>
     <div class="app-list">
       <div class="app">
         <h3><img src="logo-lyx.svg" alt=""> LyX ACP Assist</h3>
@@ -358,21 +358,23 @@
 cd acp-assist
 npm install
 
-cd apps/lyx          # or: cd apps/libreoffice, cd apps/onlyoffice
+cd apps/acp-assist   # the unified app (LyX + LibreOffice + ONLYOFFICE)
 npm start            # builds TypeScript and launches the companion</code></pre>
     <p>
-      For ONLYOFFICE, also install the bridge plugin once: build it with
-      <code>npm run package:plugin</code> in <code>apps/onlyoffice</code>, then in
-      Desktop Editors open <strong>Plugins → Plugin Manager → Install plugin
-      manually</strong> and pick <code>acp-bridge.plugin</code> (also attached to
-      each release).
+      For ONLYOFFICE, also install the bridge plugin once: in Desktop Editors open
+      <strong>Plugins → Plugin Manager → Install plugin manually</strong> and pick
+      <code>acp-bridge.plugin</code> (attached to each
+      <a href="https://github.com/guzmandrade-dev/acp-assist/releases">release</a>,
+      or build it with <code>npm run package:plugin</code> in <code>apps/onlyoffice</code>).
     </p>
     <p>
       Open a saved document in your editor, select some text, and type a
       message. The panel shows the active document, selection word count, and
-      connection status. For installers, run <code>npm run package</code> —
-      prebuilt installers for Windows, macOS, and Linux are attached to each
-      <a href="https://github.com/guzmandrade-dev/acp-assist/releases">release</a>.
+      connection status. No build needed for daily use: the single
+      <strong>ACP Assist</strong> installer for Windows, macOS, or Linux is
+      attached to each
+      <a href="https://github.com/guzmandrade-dev/acp-assist/releases">release</a>
+      (build it locally with <code>npm run package</code> in <code>apps/acp-assist</code>).
     </p>
   </div>
 </section>

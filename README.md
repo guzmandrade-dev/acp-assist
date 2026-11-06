@@ -38,9 +38,11 @@ apps/onlyoffice/  ONLYOFFICE companion (Electron + in-editor .plugin bridge)
 ```
 
 npm workspaces: install once at the root (`npm install`), then develop,
-test, and package from either app's directory. Each app stays
-self-contained in packaging; `@acp-assist/core` rides along as a regular
-workspace dependency. See each app's README for requirements and usage.
+test, and package from any app's directory. `@acp-assist/core` rides along
+as a regular workspace dependency. CI packages and releases **only the
+unified app** (`apps/acp-assist`) — one installer for all three editors;
+the per-editor apps remain in the repo for development, testing, and
+documentation. See each app's README for requirements and usage.
 
 ## Development
 

@@ -45,31 +45,27 @@ jobs:
         run: npm run typecheck
         working-directory: apps/${{ matrix.app }}
 
-  # Per-app assets that are gitignored and rebuilt on CI: app icons are
-  # generated from public/logo.svg by a Windows-only PowerShell script
-  # (System.Drawing), and the LibreOffice bridge .oxt is rebuilt from
-  # extension/ sources by scripts/package-oxt.py. The per-OS build jobs
-  # download these assets back at their original paths before packaging.
+  # Build inputs that are rebuilt on CI: the LibreOffice bridge .oxt is
+  # rebuilt from extension/ sources by scripts/package-oxt.py and the
+  # ONLYOFFICE bridge .plugin by scripts/package-plugin.mjs. The per-OS
+  # build jobs download these back at their original paths before packaging.
   # This workflow only runs on release tags and manual dispatches, so the
   # full pipeline (test -> assets -> build -> release) always completes;
   # `release` still skips on dispatches (no tag to publish).
+  # Only the UNIFIED app (apps/acp-assist) is packaged and released. The
+  # libreoffice/onlyoffice entries below exist only to build the bridge
+  # artifacts (.oxt/.plugin) that the unified installer bundles as
+  # extraResources (and that ship alongside it on the release).
   assets:
     needs: test
     strategy:
       fail-fast: false
       matrix:
-        app: [lyx, libreoffice, onlyoffice, acp-assist]
+        app: [acp-assist, libreoffice, onlyoffice]
     runs-on: windows-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Generate app icons
-        # onlyoffice + acp-assist icons are committed (generated once from
-        # public/logo.svg); their scripts/ has no generate-icon.ps1.
-        if: matrix.app != 'onlyoffice' && matrix.app != 'acp-assist'
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-icon.ps1
-        working-directory: apps/${{ matrix.app }}
 
       - name: Package bridge extension (.oxt)
         if: matrix.app == 'libreoffice'
@@ -81,7 +77,9 @@ jobs:
         run: node scripts/package-plugin.mjs
         working-directory: apps/onlyoffice
 
+      # acp-assist icons are committed (rendered once from public/logo.svg).
       - name: Upload app icons
+        if: matrix.app == 'acp-assist'
         uses: actions/upload-artifact@v4
         with:
           name: app-icons-${{ matrix.app }}
@@ -112,7 +110,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [lyx, libreoffice, onlyoffice, acp-assist]
+        app: [acp-assist]
         os: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
 
@@ -136,31 +134,15 @@ jobs:
           name: app-icons-${{ matrix.app }}
           path: apps/${{ matrix.app }}/build
 
+      # The unified app packages both bridges as extraResources from the
+      # sibling app directories.
       - name: Download bridge extension
-        if: matrix.app == 'libreoffice'
         uses: actions/download-artifact@v4
         with:
           name: bridge-oxt
           path: apps/libreoffice
 
       - name: Download bridge plugin
-        if: matrix.app == 'onlyoffice'
-        uses: actions/download-artifact@v4
-        with:
-          name: bridge-plugin
-          path: apps/onlyoffice
-
-      # The unified app packages both bridges as extraResources from the
-      # sibling app directories.
-      - name: Download bridge extension (unified app)
-        if: matrix.app == 'acp-assist'
-        uses: actions/download-artifact@v4
-        with:
-          name: bridge-oxt
-          path: apps/libreoffice
-
-      - name: Download bridge plugin (unified app)
-        if: matrix.app == 'acp-assist'
         uses: actions/download-artifact@v4
         with:
           name: bridge-plugin
@@ -226,8 +208,10 @@ jobs:
             apps/${{ matrix.app }}/dist-release/*.zip
           if-no-files-found: warn
 
+      # The bridges ship as release assets too (the editors need them
+      # installed on their side; the installer also bundles them).
       - name: Upload bridge extension with Windows build
-        if: matrix.os == 'windows-latest' && matrix.app == 'libreoffice'
+        if: matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
           name: windows-oxt
@@ -235,7 +219,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload bridge plugin with Windows build
-        if: matrix.os == 'windows-latest' && matrix.app == 'onlyoffice'
+        if: matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
           name: windows-plugin
