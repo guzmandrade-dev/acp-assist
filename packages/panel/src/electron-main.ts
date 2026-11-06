@@ -34,8 +34,12 @@ export interface ElectronMainOptions {
    * electron-builder already uses.
    */
   userDataDirName: string;
-  /** Foreground process name that floats the window ('LyX' | 'soffice'). */
-  watchedProcessName: string;
+  /**
+   * Foreground process name(s) that float the window ('LyX' | 'soffice';
+   * the unified app passes all editor process names: ['LyX', 'soffice',
+   * 'editors']).
+   */
+  watchedProcessName: string | string[];
   /**
    * The APP's compiled-electron directory (its main.ts `__dirname`) —
    * preload.js and the window icon live there; the panel assets come
@@ -76,6 +80,9 @@ export function createElectronMain(options: ElectronMainOptions): void {
   // Per-app userData BEFORE anything reads it (see the option's comment).
   // Must run before app ready; safe as the first statement of main.
   app.setPath('userData', path.join(app.getPath('appData'), options.userDataDirName));
+  const watchedProcesses = new Set(
+    Array.isArray(options.watchedProcessName) ? options.watchedProcessName : [options.watchedProcessName],
+  );
   let mainWindow: BrowserWindow | null = null;
   let httpServer: import('node:http').Server | null = null;
   /** When false (default), the window never floats on top; the pin toggle enables it. */
@@ -125,7 +132,7 @@ export function createElectronMain(options: ElectronMainOptions): void {
         if (state === lastState || state === 'electron') continue;
         lastState = state;
         watcherLastState = state;
-        applyAlwaysOnTop(followMode && state === options.watchedProcessName);
+        applyAlwaysOnTop(followMode && watchedProcesses.has(state));
       }
     });
     focusWatcher.on('error', (e) => console.error('focus watcher failed:', e.message));
@@ -187,7 +194,7 @@ export function createElectronMain(options: ElectronMainOptions): void {
 
     ipcMain.on('window/toggle-always-on-top', () => {
       followMode = !followMode;
-      applyAlwaysOnTop(followMode && watcherLastState === options.watchedProcessName);
+      applyAlwaysOnTop(followMode && watcherLastState !== null && watchedProcesses.has(watcherLastState));
     });
 
     // Window/taskbar icon: the 256px raster next to the app bundle. Absent in

@@ -44,6 +44,7 @@ export const statusText = document.getElementById('status-text');
 export const docEl = document.getElementById('doc');
 export const selectionEl = document.getElementById('selection');
 export const docSelect = document.getElementById('doc-select');
+export const appSelect = document.getElementById('app-select');
 export const editorSpinner = document.getElementById('bridge-spinner');
 export const bridgeBusyText = document.getElementById('bridge-busy-text');
 export const input = document.getElementById('input');

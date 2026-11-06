@@ -131,4 +131,64 @@ describe('shared panel assets', () => {
       server.close();
     }
   });
+
+  it('unified config (appId + switcher) scopes the boot URL and serializes the switcher', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'panel-unified-'));
+    await fs.writeFile(path.join(dir, 'index.html'), '<html><head></head><body></body></html>', 'utf8');
+    const unifiedConfig: PanelConfig = {
+      ...testConfig,
+      appId: 'lyx',
+      switcher: {
+        current: 'lyx',
+        apps: [
+          { id: 'libreoffice', label: 'LibreOffice' },
+          { id: 'lyx', label: 'LyX' },
+        ],
+      },
+    };
+    const app = express();
+    app.get('/', createPanelIndexHandler(dir, { token: 'tok', config: unifiedConfig }));
+    app.get('/panel-boot.js', createPanelBootScript({ token: 'tok', config: unifiedConfig }));
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((r) => server.on('listening', r));
+    const port = (server.address() as { port: number }).port;
+    try {
+      const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+      expect(html).toContain('<script src="/panel-boot.js?app=lyx"></script>');
+      const boot = await (await fetch(`http://127.0.0.1:${port}/panel-boot.js`)).text();
+      expect(boot).toContain('"appId":"lyx"');
+      expect(boot).toContain('"switcher":{"current":"lyx"');
+    } finally {
+      server.close();
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('standalone config (no appId) keeps the bare boot URL', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'panel-standalone-'));
+    await fs.writeFile(path.join(dir, 'index.html'), '<html><head></head><body></body></html>', 'utf8');
+    const app = express();
+    app.get('/', createPanelIndexHandler(dir, { token: 'tok', config: testConfig }));
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((r) => server.on('listening', r));
+    const port = (server.address() as { port: number }).port;
+    try {
+      const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+      expect(html).toContain('<script src="/panel-boot.js"></script>');
+    } finally {
+      server.close();
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('shared panel carries the app-switcher seam (hidden select + wiring)', async () => {
+    const dir = panelPublicDir();
+    const html = await fs.readFile(path.join(dir, 'index.html'), 'utf8');
+    expect(html).toContain('id="app-select"');
+    const appJs = await fs.readFile(path.join(dir, 'app.js'), 'utf8');
+    expect(appJs).toContain('CONFIG.switcher');
+    expect(appJs).toContain("searchParams.set('app'");
+    const css = await fs.readFile(path.join(dir, 'style.css'), 'utf8');
+    expect(css).toContain('.app-select');
+  });
 });
