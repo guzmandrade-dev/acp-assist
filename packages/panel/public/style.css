@@ -190,6 +190,13 @@ body {
   box-shadow: 0 0 0 2px var(--accent-glow);
 }
 
+/* App switcher (unified app only; hidden in the standalone apps). */
+.toolbar select.app-select {
+  flex: 0 1 auto;
+  max-width: 9.5rem;
+  font-weight: 600;
+}
+
 /* ── Pin / icon buttons ── */
 .pin {
   display: inline-flex;
