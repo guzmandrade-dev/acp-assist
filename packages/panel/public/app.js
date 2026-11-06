@@ -18,6 +18,7 @@ import {
   cmdEl,
   fileInput,
   selectionEl,
+  appSelect,
 } from './state.js';
 import { api, loadSettings, saveSettings } from './api.js';
 import { addSystemMessage, showEmpty } from './messages.js';
@@ -105,7 +106,30 @@ pinBtn.addEventListener('click', () => {
   window.electron?.toggleAlwaysOnTop?.();
 });
 
+// Unified app only: CONFIG.switcher lists the bundled editor apps. The
+// switch reloads the panel with ?app=<id> — the host serves that app's
+// config/token and routes every API call to that app's backend, so one
+// editor app is active at a time while its history stays on disk.
+function setupAppSwitcher() {
+  const switcher = CONFIG.switcher;
+  if (!appSelect || !switcher || !Array.isArray(switcher.apps) || switcher.apps.length < 2) return;
+  for (const app of switcher.apps) {
+    const opt = document.createElement('option');
+    opt.value = app.id;
+    opt.textContent = app.label;
+    appSelect.appendChild(opt);
+  }
+  appSelect.value = switcher.current;
+  appSelect.hidden = false;
+  appSelect.addEventListener('change', () => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('app', appSelect.value);
+    window.location.href = url.toString();
+  });
+}
+
 function start() {
+  setupAppSwitcher();
   input.placeholder = 'Ask the agent. It reads the document and your selection, then decides: reply here, insert at the cursor, or rewrite what you selected.';
   if (selectionEl) selectionEl.hidden = true;
   showEmpty();

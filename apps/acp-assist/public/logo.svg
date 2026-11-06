@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="ACP Assist logo">
+  <!-- Three overlapping editor cards: LibreOffice, LyX, ONLYOFFICE -->
+  <g transform="rotate(-10 100 130)">
+    <rect x="34" y="64" width="112" height="140" rx="14" fill="#faf8f2" stroke="#d8d2c4" stroke-width="3"/>
+    <rect x="50" y="86" width="56" height="11" rx="5" fill="#3b6ea5"/>
+    <rect x="50" y="108" width="80" height="7" rx="3.5" fill="#8a8578"/>
+    <rect x="50" y="122" width="66" height="7" rx="3.5" fill="#8a8578"/>
+    <rect x="50" y="142" width="72" height="10" rx="5" fill="#f0b429"/>
+  </g>
+  <g transform="rotate(4 150 120)">
+    <rect x="96" y="48" width="112" height="140" rx="14" fill="#f4f1ea" stroke="#cfc8b8" stroke-width="3"/>
+    <rect x="112" y="70" width="56" height="11" rx="5" fill="#2e7d32"/>
+    <rect x="112" y="92" width="80" height="7" rx="3.5" fill="#8a8578"/>
+    <rect x="112" y="106" width="66" height="7" rx="3.5" fill="#8a8578"/>
+    <rect x="112" y="126" width="72" height="10" rx="5" fill="#f0b429"/>
+  </g>
+  <!-- Red AI spark overlapping the top-right corner -->
+  <path d="M196 22 L204 48 L230 56 L204 64 L196 90 L188 64 L162 56 L188 48 Z"
+        fill="#d94f2b" stroke="#ffffff" stroke-width="5" stroke-linejoin="round"/>
+</svg>

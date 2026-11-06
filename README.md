@@ -13,6 +13,7 @@ there is no LLM and no API key inside these apps.
 
 | App | Description |
 |---|---|
+| **[ACP Assist](apps/acp-assist)** | **One installer for all three editors** — bundles LyX, LibreOffice, and ONLYOFFICE behind an in-app switcher (one active at a time; per-app, per-document history) |
 | **[LyX ACP Assist](apps/lyx)** | Assistant for [LyX](https://www.lyx.org/) — writes through the LyXServer named pipe and the `application/x-lyx` clipboard format, so LyX itself performs every insertion |
 | **[LibreOffice ACP Assist](apps/libreoffice)** | Assistant for [LibreOffice](https://www.libreoffice.org/) — Writer, Calc, and Impress via a small in-process UNO bridge (`.oxt`) with per-module adapters |
 | **[ONLYOFFICE ACP Assist](apps/onlyoffice)** | Assistant for [ONLYOFFICE Desktop Editors](https://www.onlyoffice.com/desktop.aspx) — Documents, Spreadsheets, and Presentations via a small in-editor JavaScript plugin (`.plugin`) that connects out to the companion |
@@ -29,6 +30,8 @@ packages/core/    @acp-assist/core: shared ACP client, types, attachment
                   conversion, chat-history persistence, restart replay
 packages/panel/   @acp-assist/panel: the shared companion panel UI + Electron/
                   standalone shell hosts
+apps/acp-assist/  Unified companion: one app, in-app switcher between the
+                  three editors (multi-backend host around the same servers)
 apps/lyx/         LyX companion (Electron + read-only .lyx parser + pipe client)
 apps/libreoffice/  LibreOffice companion (Electron + UNO bridge + module adapters)
 apps/onlyoffice/  ONLYOFFICE companion (Electron + in-editor .plugin bridge)

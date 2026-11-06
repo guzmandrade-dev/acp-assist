@@ -50,6 +50,23 @@ export interface PanelConfig {
   eventPush: boolean;
   /** CSS theme class on <html> (e.g. 'theme-lyx'); null = default. */
   theme: string | null;
+  /**
+   * Unified-app only: this panel instance's app id ('lyx' |
+   * 'libreoffice' | 'onlyoffice'). When set, the served index.html
+   * loads the boot script with `?app=<id>` so the multi-app host can
+   * route the initial page load (and issue an app-scoped token).
+   * Absent in the standalone apps (their server IS the only app).
+   */
+  appId?: string;
+  /**
+   * Unified-app only: when present, the toolbar renders an app switcher
+   * and the panel reloads with `?app=<id>` on change (one app active at
+   * a time; per-app sessions and histories live server-side).
+   */
+  switcher?: {
+    current: string;
+    apps: { id: string; label: string }[];
+  };
 }
 
 /** The panel package's public/ directory (shared assets). */
@@ -97,7 +114,7 @@ export function createPanelIndexHandler(
       .then((raw) =>
         raw.replace(
           '</head>',
-          `<script src="/panel-boot.js"></script>\n</head>`,
+          `<script src="/panel-boot.js${options.config.appId ? `?app=${encodeURIComponent(options.config.appId)}` : ''}"></script>\n</head>`,
         ),
       );
     return html;
