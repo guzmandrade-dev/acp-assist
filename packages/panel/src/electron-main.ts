@@ -15,6 +15,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
 import { panelPublicDir } from './index.js';
+import { listenWithFallback } from './listen.js';
 
 export interface ElectronMainOptions {
   /** Window/taskbar title. */
@@ -49,10 +50,15 @@ export interface ElectronMainOptions {
   /** Per-app asset overrides (logo.svg); passed through to createServer. */
   assetsDir?: string;
   /**
-   * Fixed default listen port (used when the PORT env override is
-   * absent). Default: 0 = OS-assigned. The ONLYOFFICE app pins a
-   * well-known port because its in-editor plugin connects OUT to the
-   * companion and cannot read a discovery record.
+   * Preferred listen port (used when the PORT env override is absent).
+   * Default: 0 = OS-assigned. The ONLYOFFICE app pins a well-known port
+   * because its in-editor plugin connects OUT to the companion and
+   * cannot read a discovery record. A pinned port is only a PREFERENCE:
+   * if it is taken (or shared with a foreign process — Windows duplicate
+   * binds do not raise EADDRINUSE), the server falls back to an
+   * OS-assigned port and the actual port lands in the discovery record
+   * (see listen.ts). Single-instance lock below means our own second
+   * launch never binds at all — it just focuses the first window.
    */
   listenPort?: number;
   /** Build the app's Express server (paths under userData provided). */
@@ -77,6 +83,13 @@ export interface ElectronMainOptions {
 }
 
 export function createElectronMain(options: ElectronMainOptions): void {
+  // One companion process per app: a second launch focuses the existing
+  // window instead of binding the port again (a duplicate bind on Windows
+  // can silently share the port and route requests to the wrong process).
+  if (!app.requestSingleInstanceLock()) {
+    app.quit();
+    return;
+  }
   // Per-app userData BEFORE anything reads it (see the option's comment).
   // Must run before app ready; safe as the first statement of main.
   app.setPath('userData', path.join(app.getPath('appData'), options.userDataDirName));
@@ -143,6 +156,13 @@ export function createElectronMain(options: ElectronMainOptions): void {
     });
   }
 
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+
   app.on('before-quit', () => {
     focusWatcher?.kill();
     options.removeRecord?.().catch(() => undefined);
@@ -163,19 +183,27 @@ export function createElectronMain(options: ElectronMainOptions): void {
       logDir: path.join(userDataDir, 'logs'),
     });
 
-    // Dynamic port by default (discovery-first rule; multiple companion
-    // instances are first-class): bind :0 and report the URL; PORT
-    // overrides for tests. listenPort = an app's FIXED default (the
-    // ONLYOFFICE plugin connects to a well-known port).
-    const port = process.env.PORT
+    // Dynamic port by default (discovery-first rule): bind :0 and report
+    // the URL; PORT overrides for tests. listenPort = an app's PREFERRED
+    // fixed port (the ONLYOFFICE plugin connects to a well-known port) —
+    // if that port is taken or shared, fall back to an OS-assigned one.
+    const preferredPort = process.env.PORT
       ? Number.parseInt(process.env.PORT, 10)
       : (options.listenPort ?? 0);
-    await new Promise<void>((resolve) => {
-      httpServer = server.listen(port, '127.0.0.1', () => resolve());
-    });
-    const address = httpServer?.address();
-    if (typeof address !== 'object' || address === null) throw new Error('server address missing');
-    const url = `http://127.0.0.1:${address.port}`;
+    const listened = await listenWithFallback(
+      server,
+      preferredPort,
+      (server.locals.apiToken as string) || undefined,
+    );
+    httpServer = listened.server;
+    if (listened.fellBack) {
+      console.warn(
+        `${options.appName}: preferred port ${preferredPort} is in use by another process; ` +
+          `using OS-assigned port ${listened.port} instead. ` +
+          `Point the ONLYOFFICE bridge plugin's port field at ${listened.port} if it should reach this instance.`,
+      );
+    }
+    const url = `http://127.0.0.1:${listened.port}`;
     console.log(`${options.appName} ACP Assist server at ${url}`);
 
     // Discovery record: external tools (dev drivers, the LO sidebar) read
@@ -183,7 +211,7 @@ export function createElectronMain(options: ElectronMainOptions): void {
     options
       .writeRecord({
         url,
-        port: address.port,
+        port: listened.port,
         token: (server.locals.apiToken as string) ?? '',
         exe: app.isPackaged ? process.execPath : null,
         userDataDir,
@@ -208,7 +236,11 @@ export function createElectronMain(options: ElectronMainOptions): void {
       // Framed window: frameless has cross-platform issues (Linux/macOS).
       alwaysOnTop: false, // managed by the editor-follow watcher below
       ...windowIconOpt,
-      title: options.windowTitle,
+      // On a port fallback the title carries the actual port — the
+      // ONLYOFFICE plugin's port field must point here.
+      title: listened.fellBack
+        ? `${options.windowTitle} (port ${listened.port})`
+        : options.windowTitle,
       webPreferences: {
         contextIsolation: true,
         preload: path.join(options.appDistDir, 'preload.js'),

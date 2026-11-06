@@ -58,16 +58,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [lyx, libreoffice, onlyoffice]
+        app: [lyx, libreoffice, onlyoffice, acp-assist]
     runs-on: windows-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Generate app icons
-        # onlyoffice icons are committed (generated once from public/logo.svg);
-        # its scripts/ has no generate-icon.ps1.
-        if: matrix.app != 'onlyoffice'
+        # onlyoffice + acp-assist icons are committed (generated once from
+        # public/logo.svg); their scripts/ has no generate-icon.ps1.
+        if: matrix.app != 'onlyoffice' && matrix.app != 'acp-assist'
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-icon.ps1
         working-directory: apps/${{ matrix.app }}
 
@@ -112,7 +112,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [lyx, libreoffice, onlyoffice]
+        app: [lyx, libreoffice, onlyoffice, acp-assist]
         os: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
 
@@ -145,6 +145,22 @@ jobs:
 
       - name: Download bridge plugin
         if: matrix.app == 'onlyoffice'
+        uses: actions/download-artifact@v4
+        with:
+          name: bridge-plugin
+          path: apps/onlyoffice
+
+      # The unified app packages both bridges as extraResources from the
+      # sibling app directories.
+      - name: Download bridge extension (unified app)
+        if: matrix.app == 'acp-assist'
+        uses: actions/download-artifact@v4
+        with:
+          name: bridge-oxt
+          path: apps/libreoffice
+
+      - name: Download bridge plugin (unified app)
+        if: matrix.app == 'acp-assist'
         uses: actions/download-artifact@v4
         with:
           name: bridge-plugin

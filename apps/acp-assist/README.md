@@ -18,6 +18,11 @@ switching never mixes conversations.
 - The ONLYOFFICE in-editor plugin connects OUT to a well-known port
   (default **8790**) over the pre-auth `/bridge/*` endpoints, which the
   host always routes to the ONLYOFFICE sub-server (loopback-only).
+- The app is single-instance: a second launch just focuses the existing
+  window. If port 8790 is already taken by a *foreign* process, the server
+  falls back to an OS-assigned port — the actual port is shown in the
+  window title, logged, and written to the discovery record; point the
+  plugin's port field at it.
 - The LibreOffice sidebar reads the usual `companion.json` discovery
   record; the unified app writes it with `?app=libreoffice` in the URL
   and the app-scoped token.
