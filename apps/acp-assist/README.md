@@ -7,6 +7,15 @@ at a time; each app keeps its own sessions and its own per-document
 chat history under the app's profile directory (`history/<app>`), so
 switching never mixes conversations.
 
+## Install
+
+Since v1.6.0 this is the **only app that is packaged and released**: each
+[GitHub release](https://github.com/guzmandrade-dev/acp-assist/releases)
+ships the ACP Assist installers for Windows, macOS, and Linux, plus the
+bridge files (`acp-bridge.oxt` for LibreOffice, `acp-bridge.plugin` for
+ONLYOFFICE) for editor-side install — the installers bundle copies of both
+in `resources/`.
+
 ## How it works
 
 - One Electron window + one Express host (`src/server.ts`) running the

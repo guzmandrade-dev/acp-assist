@@ -5,11 +5,12 @@
 
 **Website:** <https://guzmandrade-dev.github.io/acp-assist/>
 
-Copilot-style LLM assistants for document editors. Each app is a floating
-companion panel that reads your document, chats, and writes **directly into
+**One app, three editors.** ACP Assist is a single floating companion app
+for LyX, LibreOffice, and ONLYOFFICE — pick the editor with the in-app
+switcher. The panel reads your document, chats, and writes **directly into
 the live editor document**. All reasoning is delegated to an external agent
 over the [Agent Client Protocol](https://agentclientprotocol.com/) (ACP);
-there is no LLM and no API key inside these apps.
+there is no LLM and no API key inside the app.
 
 | App | Description |
 |---|---|
@@ -18,7 +19,11 @@ there is no LLM and no API key inside these apps.
 | **[LibreOffice ACP Assist](apps/libreoffice)** | Assistant for [LibreOffice](https://www.libreoffice.org/) — Writer, Calc, and Impress via a small in-process UNO bridge (`.oxt`) with per-module adapters |
 | **[ONLYOFFICE ACP Assist](apps/onlyoffice)** | Assistant for [ONLYOFFICE Desktop Editors](https://www.onlyoffice.com/desktop.aspx) — Documents, Spreadsheets, and Presentations via a small in-editor JavaScript plugin (`.plugin`) that connects out to the companion |
 
-All three apps share one architecture: the editor stays the **single writer of
+Since v1.6.0, releases ship **only the unified ACP Assist installer** (one per
+OS, plus the bridge `.oxt` / `.plugin` files for editor-side install). The
+per-editor apps remain in the repo as development workspaces.
+
+All three editors share one architecture: the editor stays the **single writer of
 truth**, the agent decides intent via a small vocabulary of action tags that
 the app executes mechanically, and every edit is one undo step. The panel is
 a quiet chat surface that floats beside the document.
@@ -44,9 +49,18 @@ unified app** (`apps/acp-assist`) — one installer for all three editors;
 the per-editor apps remain in the repo for development, testing, and
 documentation. See each app's README for requirements and usage.
 
+## Install
+
+Download the **ACP Assist** installer for Windows, macOS, or Linux from the
+[Releases](https://github.com/guzmandrade-dev/acp-assist/releases) page
+(v1.6.0+). Each release also attaches `acp-bridge.oxt` (LibreOffice) and
+`acp-bridge.plugin` (ONLYOFFICE) for installing the editor-side bridge; the
+installers bundle copies of both. See [apps/acp-assist](apps/acp-assist) for
+how the unified app works.
+
 ## Development
 
-Node.js 22+. From either app's directory:
+Node.js 22+. From an app's directory (use `apps/acp-assist` for normal work):
 
 ```bash
 npm install

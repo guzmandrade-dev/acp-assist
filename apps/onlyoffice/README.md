@@ -11,6 +11,13 @@ no LLM and no API key inside this app.
 ONLYOFFICE stays the editor. The app is a chat surface plus a context
 provider, and every edit is one labeled, one-undo-step transaction.
 
+> **Note (v1.6.0+):** releases ship only the unified
+> **[ACP Assist](../../apps/acp-assist)** app — one installer for LyX,
+> LibreOffice, and ONLYOFFICE (the release also attaches
+> `acp-bridge.plugin` for the editor-side install). This workspace remains
+> for development, testing, and documentation; `npm start` /
+> `npm run package` still work here for development builds.
+
 ## How it works
 
 ```

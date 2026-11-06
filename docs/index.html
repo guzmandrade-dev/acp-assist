@@ -198,10 +198,12 @@
   <div class="wrap">
     <h1>AI assistants that write into LyX, LibreOffice, and ONLYOFFICE</h1>
     <p>
-      ACP Assist is a set of floating companion panels that read your document,
-      chat, and write directly into the live editor document. All reasoning is
-      delegated to an external agent you already trust — there is no LLM and no
-      API key inside these apps.
+      ACP Assist is <strong>one floating companion app</strong> — switch between
+      LyX, LibreOffice, and ONLYOFFICE with the in-app switcher — that reads
+      your document, chats, and writes directly into the live editor document.
+      One installer covers all three editors. All reasoning is delegated to an
+      external agent you already trust — there is no LLM and no API key inside
+      the app.
     </p>
     <div class="cta">
       <a class="btn btn-primary" href="#get-started">Get started</a>
@@ -366,15 +368,21 @@ npm start            # builds TypeScript and launches the companion</code></pre>
       <code>acp-bridge.plugin</code> (attached to each
       <a href="https://github.com/guzmandrade-dev/acp-assist/releases">release</a>,
       or build it with <code>npm run package:plugin</code> in <code>apps/onlyoffice</code>).
+      The plugin connects to the companion on port <strong>8790</strong> by default —
+      if the app had to fall back to another port (shown in its window title when
+      8790 is taken), enter the same port in the plugin's settings. The app is
+      single-instance, so a second launch just focuses the existing window.
     </p>
     <p>
       Open a saved document in your editor, select some text, and type a
       message. The panel shows the active document, selection word count, and
-      connection status. No build needed for daily use: the single
-      <strong>ACP Assist</strong> installer for Windows, macOS, or Linux is
-      attached to each
+      connection status. No build needed for daily use: since v1.6.0 each
       <a href="https://github.com/guzmandrade-dev/acp-assist/releases">release</a>
-      (build it locally with <code>npm run package</code> in <code>apps/acp-assist</code>).
+      ships a single <strong>ACP Assist</strong> installer per OS (Windows, macOS,
+      Linux), plus the bridge files <code>acp-bridge.oxt</code> /
+      <code>acp-bridge.plugin</code> for editor-side install (the installer
+      bundles them too). Build locally with <code>npm run package</code> in
+      <code>apps/acp-assist</code>.
     </p>
   </div>
 </section>

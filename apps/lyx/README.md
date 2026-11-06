@@ -11,6 +11,12 @@ inside this app.
 LyX stays the editor. This app is a quiet chat surface plus a context provider that
 floats beside the document.
 
+> **Note (v1.6.0+):** releases ship only the unified
+> **[ACP Assist](../../apps/acp-assist)** app — one installer for LyX,
+> LibreOffice, and ONLYOFFICE. This workspace remains for development,
+> testing, and documentation; `npm start` / `npm run package` still work
+> here for development builds.
+
 ## How it works
 
 **LyX is the single writer of truth.** The app never writes the `.lyx` file behind
