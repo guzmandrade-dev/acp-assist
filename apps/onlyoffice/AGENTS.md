@@ -578,4 +578,50 @@ untouched. Rules:
     is the only true auto-update path — deferred until the plugin is
     bullet-proof (user decision 2026-11-07).
 
+65. **callCommand fires its callback with undefined when the function
+    THROWS inside the editor or the return value fails to serialize**
+    (rule 52 poison). v0.7.1: cmd() now REJECTS on undefined/null instead
+    of resolving it — previously context crashed with an opaque
+    "Cannot read properties of undefined (reading 'texts')" (live-seen
+    2026-11-07: CV reformat run while a PDF tab was active; Api.GetDocument()
+    has no GetElementsCount there) and result-ignoring ops silently
+    "applied" nothing. The companion also validates the context payload
+    in readStep (missing editor id / word doc without texts => clear 400
+    before any adapter runs).
 
+66. **v0.7.2 (live-seen again 2026-11-07, CV run): callCommand's callback
+    fires with undefined when the op function THROWS inside the editor.
+    cmd() now wraps the op body in try/catch INSIDE the editor and returns
+    {__opError: message + stack} — the real error reaches the companion as
+    "editor op failed: ..." (undefined fallback kept). detectEditor
+    reports "none" when Api.GetDocument() lacks GetElementsCount (PDF
+    viewer tab) so init shows "editor detection failed — switch to a
+    document tab, then Reconnect"; op failures are also logged in the
+    plugin's on-panel log (ui()). hello now reports the real PLUGIN_VERSION
+    constant (was hardcoded "0.4.2" — that is why the Download-bridge
+    version check always looked stale).
+
+67. **v0.7.3 fixed a self-inflicted connect break (2026-11-07 night):**
+    the v0.7.2 cmd() wrapper string literal contained a single-backslash
+    
+, which JS parses as a raw LF INSIDE the string value — the generated
+    new Function source then had /<LF>/g -> "Invalid regular expression"
+    -> cmd() rejected at construction -> detectEditor never resolved -> init
+    looped "companion unreachable" and the bridge NEVER connected, even on
+    real document tabs. node --check passes on the file (it is valid); only
+    the runtime-generated source was broken. Lesson: escapes inside strings
+    that are re-parsed via new Function need DOUBLE escaping; verify by
+    eval-ing the literal and checking for raw control chars.
+
+68. **v0.7.4: op error surfacing moved to the SOURCE level.** cmd() no
+    longer extracts fn.toString() bodies to wrap them (fragile; v0.7.2's
+    version of that also shipped an escape bug). Instead opFn(src) builds
+    the op function from the source string with an editor-side try/catch:
+    a throw comes back as {__opError: msg @ stack} -> companion sees
+    "editor op failed: ...". The undefined-callback reject (kept as
+    fallback) now reports the fn source length and the Asc.scope JSON
+    size, so a failed Asc.scope transfer is distinguishable from an
+    in-editor throw (live question 2026-11-07 night: CV insert-top still
+    returned no data with v0.7.3 -- harness shows the wrapper works, so if
+    it recurs the scope-size diagnostic will tell us). 20 call sites use
+    cmd(opFn(...)); detectEditor/context keep plain literals (reads only).

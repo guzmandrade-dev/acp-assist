@@ -1,5 +1,5 @@
 /*
- * ACP Assist Bridge v0.7.0 (apps/onlyoffice/bridge-plugin).
+ * ACP Assist Bridge v0.7.5 (apps/onlyoffice/bridge-plugin).
  * Dumb transport, same contract as the LibreOffice .oxt bridge: the
  * plugin carries JSON between the editor and the companion; ALL
  * intelligence lives in the companion. The companion owns the port —
@@ -22,7 +22,27 @@
  * undo now reports {undone:false} honestly — asc_Undo via
  * executeCommand is a silent no-op (AGENTS.md rule 19), so the
  * companion always shows the Ctrl+Z hint.
-
+ * v0.7.1: cmd() REJECTS when callCommand fires the callback with
+ * undefined (the op threw inside the editor / unserializable return)
+ * instead of resolving it — that used to crash context with an opaque
+ * TypeError and silently no-op edits (live-seen 2026-11-07, CV PDF tab).
+ * v0.7.2: cmd() wraps the op body in try/catch INSIDE the editor so a throw
+ * comes back as {__opError} and the REAL message reaches the companion;
+ * detectEditor reports "none" for non-document tabs (PDF viewer) and init
+ * shows a clear status; op failures are logged in the plugin panel; hello
+ * reports the real PLUGIN_VERSION (was hardcoded "0.4.2").
+ * v0.7.3: fixed a broken escape in the v0.7.2 cmd() wrapper string
+ * v0.7.4: the try/catch wrapper moved to opFn() at the SOURCE level
+ * (cmd no longer extracts fn.toString() bodies -- that path is fragile),
+ * and the undefined-callback reject now reports the fn source length and
+ * the Asc.scope JSON size so a failed scope transfer is diagnosable.
+ * v0.7.5: Asc.scope is sent BASE64-WRAPPED ({__b64}) and decoded in the
+ * opFn wrapper editor-side -- the SDK scope serializer breaks on the
+ * token "import" + space/paren inside a string value (CDP-verified
+ * 2026-11-07: "x import y" -> callback undefined; b64 payload OK).
+ * (single-backslash 
+ became a raw LF in the generated source ->
+ * "Invalid regular expression" -> cmd rejected -> bridge never connected).
  */
 (function (window) {
     var DEFAULT_PORT = 8790;
@@ -32,6 +52,9 @@
     var initializing = false;
     var lastEventKey = null;
     var companion = null;
+    // Bump with every release (config.json carries the same version);
+    // reported in /bridge/hello so the companion can flag stale plugins.
+    var PLUGIN_VERSION = "0.7.5";
 
     function ui(msg, cls) {
         try {
@@ -68,17 +91,65 @@
         return String(text).replace(/\r+/g, "").replace(/\n+$/, "");
     }
 
+    /* Build an op function from a SOURCE string, wrapped in an editor-side
+     * try/catch (v0.7.4): a throw inside the editor comes back as data
+     * ({__opError}) instead of an undefined callback. The wrapper is built
+     * at the source level -- never extract fn.toString() bodies and re-parse
+     * them (v0.7.2 did and broke). No regex escapes here on purpose: an
+     * unescaped \n in this literal would become a raw LF in the generated
+     * source and break it. */
+    function opFn(src) {
+        return new Function(
+            "try {" +
+            "  if (typeof Asc !== 'undefined' && Asc.scope && Asc.scope.__b64) {" +
+            "    Asc.scope = JSON.parse((function(s){ return decodeURIComponent(Array.prototype.map.call(atob(s), function(c){ return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2); }).join('')); })(Asc.scope.__b64));" +
+            "  }" +
+            src + "}" +
+            " catch (e) { return { __opError: (String(e && e.message ? e.message : e) + ' @ ' + String(e && e.stack ? e.stack : '')).slice(0, 500) }; }"
+        );
+    }
+
     function cmd(fn) {
         return new Promise(function (resolve, reject) {
             // Safety timeout: a stuck callCommand REJECTS instead of
             // wedging the whole long-poll loop forever (verified live:
-            // an unbounded clear loop froze the editor thread once) —
+            // an unbounded clear loop froze the editor thread once) --
             // and never resolves as data: detectEditor used to assign
             // the timeout object to editorType, poisoning every op
             // with "editor '[object Object]'" (live-verified 2026-11-03).
             var settled = false;
             var timer = setTimeout(function () {
-                if (!settled) { settled = true; clearTimeout(timer); resolve(v); }
+                if (!settled) { settled = true; Asc.scope = savedScope; reject(new Error("callCommand timeout (30s)")); }
+            }, 30000);
+            // v0.7.5: the SDK serializer for Asc.scope breaks on the word
+            // "import" followed by space/paren inside a string value
+            // (live-verified via CDP 2026-11-07: CV text "import automation")
+            // -- the callback then fires with undefined. Send the scope
+            // base64-wrapped instead; opFn decodes it editor-side.
+            var savedScope = Asc.scope;
+            try {
+                Asc.scope = { __b64: btoa(unescape(encodeURIComponent(JSON.stringify(savedScope || {})))) };
+            } catch (eScope) { Asc.scope = savedScope; }
+            window.Asc.plugin.callCommand(fn, false, false, function (v) {
+                Asc.scope = savedScope;
+                if (!settled) {
+                    settled = true; clearTimeout(timer);
+                    // callCommand fires the callback with undefined when the
+                    // function THREW inside the editor, the return value failed
+                    // to serialize (rule 52), or the Asc.scope transfer failed
+                    // (live-seen 2026-11-07, CV run). opFn-wrapped ops return
+                    // {__opError} instead -- surface that; otherwise reject with
+                    // the scope size so a scope-transfer failure is visible.
+                    if (v && typeof v === "object" && v.__opError) {
+                        reject(new Error("editor op failed: " + v.__opError));
+                    } else if (v === undefined || v === null) {
+                        var scopeLen = -1;
+                        try { scopeLen = JSON.stringify(Asc.scope || {}).length; } catch (e2) {}
+                        reject(new Error("callCommand returned no data (fn source " + fn.toString().length + " chars, Asc.scope " + scopeLen + " chars) -- the op failed inside the editor (is the active tab an editable document, not e.g. a PDF viewer?)"));
+                    } else {
+                        resolve(v);
+                    }
+                }
             });
         });
     }
@@ -193,6 +264,17 @@
                 if (typeof Api.GetPresentation === "function" &&
                         Api.GetPresentation()) return "slide";
             } catch (e) {}
+            // v0.7.2: a PDF viewer tab has no word document API —
+            // GetDocument() returns undefined or lacks GetElementsCount.
+            // Report "none" so init refuses with a clear message instead of
+            // letting every op fail opaquely (live-seen 2026-11-07, CV PDF).
+            try {
+                if (typeof Api.GetDocument === "function") {
+                    var d = Api.GetDocument();
+                    if (d && typeof d.GetElementsCount === "function") return "word";
+                    return "none";
+                }
+            } catch (e2) {}
             return "word";
         });
     }
@@ -361,7 +443,7 @@
     /* ---- cell (spreadsheet) reads ---- */
 
     function cellContext() {
-        return cmd(new Function(
+        return cmd(opFn(
             "var wb = Api.GetSheets();" +
             "var active = Api.GetActiveSheet();" +
             "var activeName = active.GetName();" +
@@ -438,7 +520,7 @@
     /* ---- slide (presentation) reads ---- */
 
     function slideContext() {
-        return cmd(new Function(
+        return cmd(opFn(
             SHAPE_TEXT_SRC +
             "var pres = Api.GetPresentation();" +
             "var count = pres.GetSlidesCount();" +
@@ -499,7 +581,7 @@
               "target.Insert('down');"
             : "var target = ws.GetRangeByNumber(0, Asc.scope.col).GetEntireColumn();" +
               "target.Insert('right');";
-        return cmd(new Function(
+        return cmd(opFn(
             "var ws = Api.GetActiveSheet();" +
             targetSrc +
             "return {};"
@@ -639,7 +721,7 @@
         insert: function (args) {
             requireWord();
             Asc.scope.paras = normParas(args.paragraphs);
-            return cmd(new Function(
+            return cmd(opFn(
                 MAKE_PARAS_SRC +
                 "oDocument.InsertContent(made);" +
                 "return { elements: oDocument.GetElementsCount() };"
@@ -652,7 +734,7 @@
         insertTop: function (args) {
             requireWord();
             Asc.scope.paras = normParas(args.paragraphs);
-            return cmd(new Function(
+            return cmd(opFn(
                 MAKE_PARAS_SRC +
                 "for (var k = made.length - 1; k >= 0; k--) { oDocument.AddElement(0, made[k]); }" +
                 "return { elements: oDocument.GetElementsCount() };"
@@ -666,7 +748,7 @@
             requireWord();
             Asc.scope.paras = normParas(args.paragraphs);
             Asc.scope.index = args.index;
-            return cmd(new Function(
+            return cmd(opFn(
                 MAKE_PARAS_SRC +
                 rangeCheckSrc() +
                 "for (var k = 0; k < made.length; k++) {" +
@@ -684,7 +766,7 @@
             requireWord();
             Asc.scope.paras = normParas(args.paragraphs);
             Asc.scope.index = args.index;
-            return cmd(new Function(
+            return cmd(opFn(
                 MAKE_PARAS_SRC +
                 rangeCheckSrc() +
                 "var old = '';" +
@@ -704,7 +786,7 @@
         deleteAt: function (args) {
             requireWord();
             Asc.scope.index = args.index;
-            return cmd(new Function(
+            return cmd(opFn(
                 "var oDocument = Api.GetDocument();" +
                 rangeCheckSrc() +
                 "var old = '';" +
@@ -731,7 +813,7 @@
                 return (row || []).map(function (c) { return String(c); });
             });
             Asc.scope.header = !!args.header;
-            return cmd(new Function(
+            return cmd(opFn(
                 "var oDocument = Api.GetDocument();" +
                 "var p = Asc.scope;" +
                 "var nRow = p.rows.length;" +
@@ -777,7 +859,7 @@
             Asc.scope.src = String(args.src || "");
             Asc.scope.w = Number(args.w) || 2520000;   // default ~7cm
             Asc.scope.h = Number(args.h) || 2520000;
-            return cmd(new Function(
+            return cmd(opFn(
                 "var oDocument = Api.GetDocument();" +
                 "var p = Asc.scope;" +
                 "if (!p.src) return { error: 'insertImageAt needs src' };" +
@@ -804,7 +886,7 @@
             requireWord();
             Asc.scope.index = args.index;
             Asc.scope.text = String(args.text || "");
-            return cmd(new Function(
+            return cmd(opFn(
                 "var oDocument = Api.GetDocument();" +
                 "var p = Asc.scope;" +
                 "var count = oDocument.GetElementsCount();" +
@@ -825,7 +907,7 @@
         pageBreak: function (args) {
             requireWord();
             Asc.scope.index = args.index;
-            return cmd(new Function(
+            return cmd(opFn(
                 "var oDocument = Api.GetDocument();" +
                 "var p = Asc.scope;" +
                 "var count = oDocument.GetElementsCount();" +
@@ -852,7 +934,7 @@
             Asc.scope.rows = (args.rows || []).map(function (row) {
                 return (row || []).map(function (c) { return String(c); });
             });
-            return cmd(new Function(
+            return cmd(opFn(
                 "var ws = Api.GetActiveSheet();" +
                 "for (var r = 0; r < Asc.scope.rows.length; r++) {" +
                 "  for (var c = 0; c < Asc.scope.rows[r].length; c++) {" +
@@ -895,7 +977,7 @@
             }
             Asc.scope.rangeA1 = rangeA1 || anchorA1 || null;
             Asc.scope.st = styleWire(args.style || {});
-            return cmd(new Function(
+            return cmd(opFn(
                 "var ws = Api.GetActiveSheet();" +
                 "var range = Asc.scope.rangeA1 ? ws.GetRange(Asc.scope.rangeA1) : ws.GetSelection();" +
                 "if (!range) throw new Error('formatCells needs a range, an anchor, or an active selection');" +
@@ -923,7 +1005,7 @@
             Asc.scope.index = args.index;
             Asc.scope.title = lineObj(args.title);
             Asc.scope.body = lineObjs(args.body);
-            return cmd(new Function(
+            return cmd(opFn(
                 SET_SHAPE_PARAS_SRC +
                 "var pres = Api.GetPresentation();" +
                 "var sl = pres.GetSlideByIndex(Asc.scope.index);" +
@@ -956,7 +1038,7 @@
             Asc.scope.index = args.index;
             Asc.scope.title = lineObj(args.title);
             Asc.scope.body = lineObjs(args.body);
-            return cmd(new Function(
+            return cmd(opFn(
                 SET_SHAPE_PARAS_SRC +
                 "var pres = Api.GetPresentation();" +
                 "var W = 12192000, H = 6858000;" +
@@ -998,7 +1080,7 @@
                 w: args.w == null ? null : Number(args.w),
                 h: args.h == null ? null : Number(args.h),
             };
-            return cmd(new Function(
+            return cmd(opFn(
                 SLIDE_BY_INDEX_SRC +
                 "var p = Asc.scope.p;" +
                 "var pres = Api.GetPresentation();" +
@@ -1030,7 +1112,7 @@
                 c2: String(args.color2 || ""),
                 src: String(args.src || ""),
             };
-            return cmd(new Function(
+            return cmd(opFn(
                 SLIDE_BY_INDEX_SRC +
                 "function hexRgb(h) {" +
                 "  if (!/^[0-9a-fA-F]{6}$/.test(String(h))) return null;" +
@@ -1072,7 +1154,7 @@
                 index: args.index == null ? null : Number(args.index),
                 text: String(args.text || ""),
             };
-            return cmd(new Function(
+            return cmd(opFn(
                 SLIDE_BY_INDEX_SRC +
                 "var p = Asc.scope.p;" +
                 "var pres = Api.GetPresentation();" +
@@ -1089,7 +1171,7 @@
         deleteSlide: function (args) {
             requireEditor("slide", "deleteSlide");
             Asc.scope.index = Number(args.index);
-            return cmd(new Function(
+            return cmd(opFn(
                 "var pres = Api.GetPresentation();" +
                 "var count = pres.GetSlidesCount();" +
                 "var idx = Asc.scope.index;" +
@@ -1162,8 +1244,10 @@
                             id: job.id, ok: true, data: data
                         });
                     }).catch(function (e) {
+                        var msg = String(e && e.message ? e.message : e);
+                        ui("op " + job.op + " failed: " + msg, "err");
                         return post("/bridge/result", {
-                            id: job.id, ok: false, error: String(e && e.message ? e.message : e)
+                            id: job.id, ok: false, error: msg
                         });
                     });
                 }
@@ -1221,14 +1305,18 @@
             initializing = false;
             status("connecting (" + t + ")…");
             return post("/bridge/hello", {
-                plugin: "acp-bridge", version: "0.4.2", editor: t
+                plugin: "acp-bridge", version: PLUGIN_VERSION, editor: t
             });
         }).then(function () {
             pollOnce();
             selectionTick();
-        }).catch(function () {
+        }).catch(function (e) {
             initializing = false;
-            status("companion unreachable", "err");
+            if (e && e.message && String(e.message).indexOf("editor detection failed") === 0) {
+                status(String(e.message) + " — switch to a document tab, then Reconnect", "err");
+            } else {
+                status("companion unreachable", "err");
+            }
             setTimeout(function () { window.Asc.plugin.init(); }, 3000);
         });
     };

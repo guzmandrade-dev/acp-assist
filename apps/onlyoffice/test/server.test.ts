@@ -598,3 +598,73 @@ describe('bridge plugin package routes', () => {
     }
   });
 });
+
+/** Regression (live-seen 2026-11-07, CV run): a malformed plugin context
+ * payload (e.g. the active tab is a PDF viewer, no document API) must be
+ * refused with a CLEAR 400, not crash an adapter with a TypeError. */
+describe('malformed plugin context is refused clearly', () => {
+  async function serveWithBridge(bridge: FakePluginBridge) {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'oo-acp-hist-'));
+    const app = createServer({
+      apiToken: API_TOKEN,
+      publicDir,
+      panelConfig: PANEL_CONFIG,
+      historyDir: dir,
+      pluginBridge: bridge,
+      agentFactory: fakeAgent(['[ACTION: none] ok']),
+    });
+    const srv = app.listen(0, '127.0.0.1');
+    await new Promise<void>((r) => srv.on('listening', r));
+    const url = `http://127.0.0.1:${(srv.address() as { port: number }).port}`;
+    return {
+      url,
+      close: () => {
+        srv.close();
+        void fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+      },
+    };
+  }
+
+  async function messageStatus(url: string): Promise<{ status: number; body: { error?: string } }> {
+    const created = await fetch(`${url}/api/session`, { method: 'POST', headers });
+    const { sessionId } = (await created.json()) as { sessionId: string };
+    const res = await fetch(`${url}/api/session/${sessionId}/message/stream`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ message: 'reformat my CV' }),
+    });
+    return { status: res.status, body: (await res.json().catch(() => ({}))) as { error?: string } };
+  }
+
+  it('rejects a context without an editor id (PDF viewer tab)', async () => {
+    const bridge = new FakePluginBridge();
+    const origOp = bridge.op.bind(bridge);
+    bridge.op = ((name: string, args?: Record<string, unknown>) =>
+      name === 'context' ? Promise.resolve({}) : origOp(name, args)) as typeof bridge.op;
+    const { url, close } = await serveWithBridge(bridge);
+    try {
+      const r = await messageStatus(url);
+      expect(r.status).toBe(400);
+      expect(r.body.error).toMatch(/no document context|editable document/);
+    } finally {
+      close();
+    }
+  });
+
+  it('rejects a Writer context without paragraph texts', async () => {
+    const bridge = new FakePluginBridge();
+    const origOp = bridge.op.bind(bridge);
+    bridge.op = ((name: string, args?: Record<string, unknown>) =>
+      name === 'context'
+        ? Promise.resolve({ editor: 'word', paragraphs: 1 } as never)
+        : origOp(name, args)) as typeof bridge.op;
+    const { url, close } = await serveWithBridge(bridge);
+    try {
+      const r = await messageStatus(url);
+      expect(r.status).toBe(400);
+      expect(r.body.error).toMatch(/without paragraph texts/);
+    } finally {
+      close();
+    }
+  });
+});

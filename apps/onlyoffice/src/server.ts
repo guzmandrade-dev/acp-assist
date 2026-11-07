@@ -290,6 +290,30 @@ function createOoBackend(
 
     async readStep(_session): Promise<ReadStepResult<OoStepData>> {
       const doc = await bridge.op<EditorDocument>('context');
+      // Validate the plugin payload before the adapters touch it — a
+      // malformed read (e.g. a PDF viewer tab, no document API) used to
+      // surface as an opaque TypeError ("reading 'texts'") deep in an
+      // adapter; refuse with a clear message instead (live-seen 2026-11-07).
+      if (!doc || typeof doc.editor !== 'string') {
+        return {
+          blocked: {
+            status: 400,
+            body: {
+              error:
+                'The bridge plugin returned no document context — is the active ONLYOFFICE tab an ' +
+                'editable document (a PDF viewer tab has no document API)? Switch to a document tab and retry.',
+            },
+          },
+        };
+      }
+      if (doc.editor === 'word' && !Array.isArray(doc.texts)) {
+        return {
+          blocked: {
+            status: 400,
+            body: { error: 'The plugin returned a Writer context without paragraph texts (the read failed inside the editor). Retry the message.' },
+          },
+        };
+      }
       const selection = { hasSelection: false, text: null as string | null };
       let module: OoModule;
       let contextText: string;
