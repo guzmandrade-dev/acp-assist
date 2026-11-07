@@ -11,7 +11,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type express from 'express';
 import type { Turn, TurnMeta } from './types.js';
-import { formatHistoryReplay, type HistoryReplayOptions, loadHistory, saveHistory } from './history.js';
+import { formatHistoryReplay, type HistoryReplayOptions, loadHistory, removeHistory, saveHistory } from './history.js';
 
 /** Max document edits one user message may apply (app-level safety stop). */
 export const MAX_ACTIONS_PER_MESSAGE = 10;
@@ -100,6 +100,14 @@ export interface ConversationStoreOptions {
 export interface ConversationStore {
   /** Get (creating if needed) the conversation for a key. */
   ensure: (key: string) => Promise<Turn[]>;
+  /**
+   * Move a conversation from one key to another (LyX save-as: the unsaved
+   * placeholder buffer got a real path). Moves the in-memory turns, the
+   * unseen-history counter, and the persisted history file (the source
+   * file is deleted). No-op when the source is empty or the target
+   * already has turns — an existing document's history is never clobbered.
+   */
+  migrate: (fromKey: string, toKey: string) => Promise<void>;
   /** The current conversation key. */
   key: () => string;
   /** Leading persisted turns the fresh agent process has NOT seen. */
@@ -159,6 +167,42 @@ export function createConversationStore(options: ConversationStoreOptions): Conv
     return turns;
   }
 
+  async function migrate(fromKey: string, toKey: string): Promise<void> {
+    if (fromKey === toKey) return;
+    let all = conversations.get(fromKey) ?? [];
+    if (all.length === 0 && options.historyDir) {
+      all = await loadHistory(options.historyDir, fromKey);
+    }
+    if (all.length === 0) return;
+    // Never clobber an existing conversation of the target key.
+    const existing = conversations.get(toKey);
+    if (existing && existing.length > 0) return;
+    if (options.historyDir && (await loadHistory(options.historyDir, toKey)).length > 0) return;
+
+    // A pending debounced write for the source must not resurrect the old
+    // history file after the move.
+    const timer = pendingTimers.get(fromKey);
+    if (timer) {
+      clearTimeout(timer);
+      pendingTimers.delete(fromKey);
+    }
+    dirty.delete(fromKey);
+
+    const handoff = historyHandoff.get(fromKey);
+    conversations.set(toKey, all);
+    conversations.delete(fromKey);
+    if (handoff !== undefined) historyHandoff.set(toKey, handoff);
+    historyHandoff.delete(fromKey);
+    if (options.historyDir) {
+      try {
+        await saveHistory(options.historyDir, toKey, all);
+        await removeHistory(options.historyDir, fromKey);
+      } catch (e) {
+        options.logError('[history] migrate failed', e);
+      }
+    }
+  }
+
   const pendingTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const dirty = new Set<string>();
 
@@ -209,6 +253,7 @@ export function createConversationStore(options: ConversationStoreOptions): Conv
 
   return {
     ensure,
+    migrate,
     key: keyOf,
     unseenCount: (key) => historyHandoff.get(key) ?? 0,
     buildHistoryPrefix: (key) =>

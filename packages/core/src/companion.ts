@@ -67,6 +67,13 @@ export interface CompanionSession<TState = unknown> {
    * reports them.
    */
   ensureConversation: (key: string) => Promise<Turn[]>;
+  /**
+   * Move a conversation between keys (LyX save-as: the unsaved placeholder
+   * buffer got a real path). Moves the in-memory turns, the handoff
+   * counter, and the persisted history file; never clobbers an existing
+   * target conversation.
+   */
+  migrateConversation: (fromKey: string, toKey: string) => Promise<void>;
 }
 
 /** What the backend's parsed action must at least carry. */
@@ -423,6 +430,7 @@ export function createCompanionServer<TState>(
         attachments: [],
         lastActive: Date.now(),
         ensureConversation: (docKey) => storeFor(session).ensure(docKey),
+        migrateConversation: (fromKey, toKey) => storeFor(session).migrate(fromKey, toKey),
       };
       sessions.set(id, session);
       await agent.createSession(id);

@@ -304,6 +304,75 @@ describe('createConversationStore', () => {
     const turns = conversations.get('doc-a') ?? [];
     expect(turns[0]?.meta).toBeUndefined();
   });
+
+  it('migrates a conversation to a new key: turns, handoff, and the history file move', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'core-store-'));
+    const { store, conversations, historyHandoff } = makeStore(dir);
+    await store.recordTurn('make my CV', 'done [ACTION: none]');
+    await store.recordActionStep('more [ACTION: none]', 2);
+    historyHandoff.set('doc-a', 3);
+    await store.flush();
+    expect((await loadHistory(dir, 'doc-a'))).toHaveLength(3);
+
+    await store.migrate('doc-a', 'C:/docs/CV ACP Assist.lyx');
+
+    expect(conversations.get('doc-a')).toBeUndefined();
+    expect(conversations.get('C:/docs/CV ACP Assist.lyx')).toHaveLength(3);
+    expect(historyHandoff.get('doc-a')).toBeUndefined();
+    expect(historyHandoff.get('C:/docs/CV ACP Assist.lyx')).toBe(3);
+    expect(await loadHistory(dir, 'doc-a')).toEqual([]); // source file removed
+    expect(await loadHistory(dir, 'C:/docs/CV ACP Assist.lyx')).toHaveLength(3);
+    // A fresh store (restart) loads the migrated history under the new key.
+    const second = makeStore(dir);
+    expect(await second.store.ensure('C:/docs/CV ACP Assist.lyx')).toHaveLength(3);
+    expect(second.store.unseenCount('C:/docs/CV ACP Assist.lyx')).toBe(3);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('migrate moves a persisted-only conversation (never loaded in memory)', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'core-store-'));
+    await saveHistory(dir, '(unsaved)', [{ role: 'user', content: 'hi', timestamp: 't' }]);
+    const { store, conversations } = makeStore(dir);
+    await store.migrate(UNSAVED_KEY, 'C:/docs/new.lyx');
+    expect(conversations.get('C:/docs/new.lyx')).toHaveLength(1);
+    expect(await loadHistory(dir, UNSAVED_KEY)).toEqual([]);
+    expect(await loadHistory(dir, 'C:/docs/new.lyx')).toHaveLength(1);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('migrate never clobbers an existing target conversation and ignores empty/same-key sources', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'core-store-'));
+    const { store, conversations } = makeStore(dir);
+    await store.recordTurn('source turn', 'source reply');
+    await store.flush();
+    conversations.set('doc-b', [{ role: 'user', content: 'existing', timestamp: 't' }]);
+    await saveHistory(dir, 'doc-b', conversations.get('doc-b')!);
+
+    await store.migrate('doc-a', 'doc-b'); // target occupied -> no-op
+    expect(conversations.get('doc-a')).toHaveLength(2);
+    expect(conversations.get('doc-b')).toHaveLength(1);
+    expect((await loadHistory(dir, 'doc-a'))).toHaveLength(2);
+
+    await store.migrate('doc-a', 'doc-a'); // same key -> no-op
+    expect(conversations.get('doc-a')).toHaveLength(2);
+
+    await store.migrate('doc-empty', 'doc-c'); // empty source -> no-op
+    expect(conversations.has('doc-c')).toBe(false);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('migrate cancels a pending debounced write so the source file is not resurrected', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'core-store-'));
+    const { store } = makeStore(dir);
+    await store.recordTurn('hello', 'hi'); // debounce timer pending, nothing on disk yet
+    expect(await loadHistory(dir, 'doc-a')).toEqual([]);
+    await store.migrate('doc-a', 'doc-moved');
+    expect(await loadHistory(dir, 'doc-moved')).toHaveLength(2);
+    // Wait past the debounce window: the old key's file must stay gone.
+    await new Promise((r) => setTimeout(r, 700));
+    expect(await loadHistory(dir, 'doc-a')).toEqual([]);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
 });
 
 // --- attachment extraction --------------------------------------------------------

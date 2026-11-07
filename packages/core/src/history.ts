@@ -75,6 +75,11 @@ export async function saveHistory(dir: string, key: string, turns: Turn[]): Prom
   await fs.writeFile(historyFile(dir, key), JSON.stringify({ key, turns }), 'utf8');
 }
 
+/** Delete a persisted conversation (used when its key migrates away). */
+export async function removeHistory(dir: string, key: string): Promise<void> {
+  await fs.rm(historyFile(dir, key), { force: true });
+}
+
 export interface HistoryReplayOptions {
   /**
    * Fenced content blocks stripped from replayed assistant turns (they
