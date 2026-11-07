@@ -45,6 +45,12 @@ describe('extractBodyLayouts', () => {
   it('returns null when there is no lyx content', () => {
     expect(extractBodyLayouts('just prose, no markup')).toBeNull();
   });
+
+  it('recovers an UNCLOSED ```lyx fence (truncated closing fence)', () => {
+    const reply =
+      'Sure!\n```lyx\n\\\\begin_layout Standard\nHi\n\\\\end_layout\n[ACTION: insert-top]';
+    expect(extractBodyLayouts(reply)).toBe('\\\\begin_layout Standard\nHi\n\\\\end_layout\n[ACTION: insert-top]');
+  });
 });
 
 describe('findMarkupProblems', () => {

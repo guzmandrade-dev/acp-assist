@@ -213,6 +213,10 @@ export function parseContentBlock(block: string): BlockParagraph[] {
  * markdown-lite paragraphs, "calc" for TSV). Returns null when the reply
  * contains none. The LAST fence wins — some agents echo the block while
  * explaining; like action tags, the final one is the operative content.
+ * An UNCLOSED opener still yields its content up to end-of-reply: live
+ * agents occasionally truncate the closing fence (observed 2026-11-07,
+ * a CV rewrite ended mid-block with the action tag inside), and the
+ * block parsers drop tag lines, so the payload is safe to apply.
  */
 /** Compiled fence regexes per language, reused across replies. */
 const contentBlockRes = new Map<string, RegExp>();
@@ -220,7 +224,7 @@ const contentBlockRes = new Map<string, RegExp>();
 export function extractContentBlock(reply: string, lang: string = 'writer'): string | null {
   let re = contentBlockRes.get(lang);
   if (!re) {
-    re = new RegExp('```' + lang + '\\s*\\n([\\s\\S]*?)```', 'gi');
+    re = new RegExp('```' + lang + '\\s*\\n([\\s\\S]*?)(?:```|$)', 'gi');
     contentBlockRes.set(lang, re);
   }
   const fences = [...reply.matchAll(re)];

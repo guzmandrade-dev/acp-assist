@@ -256,6 +256,11 @@ describe('parseContentBlock', () => {
   it('returns null from extractContentBlock when no writer fence exists', () => {
     expect(extractContentBlock('no fences here')).toBeNull();
   });
+
+  it('recovers an UNCLOSED writer fence (truncated closing fence)', () => {
+    const reply = 'I will rebuild it.\n```writer\n# Name\n\n- bullet\n[ACTION: insert-top]';
+    expect(extractContentBlock(reply)).toBe('# Name\n\n- bullet\n[ACTION: insert-top]');
+  });
 });
 
 /** The writer adapter's op mapping (content, addressing, validation). */

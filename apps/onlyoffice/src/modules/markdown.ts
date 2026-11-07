@@ -188,14 +188,16 @@ export function parseContentBlock(block: string): BlockParagraph[] {
 /**
  * Extract the LAST fenced content block of the given language from a
  * reply (the operative content; earlier echoes are dropped). Returns
- * null when none.
+ * null when none. An UNCLOSED opener still yields its content up to
+ * end-of-reply (live agents occasionally truncate the closing fence;
+ * the block parsers drop action-tag lines, so the payload is safe).
  */
 const contentBlockRes = new Map<string, RegExp>();
 
 export function extractContentBlock(reply: string, lang = 'writer'): string | null {
   let re = contentBlockRes.get(lang);
   if (!re) {
-    re = new RegExp('```' + lang + '\\s*\\n([\\s\\S]*?)```', 'gi');
+    re = new RegExp('```' + lang + '\\s*\\n([\\s\\S]*?)(?:```|$)', 'gi');
     contentBlockRes.set(lang, re);
   }
   const fences = [...reply.matchAll(re)];

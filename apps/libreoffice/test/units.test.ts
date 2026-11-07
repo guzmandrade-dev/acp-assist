@@ -243,6 +243,23 @@ describe('extractContentBlock', () => {
     const reply = '```writer\nfirst\n```\nExplanation.\n```writer\nsecond\n```';
     expect(extractContentBlock(reply)).toBe('second\n');
   });
+
+  it('recovers an UNCLOSED writer fence (truncated closing fence)', () => {
+    // Live-observed 2026-11-07: the reply ended mid-block with the
+    // action tag inside the open fence.
+    const reply = 'I will rebuild it.\n```writer\n# Name\n\n- bullet\n[ACTION: insert-top]';
+    expect(extractContentBlock(reply)).toBe('# Name\n\n- bullet\n[ACTION: insert-top]');
+  });
+
+  it('prefers a closed fence over an earlier unclosed one only when later', () => {
+    const reply = '```writer\nfirst\n```\nExplanation.\n```writer\nsecond\n[ACTION: insert]';
+    expect(extractContentBlock(reply)).toBe('second\n[ACTION: insert]');
+  });
+
+  it('still returns null when the opener has no newline/content', () => {
+    expect(extractContentBlock('```writer')).toBeNull();
+    expect(extractContentBlock('text ```writer')).toBeNull();
+  });
 });
 
 describe('companion discovery record', () => {

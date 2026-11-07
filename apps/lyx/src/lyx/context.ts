@@ -274,7 +274,9 @@ export function findMarkupProblems(body: string): string[] {
 
 /** Prefer a ```lyx fenced block if the agent used one. */
 function extractLyxFencedBlock(text: string): string | null {
-  const m = /```lyx\s*\n([\s\S]*?)```/.exec(text);
+  // An unclosed opener still yields its content to end-of-reply (agents
+  // occasionally truncate the closing fence mid-block).
+  const m = /```lyx\s*\n([\s\S]*?)(?:```|$)/.exec(text);
   return m ? m[1]! : null;
 }
 
