@@ -535,6 +535,32 @@ new op. New rules:
     enforced at Plugin-Manager install time). For the product, repackage
     `acp-bridge.plugin` (zip + rename) and install via Plugin Manager.
 
+## Calc cell formatting — `formatCells` op (built 2026-11-07, plugin v0.7.0)
+
+`[ACTION: format-cells]` / `[ACTION: format-cells B2]` /
+`[ACTION: format-cells A1:B10]` with a ```calc block carrying ONE style
+line `{bg=#fff2cc; color=#c00000; bold; italic; underline; size=14;
+font=Arial}` — identical dialect to the LibreOffice app (both
+`markdown.ts` copies carry the same `parseStyleSpec`). Set-only; values
+untouched. Rules:
+
+61. **`ApiRange` restyling in ONE callCommand**: `ws.GetRange("A1:B10")`
+    (or the anchor cell, or `ws.GetSelection()` when neither is given)
+    then `range.SetBackColor(Api.RGB(r,g,b))`, `SetFontColor`,
+    `SetBold/SetItalic/SetUnderline(true)`, `SetFontSize`, `SetFontName`.
+    One op = one undo step (same rule 4). Only attributes present in the
+    style are set (flags only ever set true — no clearing in v1).
+62. **`SetFontSize` on ranges is HALF-POINTS too** (same rule 48 as slide
+    runs): the plugin's `styleWire()` multiplies the companion's points
+    by 2 before the callCommand.
+63. **The companion resolves the target** (tag range > tag cell >
+    selection's first range, sheet prefix stripped) so the plugin stays
+    dumb; it only validates the A1 syntax and runs the op. Style wire:
+    `{bg:[r,g,b]|null, c:[r,g,b]|null, b,i,u, s(hps), f}` built by the
+    top-level `hexRgb`/`styleWire` helpers (twins of the serialized ones
+    inside SET_SHAPE_PARAS_SRC). NOT yet live-verified in a real editor —
+    verify via the spike bridge-server + CDP before relying on it.
+
 64. **Manual plugin update path = the panel's "Download bridge" button**
     (bridgeDownload in PanelConfig; install.js). The companion serves
     GET /api/bridge/plugin (bundled version read from the .plugin zip's
@@ -551,3 +577,5 @@ new op. New rules:
     (onlyoffice.github.io; needs version/offered/store + CHANGELOG.md)
     is the only true auto-update path — deferred until the plugin is
     bullet-proof (user decision 2026-11-07).
+
+

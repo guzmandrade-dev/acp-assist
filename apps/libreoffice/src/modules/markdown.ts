@@ -7,7 +7,7 @@
  * directly (no markup round-trip through LibreOffice).
  */
 
-import type { BlockParagraph, BlockRun } from '../bridge/client.js';
+import type { BlockParagraph, BlockRun, CellStyle } from '../bridge/client.js';
 import { sizeToCm } from '@acp-assist/core';
 import { ACTION_HEADER, actionTagNote, createParseActionTag } from '@acp-assist/core';
 
@@ -274,6 +274,64 @@ export function parseTableBlock(block: string): string[][] {
     rows.pop();
   }
   return rows;
+}
+
+/** `{bg=#fff2cc; bold; ...}` style-spec opener at a line's start. */
+const STYLE_PREFIX = /^\{([^}]*)\}\s*(.*)$/;
+
+/** `#ff6f3d` or `ff6f3d` -> 'ff6f3d'; null when not a valid hex color. */
+export function normalizeHexColor(value: string): string | null {
+  const hex = value.trim().replace(/^#/, '');
+  return /^[0-9a-fA-F]{6}$/.test(hex) ? hex.toLowerCase() : null;
+}
+
+/**
+ * Parse a ```calc block used by [ACTION: format-cells] into a CellStyle.
+ * The block carries ONE style line: `{bg=#fff2cc; color=#c00000; bold;
+ * italic; underline; size=12; font=Arial}` (the first `{...}` line wins;
+ * unknown attributes are ignored, invalid values dropped — tolerant like
+ * the impress style prefix). Returns null when the block has no style
+ * line or every attribute was invalid.
+ */
+export function parseStyleSpec(block: string): CellStyle | null {
+  for (const raw of block.replace(/\r\n/g, '\n').split('\n')) {
+    if (ACTION_TAG_LINE.test(raw)) continue;
+    const match = STYLE_PREFIX.exec(raw.trim());
+    if (match === null) continue;
+    const style: CellStyle = {};
+    for (const rawAttr of (match[1] ?? '').split(';')) {
+      const attr = rawAttr.trim();
+      if (attr.length === 0) continue;
+      const eq = attr.indexOf('=');
+      const key = (eq === -1 ? attr : attr.slice(0, eq)).trim().toLowerCase();
+      const value = eq === -1 ? '' : attr.slice(eq + 1).trim();
+      if (eq === -1 && (key === 'bold' || key === 'italic' || key === 'underline')) {
+        style[key] = true;
+        continue;
+      }
+      if ((key === 'bg' || key === 'fill' || key === 'background')) {
+        const color = normalizeHexColor(value);
+        if (color !== null) style.bg = color;
+        continue;
+      }
+      if (key === 'color' || key === 'fontcolor') {
+        const color = normalizeHexColor(value);
+        if (color !== null) style.color = color;
+        continue;
+      }
+      if (key === 'size') {
+        const size = Number.parseFloat(value);
+        if (Number.isFinite(size) && size >= 1 && size <= 400) style.size = Math.round(size);
+        continue;
+      }
+      if (key === 'font' && value.length > 0) {
+        style.font = value.slice(0, 60);
+        continue;
+      }
+    }
+    if (Object.keys(style).length > 0) return style;
+  }
+  return null;
 }
 
 /**

@@ -148,6 +148,7 @@ formulas, cells addressed as `A1`):
 | `[ACTION: rewrite]` | Replace the selected cells |
 | `[ACTION: insert-rows]` / `[ACTION: insert-rows A5]` | Insert an empty row above the selection / cell |
 | `[ACTION: insert-cols]` / `[ACTION: insert-cols C1]` | Insert an empty column left of the selection / cell |
+| `[ACTION: format-cells]` / `[ACTION: format-cells B2]` / `[ACTION: format-cells A1:B10]` | Restyle the selection / cell / range — values untouched. The `calc` block carries one style line: `{bg=#fff2cc; color=#c00000; bold; italic; underline; size=14; font=Arial}` |
 
 **Impress** (slides addressed as `[sN]`):
 

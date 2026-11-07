@@ -31,6 +31,8 @@ import unohelper
 from com.sun.star.awt import XCallback
 from com.sun.star.awt.FontSlant import NONE as FONT_SLANT_NONE
 from com.sun.star.awt.FontSlant import ITALIC as FONT_SLANT_ITALIC
+from com.sun.star.awt.FontUnderline import SINGLE as FONT_UNDERLINE_SINGLE
+from com.sun.star.awt.FontWeight import BOLD as FONT_WEIGHT_BOLD
 from com.sun.star.task import XJobExecutor
 from com.sun.star.text.ControlCharacter import PARAGRAPH_BREAK
 from com.sun.star.text.TextContentAnchorType import AS_CHARACTER
@@ -1069,6 +1071,84 @@ def _set_cell(cell, value):
     cell.setString(s)
 
 
+def _parse_a1_range(token):
+    """'A1:B10' -> (c0, r0, c1, r1) 0-based inclusive; swapped ends normalized."""
+    m = re.match(
+        r"^([A-Za-z]{1,4}[1-9][0-9]{0,6}):([A-Za-z]{1,4}[1-9][0-9]{0,6})$",
+        str(token).strip())
+    if m is None:
+        raise RuntimeError(f"{token!r} is not a valid A1 range (e.g. A1:B10)")
+    c0, r0 = _parse_a1(m.group(1))
+    c1, r1 = _parse_a1(m.group(2))
+    if c1 < c0:
+        c0, c1 = c1, c0
+    if r1 < r0:
+        r0, r1 = r1, r0
+    return c0, r0, c1, r1
+
+
+_CELL_STYLE_KEYS = ("bg", "color", "bold", "italic", "underline", "size", "font")
+_CELL_STYLE_MAX_CELLS = 100_000
+
+
+def _validate_cell_style(style):
+    """Companion-sent format-cells style -> validated copy (user-facing errors)."""
+    if not isinstance(style, dict) or not style:
+        raise RuntimeError("mode 'format-cells' requires a style object")
+    unknown = sorted(set(style) - set(_CELL_STYLE_KEYS))
+    if unknown:
+        raise RuntimeError(
+            f"unknown style attribute(s): {', '.join(unknown)} "
+            f"(known: {', '.join(_CELL_STYLE_KEYS)})")
+    out = {}
+    for key in ("bg", "color"):
+        if key in style:
+            m = re.match(r"^#?([0-9a-fA-F]{6})$", str(style[key]))
+            if m is None:
+                raise RuntimeError(f"style {key!r} must be a hex color like #fff2cc")
+            out[key] = m.group(1).lower()
+    for key in ("bold", "italic", "underline"):
+        if key in style:
+            out[key] = bool(style[key])
+    if "size" in style:
+        try:
+            size = float(style["size"])
+        except (TypeError, ValueError):
+            raise RuntimeError("style 'size' must be a number (points)")
+        if not 1 <= size <= 400:
+            raise RuntimeError("style 'size' must be between 1 and 400 points")
+        out["size"] = size
+    if "font" in style:
+        font = str(style["font"]).strip()
+        if not font or len(font) > 60:
+            raise RuntimeError("style 'font' must be a font name (max 60 chars)")
+        out["font"] = font
+    if not out:
+        raise RuntimeError("style carries no applicable attribute")
+    return out
+
+
+def _apply_cell_style(cell_range, style):
+    """Apply a validated format-cells style to a whole range at once
+    (range-level setPropertyValue — SheetCellRange exposes both the cell
+    property CellBackColor and the Char* properties). Runs inside the
+    caller's undo context, so one format-cells op = one undo step."""
+    if "bg" in style:
+        cell_range.setPropertyValue("CellBackColor", int(style["bg"], 16))
+    if "color" in style:
+        cell_range.setPropertyValue("CharColor", int(style["color"], 16))
+    if style.get("bold"):
+        cell_range.setPropertyValue("CharWeight", float(FONT_WEIGHT_BOLD))
+    if style.get("italic"):
+        cell_range.setPropertyValue("CharPosture", FONT_SLANT_ITALIC)
+    if style.get("underline"):
+        cell_range.setPropertyValue("CharUnderline", int(FONT_UNDERLINE_SINGLE))
+    if "size" in style:
+        cell_range.setPropertyValue("CharHeight", float(style["size"]))
+    if "font" in style:
+        cell_range.setPropertyValue("CharFontName", style["font"])
+
+
 def _edit_calc(desktop, payload):
     mode = payload.get("mode")
 
@@ -1095,19 +1175,42 @@ def _edit_calc(desktop, payload):
             raise RuntimeError("count must be an integer")
         if not 1 <= count <= 1000:
             raise RuntimeError("count must be between 1 and 1000")
+    elif mode == "format-cells":
+        payload["style"] = _validate_cell_style(payload.get("style"))
 
     # Anchor: explicit A1 address, else the selection's top-left cell.
+    # format-cells may instead carry a range ("A1:B10"); its targets are
+    # all covered cells — the explicit range, the anchor cell, or every
+    # selected range when neither is given.
     anchor = payload.get("anchor")
     sel_ranges = _calc_sel_ranges(ctrl.getSelection())
-    if anchor:
+    targets = None
+    range_token = payload.get("range") if mode == "format-cells" else None
+    if range_token:
+        targets = [_parse_a1_range(range_token)]
+        col, row = targets[0][0], targets[0][1]
+        anchor_name = str(range_token).strip().upper()
+    elif anchor:
         col, row = _parse_a1(anchor)
+        anchor_name = f"{_col_letters(col)}{row + 1}"
+        if mode == "format-cells":
+            targets = [(col, row, col, row)]
     elif sel_ranges:
         a = sel_ranges[0]
         col, row = a.StartColumn, a.StartRow
+        anchor_name = f"{_col_letters(col)}{row + 1}"
+        if mode == "format-cells":
+            targets = [(r.StartColumn, r.StartRow, r.EndColumn, r.EndRow)
+                       for r in sel_ranges]
     else:
         raise RuntimeError(
             f"mode {mode!r} needs an anchor (A1) or an active selection")
-    anchor_name = f"{_col_letters(col)}{row + 1}"
+    if targets is not None:
+        total = sum((t[2] - t[0] + 1) * (t[3] - t[1] + 1) for t in targets)
+        if total > _CELL_STYLE_MAX_CELLS:
+            raise RuntimeError(
+                f"format-cells target too large ({total} cells; "
+                f"max {_CELL_STYLE_MAX_CELLS})")
 
     tracked = bool(payload.get("tracked", True))
     was_tracking = _get_record_changes(doc)
@@ -1127,6 +1230,11 @@ def _edit_calc(desktop, payload):
         elif mode == "insert-cols":
             count = int(payload.get("count") or 1)
             sheet.getColumns().insertByIndex(col, count)
+        elif mode == "format-cells":
+            style = payload.get("style")
+            for (c0, r0, c1, r1) in targets:
+                rng = sheet.getCellRangeByPosition(c0, r0, c1, r1)
+                _apply_cell_style(rng, style)
     finally:
         um.leaveUndoContext()
 
@@ -1141,7 +1249,7 @@ def _edit_calc(desktop, payload):
 WRITER_MODES = ("insert", "insert-top", "insert-after",
                 "rewrite", "rewrite-at", "delete-at", "insert-table",
                 "insert-image", "add-comment", "page-break")
-CALC_MODES = ("write-cells", "insert-rows", "insert-cols")
+CALC_MODES = ("write-cells", "insert-rows", "insert-cols", "format-cells")
 IMPRESS_MODES = ("rewrite-frame", "rewrite-slide", "insert-slide-after")
 
 

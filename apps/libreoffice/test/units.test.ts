@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseAction } from '../src/server.js';
 import { calcAdapter, parseCalcAction } from '../src/modules/calc.js';
-import { extractContentBlock, parseContentBlock, parseInline, parseTableBlock, parseTsvBlock } from '../src/modules/markdown.js';
+import { extractContentBlock, parseContentBlock, parseInline, parseStyleSpec, parseTableBlock, parseTsvBlock } from '../src/modules/markdown.js';
 import { writerAdapter } from '../src/modules/writer.js';
 import type { BridgeClient, BridgeDocument } from '../src/bridge/client.js';
 
@@ -589,6 +589,7 @@ describe('parseCalcAction', () => {
       address: null,
       block: null,
       grid: null,
+      style: null,
       tagNote: null,
     });
   });
@@ -724,6 +725,76 @@ describe('calcAdapter applyAction', () => {
   it('rewrite without a Calc selection is refused', async () => {
     const out = parseCalcAction('```calc\nX\n```\n[ACTION: rewrite]');
     await expect(calcAdapter.applyAction(bridge, calcDoc(), calcSel(null), out)).rejects.toThrow('no selection');
+  });
+
+  it('parses format-cells with a range address and a style block', () => {
+    const out = parseCalcAction('```calc\n{bg=#FFF2CC; bold; size=14}\n```\n[ACTION: format-cells A1:B3]');
+    expect(out.action).toBe('format-cells');
+    expect(out.address).toBe('A1:B3');
+    expect(out.style).toEqual({ bg: 'fff2cc', bold: true, size: 14 });
+  });
+
+  it('format-cells sends range vs anchor and the style to the bridge', async () => {
+    const rangeOut = parseCalcAction('```calc\n{color=#c00000; underline}\n```\n[ACTION: format-cells B2:D4]');
+    const r = await calcAdapter.applyAction(bridge, calcDoc(), calcSel(), rangeOut);
+    expect(edits[edits.length - 1]).toMatchObject({
+      mode: 'format-cells',
+      anchor: undefined,
+      range: 'B2:D4',
+      style: { color: 'c00000', underline: true },
+      tracked: true,
+    });
+    expect(r.description).toBe('[ACTION: format-cells B2:D4]');
+
+    const cellOut = parseCalcAction('```calc\n{bg=ff0000; font=Arial; italic}\n```\n[ACTION: format-cells C5]');
+    await calcAdapter.applyAction(bridge, calcDoc(), calcSel(), cellOut);
+    expect(edits[edits.length - 1]).toMatchObject({
+      mode: 'format-cells',
+      anchor: 'C5',
+      range: undefined,
+      style: { bg: 'ff0000', font: 'Arial', italic: true },
+    });
+
+    // no address: neither anchor nor range — the bridge uses the selection
+    const selOut = parseCalcAction('```calc\n{bold}\n```\n[ACTION: format-cells]');
+    await calcAdapter.applyAction(bridge, calcDoc(), calcSel(), selOut);
+    expect(edits[edits.length - 1]).toMatchObject({
+      mode: 'format-cells',
+      anchor: undefined,
+      range: undefined,
+      style: { bold: true },
+    });
+  });
+
+  it('format-cells without a style line is refused with nothing sent', async () => {
+    const out = parseCalcAction('```calc\njust text\n```\n[ACTION: format-cells A1]');
+    expect(out.style).toBeNull();
+    const before = edits.length;
+    await expect(calcAdapter.applyAction(bridge, calcDoc(), calcSel(), out)).rejects.toThrow('style line');
+    expect(edits.length).toBe(before);
+  });
+});
+
+describe('parseStyleSpec', () => {
+  it('parses all attributes and drops unknown/invalid ones', () => {
+    expect(parseStyleSpec('{bg=#ff6f3d; color=00ff00; bold; italic; underline; size=28.5; font=Georgia; bogus; color2=x}')).toEqual({
+      bg: 'ff6f3d',
+      color: '00ff00',
+      bold: true,
+      italic: true,
+      underline: true,
+      size: 29,
+      font: 'Georgia',
+    });
+  });
+
+  it('takes the first style line and ignores action tags', () => {
+    expect(parseStyleSpec('noise\n[ACTION: none]\n{bold}\n{color=#123456}')).toEqual({ bold: true });
+  });
+
+  it('returns null without a style line or with only invalid values', () => {
+    expect(parseStyleSpec('plain text\nmore')).toBeNull();
+    expect(parseStyleSpec('{bg=red; size=9999}')).toBeNull();
   });
 });
 

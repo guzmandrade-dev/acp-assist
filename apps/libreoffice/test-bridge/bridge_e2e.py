@@ -436,6 +436,52 @@ def main():
           and csheet.getCellByPosition(1, 2).getString() == "10",
           f"out={out}")
 
+    # format-cells: explicit range restyle (values untouched)
+    code, out = http("POST", "/edit", token=TOKEN, payload={
+        "mode": "format-cells", "range": "A1:B1",
+        "style": {"bg": "fff2cc", "bold": True, "color": "c00000",
+                  "size": 14, "font": "Liberation Sans"},
+    })
+    hdr = csheet.getCellRangeByPosition(0, 0, 1, 0)
+    check("calc: format-cells restyles a range (fill/bold/color/size)",
+          code == 200 and out.get("applied") and out.get("anchor") == "A1:B1"
+          and hdr.getPropertyValue("CellBackColor") == 0xFFF2CC
+          and abs(hdr.getPropertyValue("CharWeight") - 150.0) < 0.01
+          and hdr.getPropertyValue("CharColor") == 0xC00000
+          and abs(hdr.getPropertyValue("CharHeight") - 14.0) < 0.01
+          and csheet.getCellByPosition(0, 0).getString() == "Name",
+          f"out={out}, bg={hdr.getPropertyValue('CellBackColor'):#x}")
+
+    # format-cells over the current selection (A1:B3 is still selected)
+    code, out = http("POST", "/edit", token=TOKEN, payload={
+        "mode": "format-cells", "style": {"italic": True, "underline": True},
+    })
+    check("calc: format-cells without a range restyles the selection",
+          code == 200 and out.get("applied") and out.get("anchor") == "A1"
+          and abs(csheet.getCellByPosition(1, 1).getPropertyValue("CharPosture") - 2.0) < 0.01
+          and csheet.getCellByPosition(1, 1).getPropertyValue("CharUnderline") == 1,
+          f"out={out}")
+
+    code, out = http("POST", "/undo", token=TOKEN)
+    check("calc: undo reverts the selection format-cells edit",
+          code == 200 and out.get("undone")
+          and csheet.getCellByPosition(1, 1).getPropertyValue("CharUnderline") == 0,
+          f"out={out}")
+
+    code, out = http("POST", "/edit", token=TOKEN, payload={
+        "mode": "format-cells", "range": "A1:B2", "style": {"bg": "red"},
+    })
+    check("calc: format-cells rejects a bad color",
+          code == 500 and "hex color" in str(out.get("error")),
+          f"code={code}, err={out.get('error')!r}")
+
+    code, out = http("POST", "/edit", token=TOKEN, payload={
+        "mode": "format-cells", "range": "A1:B2", "style": {"sparkle": True},
+    })
+    check("calc: format-cells rejects unknown style attributes",
+          code == 500 and "unknown style attribute" in str(out.get("error")),
+          f"code={code}, err={out.get('error')!r}")
+
     code, out = http("POST", "/edit", token=TOKEN, payload={
         "mode": "write-cells", "anchor": "!!", "rows": [["x"]],
     })

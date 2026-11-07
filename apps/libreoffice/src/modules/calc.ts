@@ -10,15 +10,16 @@
  */
 
 import type { BridgeClient, BridgeDocument, CalcInfo, CalcSelection } from '../bridge/client.js';
-import { extractContentBlock, parseTsvBlock, actionTagNote, actionInstructions, createParseActionTag } from './markdown.js';
+import { extractContentBlock, parseTsvBlock, parseStyleSpec, actionTagNote, actionInstructions, createParseActionTag } from './markdown.js';
 import type { ActionOutcome, AppliedAction, AgentAction, ModuleAdapter, SelectionInfo } from './types.js';
 
-/** Grammar: [ACTION: name] or [ACTION: name B2] (A1 anchor). The header
- * tolerates tag typos ("[AACTION:"), reported via tagNote; the B5 layered
- * resolution lives in the core factory. */
+/** Grammar: [ACTION: name] or [ACTION: name B2] / [ACTION: name A1:B10]
+ * (A1 anchor or range). The header tolerates tag typos ("[AACTION:"),
+ * reported via tagNote; the B5 layered resolution lives in the core
+ * factory. */
 const parseTag = createParseActionTag({
-  actions: 'write-cells|insert-rows|insert-cols|rewrite|none|continue',
-  targetPattern: '(?:\\s+([A-Za-z]{1,4}[1-9][0-9]{0,6}))?',
+  actions: 'write-cells|insert-rows|insert-cols|rewrite|format-cells|none|continue',
+  targetPattern: '(?:\\s+([A-Za-z]{1,4}[1-9][0-9]{0,6}(?::[A-Za-z]{1,4}[1-9][0-9]{0,6})?))?',
 });
 
 /** Parse an agent reply against the Calc vocabulary. */
@@ -28,13 +29,15 @@ export function parseCalcAction(reply: string): ActionOutcome {
   const address = tag.target ? tag.target.toUpperCase() : null;
   const contentActions: AgentAction[] = ['write-cells', 'rewrite'];
   const needsContent = contentActions.includes(action);
-  const rawBlock = needsContent ? extractContentBlock(reply, 'calc') : null;
+  const needsStyle = action === 'format-cells';
+  const rawBlock = needsContent || needsStyle ? extractContentBlock(reply, 'calc') : null;
   return {
     action,
     target: null,
     address,
     block: null,
     grid: needsContent && rawBlock !== null ? parseTsvBlock(rawBlock) : null,
+    style: needsStyle && rawBlock !== null ? parseStyleSpec(rawBlock) : null,
     tagNote: actionTagNote(tag.rawTag ?? undefined, `[ACTION: ${action}${address ? ` ${address}` : ''}]`),
   };
 }
@@ -114,12 +117,21 @@ export const calcAdapter: ModuleAdapter = {
         '  anchor row, or [ACTION: insert-rows A5] above a given cell.',
         '- [ACTION: insert-cols] to insert one empty column LEFT of the',
         '  selection\'s anchor column, or [ACTION: insert-cols C1].',
+        '- [ACTION: format-cells] to restyle the selected cells, or',
+        '  [ACTION: format-cells B2] / [ACTION: format-cells A1:B10] for one',
+        '  cell / a range: include a ```calc block with ONE style line (see',
+        '  below). Cell VALUES are not touched.',
       ],
       contentFormat: [
         'Content format (```calc block): tab-separated cells, one sheet row per',
         'line. A cell starting with "=" is written as a formula (e.g.',
         '=SUM(B2:B10)). An empty cell clears the target cell. Use column',
         'letters in formulas exactly as shown in the document context.',
+        'For [ACTION: format-cells] the ```calc block instead carries ONE style',
+        'line: {bg=#fff2cc; color=#c00000; bold; italic; underline; size=12;',
+        'font=Arial} — omit the parts you do not need. bg = cell background,',
+        'color = font color (hex #rrggbb), size = font size in points,',
+        'font = font family. Only the listed attributes change.',
       ],
       undoMode: 'tracked-changes',
       rules: [
@@ -209,6 +221,25 @@ export const calcAdapter: ModuleAdapter = {
       });
       const at = r.anchor ?? outcome.address ?? 'selection';
       return { description: `[ACTION: ${outcome.action} at ${at}]` };
+    }
+    if (outcome.action === 'format-cells') {
+      if (!outcome.style || Object.keys(outcome.style).length === 0) {
+        throw new Error(
+          '[ACTION: format-cells] needs a ```calc block with a style line, e.g. {bg=#fff2cc; bold}.',
+        );
+      }
+      // A range address ("A1:B10") goes in `range`; a bare cell in `anchor`;
+      // neither = the bridge restyles the current selection's ranges.
+      const isRange = outcome.address !== null && outcome.address.includes(':');
+      const r = await bridge.edit({
+        mode: 'format-cells',
+        anchor: isRange ? undefined : (outcome.address ?? undefined),
+        range: isRange ? outcome.address : undefined,
+        style: outcome.style,
+        tracked: true,
+      });
+      const at = outcome.address ?? r.anchor ?? 'selection';
+      return { description: `[ACTION: format-cells ${at}]` };
     }
     throw new Error(`[ACTION: ${outcome.action}] is not a Calc document action.`);
   },

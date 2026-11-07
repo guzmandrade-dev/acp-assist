@@ -269,16 +269,37 @@ export interface BlockParagraph {
 export type EditMode =
   | 'insert' | 'insert-top' | 'insert-after' | 'rewrite' | 'rewrite-at' | 'delete-at' | 'insert-table'
   // Calc
-  | 'write-cells' | 'insert-rows' | 'insert-cols'
+  | 'write-cells' | 'insert-rows' | 'insert-cols' | 'format-cells'
   // Impress / Draw
   | 'rewrite-frame' | 'rewrite-slide' | 'insert-slide-after';
+
+/** Cell restyling for Calc format-cells (hex colors without '#'). */
+export interface CellStyle {
+  /** Background (fill) color, hex 'rrggbb'. */
+  bg?: string;
+  /** Font color, hex 'rrggbb'. */
+  color?: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  /** Font size in points. */
+  size?: number;
+  /** Font family name. */
+  font?: string;
+}
 
 export interface EditPayload {
   mode: EditMode;
   /** 1-based paragraph address for insert-after / rewrite-at / delete-at. */
   target?: number | null;
-  /** Calc: A1 anchor cell for write-cells / insert-rows / insert-cols. */
+  /** Calc: A1 anchor cell for write-cells / insert-rows / insert-cols /
+   * format-cells (single cell). */
   anchor?: string | null;
+  /** Calc format-cells: A1 range ("A1:B10"); wins over `anchor`. When
+   * neither is given, the current selection's ranges are restyled. */
+  range?: string | null;
+  /** Calc format-cells: the cell style to apply (values are untouched). */
+  style?: CellStyle;
   /** Calc: number of rows/columns to insert (default 1). */
   count?: number;
   /** Record the edit as a tracked change (default true). */

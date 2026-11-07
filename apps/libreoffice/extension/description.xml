@@ -4,7 +4,7 @@
   xmlns:dep="http://openoffice.org/extensions/description/2006"
   xmlns:xlink="http://www.w3.org/1999/xlink">
   <identifier value="org.libreofficeacp.bridge"/>
-  <version value="0.1.3"/>
+  <version value="0.1.4"/>
   <display-name>
     <name>ACP Assist Bridge</name>
   </display-name>

@@ -1,5 +1,5 @@
 /*
- * ACP Assist Bridge v0.6.0 (apps/onlyoffice/bridge-plugin).
+ * ACP Assist Bridge v0.7.0 (apps/onlyoffice/bridge-plugin).
  * Dumb transport, same contract as the LibreOffice .oxt bridge: the
  * plugin carries JSON between the editor and the companion; ALL
  * intelligence lives in the companion. The companion owns the port —
@@ -15,13 +15,14 @@
  *   ping, context, selection, insert, insertTop, insertAfter,
  *   rewriteAt, deleteAt, rewriteSelection, insertTable, insertImageAt,
  *   addComment, pageBreak, undo, journal
- *   cell (spreadsheet): writeCells, insertRows, insertCols
+ *   cell (spreadsheet): writeCells, insertRows, insertCols, formatCells
  *   slide (presentation): rewriteSlide, insertSlideAfter
  *
  * v0.3: all three editors are readable/editable (Writer since v0.1).
  * undo now reports {undone:false} honestly — asc_Undo via
  * executeCommand is a silent no-op (AGENTS.md rule 19), so the
  * companion always shows the Ctrl+Z hint.
+
  */
 (function (window) {
     var DEFAULT_PORT = 8790;
@@ -77,9 +78,6 @@
             // with "editor '[object Object]'" (live-verified 2026-11-03).
             var settled = false;
             var timer = setTimeout(function () {
-                if (!settled) { settled = true; reject(new Error("callCommand timeout (30s)")); }
-            }, 30000);
-            window.Asc.plugin.callCommand(fn, false, false, function (v) {
                 if (!settled) { settled = true; clearTimeout(timer); resolve(v); }
             });
         });
@@ -538,6 +536,32 @@
             return (lines || []).map(lineObj);
         }
 
+        /* hex 'rrggbb' -> [r,g,b] or null (top-level twin of the one inside
+         * SET_SHAPE_PARAS_SRC, which is a serialized string). */
+        function hexRgb(h) {
+            if (!/^[0-9a-fA-F]{6}$/.test(String(h))) return null;
+            return [parseInt(String(h).slice(0, 2), 16),
+                    parseInt(String(h).slice(2, 4), 16),
+                    parseInt(String(h).slice(4, 6), 16)];
+        }
+
+        /* Companion-side CellStyle -> compact wire for the callCommand
+         * source: {bg:[r,g,b]|null, c:[r,g,b]|null, b,i,u, s, f}. */
+        function styleWire(style) {
+            var st = style || {};
+            return {
+                bg: st.bg ? hexRgb(st.bg) : null,
+                c: st.color ? hexRgb(st.color) : null,
+                b: !!st.bold,
+                i: !!st.italic,
+                u: !!st.underline,
+                // SetFontSize takes HALF-POINTS (hps); the companion's
+                // size= is in points (rule 48 — same x2 as slide runs).
+                s: st.size ? Math.round(Number(st.size) * 2) : null,
+                f: st.font ? String(st.font) : null
+            };
+        }
+
         /** Slide-index args resolver: null index = the current slide. */
         var SLIDE_BY_INDEX_SRC =
             "function slideByIndex(pres, idx) {" +
@@ -852,6 +876,44 @@
         insertCols: function (args) {
             requireEditor("cell", "insertCols");
             return insertRowCol(args, "col");
+        },
+
+        /* formatCells {anchor?, range?, style}: restyle cells WITHOUT
+         * touching their values. `range` ("A1:B10") wins over `anchor`
+         * ("B2"); neither = the current selection. ONE callCommand =
+         * one undo step. Style attrs: bg/color hex, bold/italic/underline
+         * flags, size (pt), font (family) — set-only. */
+        formatCells: function (args) {
+            requireEditor("cell", "formatCells");
+            var rangeA1 = args.range || null;
+            var anchorA1 = args.anchor || null;
+            if (rangeA1 && !/^[A-Za-z]{1,4}[1-9][0-9]{0,6}:[A-Za-z]{1,4}[1-9][0-9]{0,6}$/.test(String(rangeA1))) {
+                return Promise.reject(new Error("bad A1 range '" + rangeA1 + "'"));
+            }
+            if (!rangeA1 && anchorA1 && !/^[A-Za-z]{1,4}[1-9][0-9]{0,6}$/.test(String(anchorA1))) {
+                return Promise.reject(new Error("bad A1 anchor '" + anchorA1 + "'"));
+            }
+            Asc.scope.rangeA1 = rangeA1 || anchorA1 || null;
+            Asc.scope.st = styleWire(args.style || {});
+            return cmd(new Function(
+                "var ws = Api.GetActiveSheet();" +
+                "var range = Asc.scope.rangeA1 ? ws.GetRange(Asc.scope.rangeA1) : ws.GetSelection();" +
+                "if (!range) throw new Error('formatCells needs a range, an anchor, or an active selection');" +
+                "var st = Asc.scope.st;" +
+                "if (st.bg) range.SetBackColor(Api.RGB(st.bg[0], st.bg[1], st.bg[2]));" +
+                "if (st.c) range.SetFontColor(Api.RGB(st.c[0], st.c[1], st.c[2]));" +
+                "if (st.b) range.SetBold(true);" +
+                "if (st.i) range.SetItalic(true);" +
+                "if (st.u) range.SetUnderline(true);" +
+                "if (st.s) range.SetFontSize(st.s);" +
+                "if (st.f) range.SetFontName(st.f);" +
+                "return { range: String(range.GetAddress()) };"
+            )).then(function (r) {
+                if (r.error) throw new Error(r.error);
+                record("formatCells", { range: r.range });
+                r.range = args.range || args.anchor || r.range;
+                return r;
+            });
         },
 
         /* ---- slide (presentation) ops (one callCommand each) ---- */

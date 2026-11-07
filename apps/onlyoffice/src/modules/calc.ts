@@ -14,31 +14,35 @@
  * switching op yet).
  */
 
-import type { PluginBridge, CellDocument, CalcGridBlock, WriteCellsArgs, InsertRowColArgs } from '../bridge/plugin-bridge.js';
-import { extractContentBlock, parseTsvBlock, actionTagNote, actionInstructions, createParseActionTag } from './markdown.js';
+import type { PluginBridge, CellDocument, CalcGridBlock, WriteCellsArgs, InsertRowColArgs, FormatCellsArgs, CellStyle } from '../bridge/plugin-bridge.js';
+import { extractContentBlock, parseTsvBlock, parseStyleSpec, actionTagNote, actionInstructions, createParseActionTag } from './markdown.js';
 
 /** A parsed calc action plus its TSV grid. */
 export interface CalcOutcome {
   module: 'calc';
-  action: 'none' | 'continue' | 'write-cells' | 'insert-rows' | 'insert-cols' | 'rewrite';
+  action: 'none' | 'continue' | 'write-cells' | 'insert-rows' | 'insert-cols' | 'rewrite' | 'format-cells';
   /** Paragraph/slide address — always null for Calc (A1 lives in `address`). */
   target: number | null;
-  /** A1 anchor from the tag (e.g. "B2"), when present. */
+  /** A1 anchor or range from the tag (e.g. "B2" or "A1:B10"), when present. */
   address: string | null;
   /** Parsed TSV rows for write-cells/rewrite; null otherwise. */
   grid: string[][] | null;
+  /** Parsed style spec for format-cells; null when the block has no
+   *  `{...}` style line (applyAction refuses then). */
+  style?: CellStyle | null;
   tagNote?: string | null;
 }
 
-/** Grammar: [ACTION: name] or [ACTION: name B2] (A1 anchor). The header
- * tolerates tag typos ("[AACTION:"), reported via tagNote; the layered
- * resolution lives in the core factory. */
+/** Grammar: [ACTION: name] or [ACTION: name B2] / [ACTION: name A1:B10]
+ * (A1 anchor or range). The header tolerates tag typos ("[AACTION:"),
+ * reported via tagNote; the layered resolution lives in the core factory. */
 const parseTag = createParseActionTag({
-  actions: 'write-cells|insert-rows|insert-cols|rewrite|none|continue',
-  targetPattern: '(?:\\s+([A-Za-z]{1,4}[1-9][0-9]{0,6}))?',
+  actions: 'write-cells|insert-rows|insert-cols|rewrite|format-cells|none|continue',
+  targetPattern: '(?:\\s+([A-Za-z]{1,4}[1-9][0-9]{0,6}(?::[A-Za-z]{1,4}[1-9][0-9]{0,6})?))?',
 });
 
 const A1_RE = /^[A-Za-z]{1,4}[1-9][0-9]{0,6}$/;
+const A1_RANGE_RE = /^[A-Za-z]{1,4}[1-9][0-9]{0,6}:[A-Za-z]{1,4}[1-9][0-9]{0,6}$/;
 
 /** Parse an agent reply against the Calc vocabulary. */
 export function parseCalcAction(reply: string): CalcOutcome {
@@ -47,13 +51,15 @@ export function parseCalcAction(reply: string): CalcOutcome {
   const address = tag.target ? tag.target.toUpperCase() : null;
   const contentActions: CalcOutcome['action'][] = ['write-cells', 'rewrite'];
   const needsContent = contentActions.includes(action);
-  const rawBlock = needsContent ? extractContentBlock(reply, 'calc') : null;
+  const needsStyle = action === 'format-cells';
+  const rawBlock = needsContent || needsStyle ? extractContentBlock(reply, 'calc') : null;
   return {
     module: 'calc',
     action,
     target: null,
     address,
     grid: needsContent && rawBlock !== null ? parseTsvBlock(rawBlock) : null,
+    style: needsStyle && rawBlock !== null ? parseStyleSpec(rawBlock) : null,
     tagNote: actionTagNote(tag.rawTag ?? undefined, `[ACTION: ${action}${address ? ` ${address}` : ''}]`),
   };
 }
@@ -132,12 +138,21 @@ export const calcAdapter = {
         '  anchor row, or [ACTION: insert-rows A5] above a given cell.',
         '- [ACTION: insert-cols] to insert one empty column LEFT of the',
         '  selection\'s anchor column, or [ACTION: insert-cols C1].',
+        '- [ACTION: format-cells] to restyle the selected cells, or',
+        '  [ACTION: format-cells B2] / [ACTION: format-cells A1:B10] for one',
+        '  cell / a range: include a ```calc block with ONE style line (see',
+        '  below). Cell VALUES are not touched.',
       ],
       contentFormat: [
         'Content format (```calc block): tab-separated cells, one sheet row per',
         'line. A cell starting with "=" is written as a formula (e.g.',
         '=SUM(B2:B10)). An empty cell clears the target cell. Use column',
         'letters in formulas exactly as shown in the document context.',
+        'For [ACTION: format-cells] the ```calc block instead carries ONE style',
+        'line: {bg=#fff2cc; color=#c00000; bold; italic; underline; size=12;',
+        'font=Arial} — omit the parts you do not need. bg = cell background,',
+        'color = font color (hex #rrggbb), size = font size in points,',
+        'font = font family. Only the listed attributes change.',
       ],
       undoMode: 'undo-only',
       rules: [
@@ -197,7 +212,7 @@ export const calcAdapter = {
       throw new Error('[ACTION: rewrite] but the spreadsheet has no selection.');
     }
     const anchor = outcome.address ?? doc.selection?.anchor ?? null;
-    if (anchor === null || !A1_RE.test(anchor)) {
+    if (anchor === null || !(A1_RE.test(anchor) || (outcome.action === 'format-cells' && A1_RANGE_RE.test(anchor)))) {
       throw new Error(
         `[ACTION: ${outcome.action}] needs an A1 anchor (e.g. ${outcome.action} B2) or an active cell selection.`,
       );
@@ -210,6 +225,33 @@ export const calcAdapter = {
       }
       await bridge.op('writeCells', { anchor, rows: outcome.grid } satisfies WriteCellsArgs);
       return `[ACTION: write-cells at ${anchor}]`;
+    }
+    if (outcome.action === 'format-cells') {
+      if (!outcome.style || Object.keys(outcome.style).length === 0) {
+        throw new Error(
+          '[ACTION: format-cells] needs a ```calc block with a style line, e.g. {bg=#fff2cc; bold}.',
+        );
+      }
+      // A range address ("A1:B10") goes in `range`; a bare cell in `anchor`.
+      // No address: the whole selected range (or its anchor cell) — same
+      // semantics as the LibreOffice bridge's selection fallback.
+      let selRange: string | null = null;
+      if (outcome.address === null && doc.selection) {
+        const r0 = doc.selection.ranges[0] ?? null;
+        selRange = r0 && r0.includes('!') ? r0.slice(r0.indexOf('!') + 1) : r0;
+      }
+      const range = outcome.address !== null && A1_RANGE_RE.test(outcome.address)
+        ? outcome.address
+        : selRange && selRange.includes(':') ? selRange : null;
+      if (outcome.address !== null && range === null && !A1_RE.test(outcome.address)) {
+        throw new Error(`[ACTION: format-cells] bad address '${outcome.address}' (want B2 or A1:B10).`);
+      }
+      await bridge.op('formatCells', {
+        anchor: range === null ? (outcome.address ?? anchor) : null,
+        range,
+        style: outcome.style,
+      } satisfies FormatCellsArgs);
+      return `[ACTION: format-cells ${outcome.address ?? range ?? anchor}]`;
     }
     // insert-rows / insert-cols
     const op = outcome.action === 'insert-rows' ? 'insertRows' : 'insertCols';

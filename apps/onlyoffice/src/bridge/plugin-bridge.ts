@@ -245,6 +245,37 @@ export interface InsertRowColResult {
   anchor: string;
 }
 
+/** Cell restyling for the formatCells op (hex colors without '#'). */
+export interface CellStyle {
+  /** Background (fill) color, hex 'rrggbb'. */
+  bg?: string;
+  /** Font color, hex 'rrggbb'. */
+  color?: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  /** Font size in points. */
+  size?: number;
+  /** Font family name. */
+  font?: string;
+}
+
+/** formatCells op: restyle cells without touching their values. One
+ * callCommand = one undo step. */
+export interface FormatCellsArgs {
+  /** Single A1 cell ("B2"); ignored when `range` is set. */
+  anchor?: string | null;
+  /** A1 range ("A1:B10"); wins over `anchor`. Neither = the current
+   * selection. */
+  range?: string | null;
+  style: CellStyle;
+}
+
+export interface FormatCellsResult {
+  /** The A1 range the plugin actually restyled (echoed back). */
+  range: string;
+}
+
 // --- slide (presentation) op payload types ------------------------------------
 
 /** Optional per-line run styling for slide text (v0.4). */

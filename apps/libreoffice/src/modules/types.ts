@@ -6,7 +6,7 @@
  */
 
 import type { ImageBlock } from './markdown.js';
-import type { BridgeClient, BridgeDocument, BlockParagraph, CalcInfo, SlidesSelectionShape } from '../bridge/client.js';
+import type { BridgeClient, BridgeDocument, BlockParagraph, CalcInfo, CellStyle, SlidesSelectionShape } from '../bridge/client.js';
 
 /** Action vocabulary (Writer tags first, then Calc, then Impress). */
 export type AgentAction =
@@ -27,6 +27,7 @@ export type AgentAction =
   | 'write-cells'
   | 'insert-rows'
   | 'insert-cols'
+  | 'format-cells'
   // Impress / Draw
   | 'rewrite-slide'
   | 'insert-after'
@@ -39,6 +40,9 @@ export interface ActionOutcome {
   block: BlockParagraph[] | null;
   /** Calc: parsed TSV rows; null for actions without content. */
   grid: string[][] | null;
+  /** Calc format-cells: parsed style spec; null when the block has no
+   *  `{...}` style line (applyAction refuses then). */
+  style?: CellStyle | null;
   /** Writer insert-table: parsed markdown-table rows; null otherwise. */
   table?: string[][] | null;
   /** Writer insert-image: parsed image block; null otherwise. */

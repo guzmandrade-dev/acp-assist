@@ -1064,3 +1064,36 @@ Bridge + companion (commits after 2026-11-04): `[ACTION: insert-table pN]`,
 48. **AS_CHARACTER graphics live INSIDE their paragraph** — the main-text
     enumeration never yields them as top-level elements; the read side is
     the `images` count on /document (getGraphicObjects), not a kind entry.
+
+## Calc cell formatting — `format-cells` (built 2026-11-07, oxt 0.1.4)
+
+`[ACTION: format-cells]` / `[ACTION: format-cells B2]` /
+`[ACTION: format-cells A1:B10]` with a ```calc block carrying ONE style
+line `{bg=#fff2cc; color=#c00000; bold; italic; underline; size=14;
+font=Arial}` (first `{...}` line wins; unknown attrs ignored; invalid
+hex/size dropped — same tolerant shape as the impress style prefix).
+Set-only semantics: values are never touched. New bridge mode
+`format-cells` in `CALC_MODES`; rules:
+
+49. **Range-level `setPropertyValue` on a SheetCellRange sets both cell
+    and character properties** — `CellBackColor` (note: on TABLE cells
+    the property is `BackColor`, rule 47 — Calc cells use
+    `CellBackColor`), `CharColor`, `CharWeight` (150.0 = BOLD),
+    `CharPosture` (ITALIC), `CharUnderline` (1 = SINGLE), `CharHeight`
+    (pt), `CharFontName`. One property set per attribute on the whole
+    range, inside the existing single undo context = ONE undo step
+    (clean under RecordChanges). Covered by new bridge_e2e.py checks
+    (range restyle + selection restyle + undo revert + bad color/unknown
+    attr refusals) — NOT yet live-run this session; run
+    `test-bridge/bridge_e2e.py` against a live LO 26.8 to confirm.
+50. **Target resolution**: explicit `range` ("A1:B10", ends swapped if
+    reversed), else `anchor` (single cell), else ALL selected ranges
+    (`_calc_sel_ranges`). Capped at 100 000 cells total. The style is
+    validated bridge-side (`_validate_cell_style`): known keys only,
+    `#?rrggbb` colors, size 1–400 pt, font ≤ 60 chars — user-facing
+    errors, nothing written on failure.
+51. **Companion dialect** (`src/modules/calc.ts` + `markdown.ts`
+    `parseStyleSpec`): the tag grammar's targetPattern now accepts an
+    optional `:A1` second end. The read side does NOT report formatting
+    (v1: write-only surface; agents restyle blindly over values they can
+    see).

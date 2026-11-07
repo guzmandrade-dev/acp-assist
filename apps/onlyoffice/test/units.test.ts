@@ -7,7 +7,7 @@ import http from 'node:http';
 import type { Server } from 'node:http';
 import { PluginBridge } from '../src/bridge/plugin-bridge.js';
 import { parseAction } from '../src/server.js';
-import { parseContentBlock, extractContentBlock, parseTableBlock } from '../src/modules/markdown.js';
+import { parseContentBlock, extractContentBlock, parseStyleSpec, parseTableBlock } from '../src/modules/markdown.js';
 import { writerAdapter } from '../src/modules/writer.js';
 import { calcAdapter, parseCalcAction } from '../src/modules/calc.js';
 import { impressAdapter, parseImpressAction } from '../src/modules/impress.js';
@@ -448,6 +448,244 @@ describe('calc adapter', () => {
     ).rejects.toThrow(/no selection/);
     expect(calls).toEqual([]);
   });
+
+  it('parses format-cells with a range address and a style block', () => {
+    const outcome = parseCalcAction('```calc\n{bg=#FFF2CC; bold; size=14}\n```\n[ACTION: format-cells A1:B3]');
+    expect(outcome.action).toBe('format-cells');
+    expect(outcome.address).toBe('A1:B3');
+    expect(outcome.style).toEqual({ bg: 'fff2cc', bold: true, size: 14 });
+  });
+
+  it('maps format-cells to the formatCells op (range vs anchor vs selection)', async () => {
+    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
+    const bridge = recordingBridge(calls);
+
+    // explicit range
+    await calcAdapter.applyAction(
+      bridge, doc,
+      parseCalcAction('```calc\n{color=#c00000; underline}\n```\n[ACTION: format-cells B2:D4]'),
+    );
+    expect(calls[0]).toEqual({
+      op: 'formatCells',
+      args: { anchor: null, range: 'B2:D4', style: { color: 'c00000', underline: true } },
+    });
+
+    // bare cell address
+    await calcAdapter.applyAction(
+      bridge, doc,
+      parseCalcAction('```calc\n{bg=ff0000; font=Arial; italic}\n```\n[ACTION: format-cells C5]'),
+    );
+    expect(calls[1]).toEqual({
+      op: 'formatCells',
+      args: { anchor: 'C5', range: null, style: { bg: 'ff0000', font: 'Arial', italic: true } },
+    });
+
+    // no address: the whole selected range (doc.selection is B2:C3)
+    await calcAdapter.applyAction(
+      bridge, doc,
+      parseCalcAction('```calc\n{bold}\n```\n[ACTION: format-cells]'),
+    );
+    expect(calls[2]).toEqual({
+      op: 'formatCells',
+      args: { anchor: null, range: 'B2:C3', style: { bold: true } },
+    });
+  });
+
+  it('refuses format-cells without a style line or with a bad address', async () => {
+    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
+    const bridge = recordingBridge(calls);
+
+    const noStyle = parseCalcAction('```calc\njust text\n```\n[ACTION: format-cells A1]');
+    expect(noStyle.style).toBeNull();
+    await expect(calcAdapter.applyAction(bridge, doc, noStyle)).rejects.toThrow(/style line/);
+
+    // a malformed address does not parse as format-cells at all (the
+    // grammar only accepts B2 / A1:B10) — it falls back to 'none'
+    const bad = parseCalcAction('```calc\n{bold}\n```\n[ACTION: format-cells A1:B2:C3]');
+    expect(bad.action).toBe('none');
+    await expect(calcAdapter.applyAction(bridge, doc, bad)).rejects.toThrow(/not a Calc document action/);
+    expect(calls).toEqual([]);
+  });
+});
+
+describe('parseStyleSpec', () => {
+  it('parses all attributes and drops unknown/invalid ones', () => {
+    expect(parseStyleSpec('{bg=#ff6f3d; color=00ff00; bold; italic; underline; size=28.5; font=Georgia; bogus}')).toEqual({
+      bg: 'ff6f3d',
+      color: '00ff00',
+      bold: true,
+      italic: true,
+      underline: true,
+      size: 29,
+      font: 'Georgia',
+    });
+  });
+
+  it('takes the first style line and ignores action tags', () => {
+    expect(parseStyleSpec('noise\n[ACTION: none]\n{bold}\n{color=#123456}')).toEqual({ bold: true });
+  });
+
+  it('returns null without a style line or with only invalid values', () => {
+    expect(parseStyleSpec('plain text\nmore')).toBeNull();
+    expect(parseStyleSpec('{bg=red; size=9999}')).toBeNull();
+  });
+});
+
+/** Impress action grammar + the impress adapter's op mapping. */
+describe('impress adapter', () => {
+  const doc = {
+    editor: 'slide' as const,
+    count: 2,
+    current: 0,
+    slides: [
+      { index: 0, current: true, title: 'First', bodyPreview: 'one', bodyParas: 2, hasTitle: true, hasBody: true, images: 0 },
+      { index: 1, current: false, title: null, bodyPreview: null, bodyParas: 0, hasTitle: false, hasBody: true, images: 0 },
+    ],
+    selectionText: null,
+  };
+
+  function recordingBridge(calls: Array<{ op: string; args: Record<string, unknown> }>) {
+    return {
+      async op<T>(name: string, args: Record<string, unknown> = {}): Promise<T> {
+        calls.push({ op: name, args });
+        return {} as T;
+      },
+    };
+  }
+
+  it('parses rewrite-slide with its content block (title first, then body)', () => {
+    const reply = [
+      'New outline.',
+      '```impress',
+      'New Title',
+      'first point',
+      'second point',
+      '```',
+      '[ACTION: rewrite-slide s1]',
+    ].join('\n');
+    const outcome = parseImpressAction(reply);
+    expect(outcome.module).toBe('impress');
+    expect(outcome.action).toBe('rewrite-slide');
+    expect(outcome.target).toBe(1);
+    expect(outcome.block).toEqual(['New Title', 'first point', 'second point']);
+  });
+
+  it('maps rewrite-slide and insert-after to the matching plugin ops', async () => {
+    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
+    const bridge = recordingBridge(calls);
+
+    await impressAdapter.applyAction(bridge, doc, parseImpressAction('```impress\nT\nb\n```\n[ACTION: rewrite-slide s1]'));
+    await impressAdapter.applyAction(bridge, doc, parseImpressAction('```impress\nT2\nb2\n```\n[ACTION: insert-after s0]'));
+
+    expect(calls.map((c) => c.op)).toEqual(['rewriteSlide', 'insertSlideAfter']);
+    expect(calls[0]?.args).toEqual({ index: 0, title: { text: 'T' }, body: [{ text: 'b' }] });
+    // insert-after s0 = the very start: the new slide lands at index 0.
+    expect(calls[1]?.args).toEqual({ index: 0, title: { text: 'T2' }, body: [{ text: 'b2' }] });
+  });
+
+  it('parses the per-line style prefix into run styles', async () => {
+    const reply = [
+      '```impress',
+      '{bold; size=40; color=#ff6f3d; font=Georgia}Quarterly Review',
+      '{italic}First point',
+      'Plain point',
+      '```',
+      '[ACTION: rewrite-slide s1]',
+    ].join('\n');
+    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
+    await impressAdapter.applyAction(recordingBridge(calls), doc, parseImpressAction(reply));
+    expect(calls[0]?.args).toEqual({
+      index: 0,
+      title: { text: 'Quarterly Review', style: { bold: true, size: 40, color: 'ff6f3d', font: 'Georgia' } },
+      body: [
+        { text: 'First point', style: { italic: true } },
+        { text: 'Plain point' },
+      ],
+    });
+  });
+
+  it('parses insert-image blocks (src, at, size) and maps to insertImage', async () => {
+    const reply = [
+      '```impress',
+      'image: https://example.com/logo.png',
+      'at: 10%, 50%',
+      'size: 30% x 30%',
+      '```',
+      '[ACTION: insert-image s2]',
+    ].join('\n');
+    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
+    await impressAdapter.applyAction(recordingBridge(calls), doc, parseImpressAction(reply));
+    expect(calls[0]?.op).toBe('insertImage');
+    expect(calls[0]?.args).toEqual({
+      index: 1,
+      src: 'https://example.com/logo.png',
+      x: Math.round(12192000 * 0.1),
+      y: Math.round(6858000 * 0.5),
+      w: Math.round(12192000 * 0.3),
+      h: Math.round(6858000 * 0.3),
+    });
+  });
+
+  it('defaults insert-image placement and targets the current slide without sN', async () => {
+    const reply = '```impress\nimage: data:image/png;base64,AAA\n```\n[ACTION: insert-image]';
+    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
+    await impressAdapter.applyAction(recordingBridge(calls), doc, parseImpressAction(reply));
+    expect(calls[0]?.op).toBe('insertImage');
+    expect(calls[0]?.args).toEqual({ index: null, src: 'data:image/png;base64,AAA' });
+  });
+
+  it('rejects insert-image with a non-http/data source', async () => {
+    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
+    await expect(
+      impressAdapter.applyAction(
+        recordingBridge(calls),
+        doc,
+        parseImpressAction('```impress\nimage: C:\\Users\\me\\pic.png\n```\n[ACTION: insert-image]'),
+      ),
+    ).rejects.toThrow(/http\(s\):\/\//);
+    expect(calls).toEqual([]);
+  });
+
+  it('parses set-background lines and maps to setBackground', async () => {
+    const cases: Array<[string, Record<string, unknown>]> = [
+      ['background: solid #1a2b4c', { index: 0, kind: 'solid', color: '1a2b4c' }],
+      ['background: gradient #ffffff-#ff6f3d', { index: 0, kind: 'gradient', color: 'ffffff', color2: 'ff6f3d' }],
+      ['background: image https://example.com/bg.png', { index: 0, kind: 'image', src: 'https://example.com/bg.png' }],
+    ];
+    for (const [line, expected] of cases) {
+      const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
+      await impressAdapter.applyAction(
+        recordingBridge(calls),
+        doc,
+        parseImpressAction(`\`\`\`impress\n${line}\n\`\`\`\n[ACTION: set-background s1]`),
+      );
+      expect(calls[0]?.op).toBe('setBackground');
+      expect(calls[0]?.args).toEqual(expected);
+    }
+  });
+
+  it('maps add-notes and delete-slide', async () => {
+    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
+    const bridge = recordingBridge(calls);
+    await impressAdapter.applyAction(bridge, doc, parseImpressAction('```impress\nRemember the demo.\n```\n[ACTION: add-notes s1]'));
+    await impressAdapter.applyAction(bridge, doc, parseImpressAction('[ACTION: delete-slide s2]'));
+    expect(calls[0]?.args).toEqual({ index: 0, text: 'Remember the demo.' });
+    expect(calls[1]?.args).toEqual({ index: 1 });
+  });
+
+  it('throws before writing when content or the slide address is invalid', async () => {
+    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
+    const bridge = recordingBridge(calls);
+
+    await expect(
+      impressAdapter.applyAction(bridge, doc, parseImpressAction('[ACTION: rewrite-slide s1]')),
+    ).rejects.toThrow(/content block/);
+    await expect(
+      impressAdapter.applyAction(bridge, doc, parseImpressAction('```impress\nT\n```\n[ACTION: rewrite-slide s9]')),
+    ).rejects.toThrow(/does not exist/);
+    expect(calls).toEqual([]);
+  });
+});
 
 /** readPluginVersion: reads the version out of a .plugin zip's config.json. */
 describe('readPluginVersion', () => {
