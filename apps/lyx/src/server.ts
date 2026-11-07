@@ -30,7 +30,7 @@ import {
   findMarkupProblems,
   type DocumentContext,
 } from './lyx/context.js';
-import { discoverLyxEnvironment } from './lyxserver/pipe-config.js';
+import { NEWFILE_PLACEHOLDER_RE, discoverLyxEnvironment } from './lyxserver/pipe-config.js';
 import { TIMINGS } from './timings.js';
 import { parseAction, describeAction, type ActionOutcome } from './lyx/actions.js';
 import {
@@ -49,6 +49,7 @@ import {
   createWrap,
   isVersionControlled,
   listKnownDocuments as coreListKnownDocuments,
+  loadHistory,
   pollUntil,
   type AppliedResult,
   type CompanionBackend,
@@ -132,12 +133,27 @@ export interface LyxState {
    */
   saveConsent: Set<string>;
   /**
+   * Conversation key a save (`buffer-write`) was just issued for. When
+   * LyX's reported filename changes across that save (Save As on an
+   * unsaved buffer), the conversation migrates from this key to the new
+   * path — see refreshActiveDocument / migrateIfSaveAs.
+   */
+  saveAsCandidate: string | null;
+  /**
    * Restores the user's pre-run clipboard text at the end of a
    * message run; a no-op until readStep(1) saves the text (the choreography
    * clobbers the clipboard on every edit).
    */
   restoreClipboard: () => Promise<void>;
 }
+
+/**
+ * How fresh a file's mtime must be to count as "just saved" when detecting
+ * a save-as (the panel may poll minutes after the user completed the
+ * dialog, so this is generous; it only ever applies to placeholder source
+ * keys, so switching to an old document never migrates).
+ */
+const SAVE_AS_MTIME_WINDOW_MS = 10 * 60_000;
 
 /** One step's data: the context block + selection read for that step. */
 interface LyxStepData {
@@ -254,7 +270,14 @@ function createLyxBackend(
 
   /** Re-read the active document path from LyX and track it. */
   async function refreshActiveDocument(session: CompanionSession<LyxState>): Promise<string | null> {
-    const path = await session.state.lyx.getFilename();
+    const prevKey = session.state.documentPath ?? UNSAVED_KEY;
+    const raw = await session.state.lyx.getFilename();
+    // LyX's empty reply (and the write-only fallback's unresolvable title)
+    // mean an unsaved buffer — normalize to null so the conversation key
+    // is the UNSAVED_KEY pseudo-key, never the empty string.
+    const path = raw.trim() ? raw : null;
+    const newKey = path ?? UNSAVED_KEY;
+    if (newKey !== prevKey) await migrateIfSaveAs(session, prevKey, newKey);
     session.state.documentPath = path;
     if (path) {
       session.knownDocuments.add(path);
@@ -263,6 +286,49 @@ function createLyxBackend(
       await session.ensureConversation( UNSAVED_KEY);
     }
     return path;
+  }
+
+  /**
+   * A save-as renames LyX's active document: an unsaved placeholder key
+   * (the `(unsaved)` pseudo-key, or LyX's `newfileN.lyx` untitled-buffer
+   * name) becomes the real saved path. Move the conversation to the new
+   * key so the chat follows the file. Only placeholder source keys
+   * qualify (a plain tab switch never migrates), the rename must come
+   * from a save of that buffer (we issued buffer-write for it, or the new
+   * path was created on disk moments ago), and the target's own history
+   * is never clobbered.
+   */
+  async function migrateIfSaveAs(
+    session: CompanionSession<LyxState>,
+    fromKey: string,
+    toKey: string,
+  ): Promise<void> {
+    if (fromKey === toKey) return;
+    if (fromKey !== UNSAVED_KEY && !NEWFILE_PLACEHOLDER_RE.test(path.basename(fromKey))) return;
+    const saveIssued = session.state.saveAsCandidate === fromKey;
+    const justSaved = await fileModifiedRecently(toKey);
+    if (!saveIssued && !justSaved) return;
+    const fromTurns =
+      session.conversations.get(fromKey) ??
+      (options.historyDir ? await loadHistory(options.historyDir, fromKey) : []);
+    if (fromTurns.length === 0) return;
+    const toTurns =
+      session.conversations.get(toKey) ??
+      (options.historyDir ? await loadHistory(options.historyDir, toKey) : []);
+    if (toTurns.length > 0) return;
+    await session.migrateConversation(fromKey, toKey);
+    session.state.saveAsCandidate = null;
+  }
+
+  /** True when `file` exists and was written very recently (a just-completed save). */
+  async function fileModifiedRecently(file: string): Promise<boolean> {
+    if (file === UNSAVED_KEY) return false;
+    try {
+      const st = await fs.stat(file);
+      return Date.now() - st.mtimeMs < SAVE_AS_MTIME_WINDOW_MS;
+    } catch {
+      return false;
+    }
   }
 
   function conversationKey(session: CompanionSession<LyxState>): string {
@@ -298,8 +364,20 @@ function createLyxBackend(
    * (same-tick writes) to detect rapid successive saves via mtime alone.
    */
   async function saveDocument(session: CompanionSession<LyxState>): Promise<void> {
+    // buffer-write on an unsaved buffer opens Save As; if the user
+    // completes it while the save runs, LyX's filename changes and the
+    // conversation must follow the rename (see migrateIfSaveAs).
+    session.state.saveAsCandidate = session.state.documentPath ?? UNSAVED_KEY;
     session.state.docSnapshot = null;
     await session.state.lyx.save();
+    try {
+      // Pick up a save-as that completed during the save. In write-only
+      // mode this is a cheap title read; in pipe mode the open Save As
+      // modal blocks the pipe, so this throws and later requests re-detect.
+      await refreshActiveDocument(session);
+    } catch {
+      /* pipe busy (modal still open) — later requests retry the detection */
+    }
   }
 
   /**
@@ -695,6 +773,7 @@ function createLyxBackend(
         documentPath: null,
         docSnapshot: null,
         saveConsent: new Set(),
+        saveAsCandidate: null,
         restoreClipboard: async () => {},
       };
     },

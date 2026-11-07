@@ -760,6 +760,42 @@ dynamically:
   ending `{"done": true}`); agent updates have a 240s timeout so a stuck
   agent surfaces an error instead of hanging silently.
 
+## Save-as conversation migration (2026-11-07)
+
+- **Live-reported bug:** from a New File, sending a message prompted LyX's
+  Save As; after saving as e.g. `CV ACP Assist.lyx` the conversation stayed
+  keyed under the placeholder `newfile2.lyx` (persisted history confirmed:
+  the whole run landed in the `newfile2.lyx`-keyed history file).
+- **Placeholder titles are not paths:** LyX titles an unsaved buffer
+  `newfileN.lyx` with NO directory hint (`NEWFILE_PLACEHOLDER_RE` in
+  pipe-config.ts). The write-only `getFilename` fallback now returns ''
+  for such titles instead of matching the name against known documents /
+  the session file — previously an unsaved buffer could alias a real
+  same-named file on disk (the user's `tesis-unam/newfile2.lyx` paper),
+  which both keyed the chat under the wrong document AND made the
+  message flow's `buffer-write` open Save As. A `newfileN.lyx` title WITH
+  a dir hint is a genuinely saved file and still resolves. Trade-off: a
+  saved file named `newfileN.lyx` sitting in LyX's own CWD (no hint) is
+  reported as unsaved.
+- **Empty filename replies are normalized:** `server-get-filename` (and
+  the fallback) reply '' for an unsaved buffer; `refreshActiveDocument`
+  now stores `null`, so the conversation key is the `(unsaved)`
+  pseudo-key, never the empty string.
+- **Migration on save-as:** when the active path changes, the backend
+  moves the conversation to the new key ONLY when the old key is a
+  placeholder (`(unsaved)` or a `newfileN.lyx` basename), the old key has
+  turns, the new key has none (an existing document's history is never
+  clobbered), and the rename came from a save of that buffer — either we
+  just issued `buffer-write` for it (`saveAsCandidate`, set in
+  `saveDocument`, which also re-reads the filename right after saving)
+  or the new path was written to disk within the last 10 min (the user
+  completed Save As / Ctrl+S manually; the window is generous because
+  the panel may poll late). The move covers the in-memory turns, the
+  unseen-history handoff counter, and the persisted history file
+  (`ConversationStore.migrate` in core; the source file is deleted and a
+  pending debounced write for it is cancelled). Plain tab switches
+  between saved documents never migrate. Tests: `test/save-as-history.test.ts`.
+
 ## UI scroll fix (2026-10-10)
 
 - **Scroll-into-empty-space bug (live-reported):** the chat `<main>` is a
