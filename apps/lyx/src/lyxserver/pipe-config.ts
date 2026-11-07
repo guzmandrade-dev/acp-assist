@@ -71,6 +71,16 @@ export interface ParsedWindowTitle {
 }
 
 /**
+ * LyX titles an unsaved (untitled) buffer `newfileN.lyx` with NO directory
+ * hint. That name is a PLACEHOLDER, not a real path — it must never be
+ * resolved against existing files (known documents, the session file),
+ * or an unsaved buffer would alias a same-named document on disk. A saved
+ * document carries the directory hint unless it sits in LyX's own working
+ * directory (rare; documented in AGENTS.md).
+ */
+export const NEWFILE_PLACEHOLDER_RE = /^newfile\d*\.lyx$/i;
+
+/**
  * Parse a LyX main-window title. Live format (Windows, LyX 2.5):
  *   "sample.lyx (~\Documents) - LyX"
  *   "doc.lyx - LyX"            (no directory hint)

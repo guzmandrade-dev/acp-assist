@@ -30,6 +30,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { TIMINGS } from '../timings.js';
 import {
+  NEWFILE_PLACEHOLDER_RE,
   discoverLyxEnvironment,
   parseSessionFilePaths,
   parseWindowTitle,
@@ -542,13 +543,22 @@ export class LyxServerClient extends EventEmitter {
    * ("doc.lyx (~\Documents) - LyX"). Resolve it via the hint, then against
    * known documents (app history + LyX's session file). Returns '' when
    * unresolvable — callers treat that like LyX's empty reply for an
-   * unsaved buffer.
+   * unsaved buffer. Untitled-buffer titles ("newfileN.lyx" without a dir
+   * hint) are placeholders and also return '' — they must never resolve
+   * to a same-named file on disk.
    */
   private async resolveFilenameFallback(): Promise<string> {
     const f = this.requireFallbacks();
     const title = await f.readLyxWindowTitle();
     const parsed = title ? parseWindowTitle(title) : null;
     if (!parsed || !parsed.fileName) return '';
+    // An unsaved buffer is titled "newfileN.lyx" with NO directory hint:
+    // that is a placeholder, not a real path — never match it against
+    // known documents / the session file (a saved document shows the hint
+    // unless it sits in LyX's CWD; see AGENTS.md). Without this, an unsaved
+    // new buffer aliases a same-named file on disk and the conversation
+    // would be keyed (and saved) under that other document's path.
+    if (!parsed.dirHint && NEWFILE_PLACEHOLDER_RE.test(parsed.fileName)) return '';
     const home = process.env.USERPROFILE ?? process.env.HOME ?? '';
 
     // 1. Directory hint from the title ("~\Documents" -> <home>\Documents).

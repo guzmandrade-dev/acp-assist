@@ -144,6 +144,40 @@ describe('write-only fallback mode', () => {
     expect(await client.getFilename()).toBe('');
   });
 
+  it('never resolves an unsaved-buffer placeholder title (newfileN.lyx, no dir hint) to a real file', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lyx-title-test-'));
+    // A same-named file exists on disk and is a resolution candidate — the
+    // placeholder must NOT alias it (that keyed an unsaved buffer's chat
+    // under another document's path and triggered Save As on send).
+    const doc = path.join(tmp, 'newfile3.lyx');
+    fs.writeFileSync(doc, '#LyX 2.5 created this file.');
+    try {
+      const { client } = await startDeaf({
+        title: 'newfile3.lyx - LyX',
+        candidates: [doc],
+      });
+      expect(await client.getFilename()).toBe('');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('resolves a newfileN title WITH a directory hint (a genuinely saved file)', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lyx-title-test-'));
+    const doc = path.join(tmp, 'newfile3.lyx');
+    fs.writeFileSync(doc, '#LyX 2.5 created this file.');
+    try {
+      const { client } = await startDeaf({
+        title: `newfile3.lyx (${tmp}) - LyX`,
+        candidates: [],
+      });
+      const expected = process.platform === 'win32' ? doc.replace(/\\/g, '/') : doc;
+      expect(await client.getFilename()).toBe(expected);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it('save and undo tolerate the missing replies', async () => {
     const { client } = await startDeaf();
     await client.save(); // buffer-write: blind, must not throw
