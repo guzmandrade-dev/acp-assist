@@ -15,6 +15,7 @@
  */
 
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import express from 'express';
 import {
   BridgeClient,
@@ -25,6 +26,8 @@ import {
 import {
   findUnopkg,
   installBridge,
+  officeHasBundledPython,
+  resolveOfficeTarget,
   sofficeRunning,
   type InstallResult,
 } from './bridge/install.js';
@@ -38,6 +41,7 @@ import { extractContentBlock, parseContentBlock, parseTableBlock, parseImageBloc
 import {
   actionTagNote,
   buildAttachmentBlock,
+  createAgentSettings,
   createAttachmentExtractor,
   createLogError,
   createParseActionTag,
@@ -90,10 +94,10 @@ export interface ServerOptions {
   oxtPath?: string;
   /** Test hook: override the unopkg probe (null = not found). */
   unopkgPath?: string | null;
-  /** Test hook: override the running-LibreOffice probe. */
+  /** Test hook: override the running-office probe. */
   sofficeProbe?: () => Promise<boolean>;
   /** Test hook: replace the real unopkg run. */
-  installBridge?: (unopkgPath: string, oxtPath: string) => Promise<InstallResult>;
+  installBridge?: (unopkgPath: string, oxtPath: string, officePath?: string | null) => Promise<InstallResult>;
   /**
    * Test hook: how a stale bridge is recovered (default: pickBridge).
    * See createHealingBridge.
@@ -471,6 +475,14 @@ function registerInstallRoutes(
     logError: createLogError(options.logDir),
     mapStatus: (err) => (err instanceof BridgeError ? 503 : 500),
   });
+  // The persisted agent settings carry the optional `officePath` (the
+  // install target of the bridge .oxt — LibreOffice by default, but any
+  // UNO-based suite such as Collabora Office or Apache OpenOffice).
+  const agentSettings = createAgentSettings(options.settingsDir);
+  const configuredOfficePath = async (): Promise<string | undefined> => {
+    const s = await agentSettings.read();
+    return s.officePath ? s.officePath : undefined;
+  };
 
   app.get(
     '/api/bridge/install/preflight',
@@ -490,14 +502,30 @@ function registerInstallRoutes(
         res.json({ canInstall: false, reason: `extension package not found at ${options.oxtPath}` });
         return;
       }
-      const unopkg = options.unopkgPath !== undefined ? options.unopkgPath : findUnopkg();
+      const officePath = await configuredOfficePath();
+      const target = officePath ? resolveOfficeTarget(officePath) : null;
+      const unopkg = options.unopkgPath !== undefined ? options.unopkgPath : findUnopkg(officePath);
       if (!unopkg) {
-        res.json({ canInstall: false, reason: 'unopkg not found — is LibreOffice installed?' });
+        res.json({
+          canInstall: false,
+          reason: officePath
+            ? `unopkg not found under configured officePath "${officePath}" — is the path correct?`
+            : 'unopkg not found — is LibreOffice installed?',
+        });
         return;
       }
       res.json({
         canInstall: true,
         unopkg,
+        officePath: officePath ?? null,
+        vendor: target?.vendor ?? 'libreoffice',
+        warning: officePath && !target
+          ? `officePath "${officePath}" has no program/${path.basename(unopkg)} — falling back to auto-detected unopkg`
+          : target && !officeHasBundledPython(target)
+            ? 'this office bundles no Python (no program/python[.exe]) — install its Python-UNO bridge '
+              + '(Apache OpenOffice: Setup > Modify > Optional Components > Python-UNO bridge; Linux: distro pyuno package), '
+              + 'or point officePath at LibreOffice/Collabora Office, which bundle Python'
+            : undefined,
         sofficeRunning: options.sofficeProbe ? await options.sofficeProbe() : await sofficeRunning(),
       });
     }),
@@ -507,15 +535,16 @@ function registerInstallRoutes(
     '/api/bridge/install',
     wrap(async (_req, res) => {
       if (!options.oxtPath) throw new Error('Extension install is not configured (missing oxt path).');
-      const unopkg = options.unopkgPath !== undefined ? options.unopkgPath : findUnopkg();
-      if (!unopkg) throw new Error('unopkg not found — install LibreOffice first.');
+      const officePath = await configuredOfficePath();
+      const unopkg = options.unopkgPath !== undefined ? options.unopkgPath : findUnopkg(officePath);
+      if (!unopkg) throw new Error('unopkg not found — install the office suite first (or set officePath).');
       const running = options.sofficeProbe ? await options.sofficeProbe() : await sofficeRunning();
       if (running) {
-        res.status(409).json({ error: 'LibreOffice is running. Close it first, then retry.' });
+        res.status(409).json({ error: 'The office application is running. Close it first, then retry.' });
         return;
       }
       const run = options.installBridge ?? installBridge;
-      const result = await run(unopkg, options.oxtPath);
+      const result = await run(unopkg, options.oxtPath, officePath);
       if (!result.ok) {
         res.status(500).json({ error: result.message, steps: result.steps });
         return;

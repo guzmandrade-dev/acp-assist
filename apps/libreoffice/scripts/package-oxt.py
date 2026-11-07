@@ -10,6 +10,7 @@ Usage: python scripts/package-oxt.py [--src extension] [--out acp-bridge.oxt]
 
 import argparse
 import os
+import re
 import sys
 import zipfile
 
@@ -40,6 +41,15 @@ def main() -> int:
         print(f"error: missing files in {args.src}: {', '.join(missing)}",
               file=sys.stderr)
         return 1
+
+    # Echo identifier + version so the packaged build is identifiable
+    # (Extensions dialog / `unopkg list` show the version — bump
+    # description.xml whenever extension/ changes; AGENTS.md rule 50).
+    desc = open(os.path.join(args.src, "description.xml"), encoding="utf-8").read()
+    ident = re.search(r'<identifier value="([^"]+)"', desc)
+    ver = re.search(r'<version value="([^"]+)"', desc)
+    print(f"bridge: {ident.group(1) if ident else '?'} "
+          f"version {ver.group(1) if ver else '?'}")
 
     if os.path.exists(args.out):
         os.remove(args.out)

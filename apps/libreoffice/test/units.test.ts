@@ -920,3 +920,152 @@ describe('impressAdapter applyAction', () => {
     expect(edits.length).toBe(before);
   });
 });
+
+describe('bridge install: configurable office target (officePath)', () => {
+  const unopkgName = process.platform === 'win32' ? 'unopkg.exe' : 'unopkg';
+
+  async function makeFakeOffice(vendorLine: string, withPython = true) {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'lo-acp-office-'));
+    const root = path.join(tmp, 'Office');
+    const program = path.join(root, 'program');
+    await fs.mkdir(program, { recursive: true });
+    await fs.writeFile(path.join(program, unopkgName), 'fake unopkg');
+    await fs.writeFile(path.join(program, 'versionrc'), `[Product]\n${vendorLine}\n`);
+    if (withPython) {
+      await fs.writeFile(path.join(program, process.platform === 'win32' ? 'python.exe' : 'python'), 'fake python');
+    }
+    return { tmp, root, program };
+  }
+
+  it('resolveOfficeTarget accepts install root, program dir, and unopkg path', async () => {
+    const { resolveOfficeTarget } = await import('../src/bridge/install.js');
+    const { tmp, root, program } = await makeFakeOffice('ProductName=LibreOffice');
+    try {
+      for (const p of [root, program, path.join(program, unopkgName)]) {
+        const t = resolveOfficeTarget(p);
+        expect(t).not.toBeNull();
+        expect(t!.vendor).toBe('libreoffice');
+        expect(t!.root).toBe(root);
+        expect(t!.unopkg).toBe(path.join(program, unopkgName));
+      }
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('detectOfficeVendor reads versionrc (collabora / openoffice) and falls back to the dir name', async () => {
+    const { detectOfficeVendor, resolveOfficeTarget } = await import('../src/bridge/install.js');
+    const collabora = await makeFakeOffice('ProductName=Collabora Office 24.04');
+    const aoo = await makeFakeOffice('ProductName=Apache OpenOffice 4.1');
+    const named = await fs.mkdtemp(path.join(os.tmpdir(), 'OpenOffice-'));
+    try {
+      expect(resolveOfficeTarget(collabora.root)!.vendor).toBe('collabora');
+      expect(resolveOfficeTarget(aoo.root)!.vendor).toBe('openoffice');
+      expect(detectOfficeVendor(named)).toBe('openoffice');
+      expect(detectOfficeVendor(collabora.root)).toBe('collabora');
+    } finally {
+      await fs.rm(collabora.tmp, { recursive: true, force: true });
+      await fs.rm(aoo.tmp, { recursive: true, force: true });
+      await fs.rm(named, { recursive: true, force: true });
+    }
+  });
+
+  it('resolveOfficeTarget returns null for paths without program/unopkg', async () => {
+    const { resolveOfficeTarget } = await import('../src/bridge/install.js');
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'lo-acp-empty-'));
+    try {
+      expect(resolveOfficeTarget(tmp)).toBeNull();
+      expect(resolveOfficeTarget('')).toBeNull();
+      expect(resolveOfficeTarget('   ')).toBeNull();
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('findUnopkg prefers the configured officePath over auto-detection', async () => {
+    const { findUnopkg } = await import('../src/bridge/install.js');
+    const { tmp, root } = await makeFakeOffice('ProductName=Collabora Office');
+    const prev = process.env.LO_UNOPKG;
+    const envUnopkg = path.join(tmp, 'env-unopkg');
+    await fs.writeFile(envUnopkg, 'env unopkg');
+    process.env.LO_UNOPKG = envUnopkg;
+    try {
+      expect(findUnopkg(root)).toBe(path.join(root, 'program', unopkgName));
+      // invalid configured path falls back to env/auto
+      expect(findUnopkg(path.join(tmp, 'nope'))).toBe(envUnopkg);
+    } finally {
+      if (prev === undefined) delete process.env.LO_UNOPKG; else process.env.LO_UNOPKG = prev;
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('findLoUserProfile scans the configured vendor profile root', async () => {
+    const { findLoUserProfile } = await import('../src/bridge/install.js');
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'lo-acp-profileroot-'));
+    // Redirect the per-platform config root to tmp.
+    const { tmp: officeTmp, root } = await makeFakeOffice('ProductName=Apache OpenOffice 4.1');
+    const prevHome = process.env.HOME;
+    const prevUserprofile = process.env.USERPROFILE;
+    const prevAppdata = process.env.APPDATA;
+    const prevXdg = process.env.XDG_CONFIG_HOME;
+    const prevLoProfile = process.env.LO_USER_PROFILE;
+    try {
+      delete process.env.LO_USER_PROFILE;
+      if (process.platform === 'win32') {
+        process.env.APPDATA = tmp;
+        await fs.mkdir(path.join(tmp, 'OpenOffice', '4', 'user'), { recursive: true });
+      } else if (process.platform === 'darwin') {
+        process.env.HOME = tmp;
+        await fs.mkdir(path.join(tmp, 'Library', 'Application Support', 'OpenOffice', '4', 'user'), { recursive: true });
+      } else {
+        process.env.XDG_CONFIG_HOME = tmp;
+        await fs.mkdir(path.join(tmp, 'openoffice', '4', 'user'), { recursive: true });
+      }
+      const profile = findLoUserProfile(root);
+      expect(profile).not.toBeNull();
+      expect(profile).toContain('user');
+      expect(profile!.toLowerCase()).toContain('openoffice');
+    } finally {
+      if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+      if (prevUserprofile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = prevUserprofile;
+      if (prevAppdata === undefined) delete process.env.APPDATA; else process.env.APPDATA = prevAppdata;
+      if (prevXdg === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prevXdg;
+      if (prevLoProfile === undefined) delete process.env.LO_USER_PROFILE; else process.env.LO_USER_PROFILE = prevLoProfile;
+      await fs.rm(tmp, { recursive: true, force: true });
+      await fs.rm(officeTmp, { recursive: true, force: true });
+    }
+  });
+
+  it('officeHasBundledPython checks program/python', async () => {
+    const { officeHasBundledPython, resolveOfficeTarget } = await import('../src/bridge/install.js');
+    const withPy = await makeFakeOffice('ProductName=Collabora Office', true);
+    const noPy = await makeFakeOffice('ProductName=Apache OpenOffice 4.1', false);
+    try {
+      expect(officeHasBundledPython(resolveOfficeTarget(withPy.root)!)).toBe(true);
+      expect(officeHasBundledPython(resolveOfficeTarget(noPy.root)!)).toBe(false);
+    } finally {
+      await fs.rm(withPy.tmp, { recursive: true, force: true });
+      await fs.rm(noPy.tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('installBridge threads officePath into the profile lookup', async () => {
+    const install = await import('../src/bridge/install.js');
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'lo-acp-install-office-'));
+    const oxtPath = path.join(tmp, 'bridge.oxt');
+    await fs.writeFile(oxtPath, 'fake');
+    const profile = path.join(tmp, 'profile');
+    await fs.mkdir(path.join(profile, 'uno_packages', 'cache'), { recursive: true });
+    install.setRunUnopkgForTesting(async () => ({ ok: true, code: 0, output: 'ok' }));
+    install.setLoUserProfileForTesting(profile);
+    try {
+      const result = await install.installBridge('fake-unopkg', oxtPath, 'C:/some/office');
+      expect(result.ok).toBe(true);
+      await expect(fs.access(path.join(profile, 'uno_packages', 'cache'))).rejects.toThrow();
+    } finally {
+      install.setRunUnopkgForTesting(null);
+      install.setLoUserProfileForTesting(null);
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+});

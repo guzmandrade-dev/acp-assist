@@ -83,5 +83,6 @@ export function readAgentSettingsBody(body: unknown): Partial<AgentSettings> {
       ),
     );
   }
+  if (typeof b.officePath === 'string') out.officePath = b.officePath.trim();
   return out;
 }

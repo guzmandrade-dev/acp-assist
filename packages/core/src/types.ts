@@ -11,6 +11,15 @@ export interface AgentSettings {
   command: string;
   args: string[];
   env: Record<string, string>;
+  /**
+   * Optional office-suite install target (LibreOffice app only): path to
+   * the target office installation root (the dir containing `program/`),
+   * to `program/` itself, or directly to its `unopkg` binary. Lets the
+   * bridge .oxt install into a LibreOffice derivative such as Collabora
+   * Office or into Apache OpenOffice instead of LibreOffice. Empty or
+   * absent = auto-detect the standard LibreOffice locations.
+   */
+  officePath?: string;
 }
 
 export interface Turn {

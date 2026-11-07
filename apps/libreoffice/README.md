@@ -80,6 +80,47 @@ Manual install also works — LibreOffice's Extension Manager, or
 shows up empty after an install, delete `user/uno_packages/cache/` in
 your LibreOffice profile and restart.
 
+### Other office suites (Collabora Office, Apache OpenOffice)
+
+The bridge is a plain Python-UNO extension, so any UNO-based office suite
+can host it — not just LibreOffice. To point the one-click install at a
+different suite, add an `officePath` to the persisted agent settings
+(`agent-settings.json` next to the ACP `command`, or via
+`PUT /api/settings/agent`):
+
+```json
+{
+  "command": "vibe-acp",
+  "officePath": "C:\\Program Files\\Collabora\\CollaboraOffice"
+}
+```
+
+`officePath` may be the installation root (the directory containing
+`program/`), the `program/` directory itself, or the `unopkg` binary.
+The suite is detected from `program/versionrc`/`version.ini` (or the
+directory name) and the matching user profile is used for the install —
+e.g. `%APPDATA%\Collabora` for Collabora Office, `%APPDATA%\OpenOffice`
+for Apache OpenOffice. For a non-standard profile location, set the
+`LO_USER_PROFILE` environment variable to the profile's `user/` dir.
+Note: the bridge is a Python UNO component, so the target office needs a
+Python script provider in its `program/` dir. LibreOffice and Collabora
+Office bundle one. Apache OpenOffice does not by default — the .oxt still
+installs, but it will not load until you add the bridge:
+
+- **Windows/macOS**: re-run the AOO installer, choose **Modify**, and under
+  *Optional Components* install the **Python-UNO bridge** (recent AOO
+  versions offer it there; it drops `program/python.exe` into the
+  installation).
+- **Linux**: install your distro's pyuno package for OpenOffice
+  (e.g. `openoffice.org-pyuno` on Fedora).
+
+Once `program/python[.exe]` exists, the preflight `warning` disappears.
+If that is too much hassle, the simplest alternative is to point
+`officePath` at LibreOffice or Collabora Office instead — both bundle
+Python and need no extra step. The preflight endpoint reports the
+resolved `unopkg`, the detected `vendor`, and a `warning` when the
+target office bundles no Python.
+
 ## One input box, agent-decided intent
 
 You type a single message; the agent decides whether to reply in chat or

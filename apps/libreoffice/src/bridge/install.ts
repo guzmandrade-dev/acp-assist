@@ -1,5 +1,7 @@
 /**
- * One-click install of the bridge .oxt into the user's LibreOffice
+ * One-click install of the bridge .oxt into the user's office suite —
+ * LibreOffice by default, or the suite configured via the agent setting
+ * `officePath` (Collabora Office, Apache OpenOffice, …; all UNO-based).
  * (AGENTS.md rule 6: `unopkg add` fails if the extension is already
  * installed, so remove first — a failed remove of a not-yet-installed
  * extension is fine). Runs unopkg against the user's REAL profile: the
@@ -24,8 +26,117 @@ export interface InstallResult {
   message: string;
 }
 
-/** Locate unopkg.exe (LO_UNOPKG env wins, then the standard install dirs). */
-export function findUnopkg(): string | null {
+/** Office suites the bridge .oxt can be installed into (all UNO-based). */
+export type OfficeVendor = 'libreoffice' | 'collabora' | 'openoffice';
+
+export interface OfficeTarget {
+  vendor: OfficeVendor;
+  /** Install root (the directory containing `program/`). */
+  root: string;
+  /** `<root>/program/unopkg[.exe]`. */
+  unopkg: string;
+}
+
+const UNOPKG_NAME = process.platform === 'win32' ? 'unopkg.exe' : 'unopkg';
+
+/**
+ * Detect the suite vendor from `<root>/program/versionrc` (or
+ * `version.ini` on Windows), falling back to the install dir name.
+ * LibreOffice is the default: every LO derivative that does not identify
+ * itself is treated as LibreOffice.
+ */
+export function detectOfficeVendor(root: string): OfficeVendor {
+  for (const name of ['versionrc', 'version.ini']) {
+    try {
+      const txt = fs.readFileSync(path.join(root, 'program', name), 'utf8').toLowerCase();
+      if (txt.includes('collabora')) return 'collabora';
+      if (txt.includes('openoffice')) return 'openoffice';
+      if (txt.includes('libreoffice')) return 'libreoffice';
+    } catch {
+      /* no version file — try the next */
+    }
+  }
+  const base = path.basename(root).toLowerCase();
+  if (base.includes('collabora')) return 'collabora';
+  if (base.includes('openoffice') || base === 'aoo') return 'openoffice';
+  return 'libreoffice';
+}
+
+/**
+ * Resolve a configured office path into an install target. Accepts the
+ * install root, the `program/` dir, or the unopkg binary itself.
+ * Returns null when no unopkg exists under the given path.
+ */
+export function resolveOfficeTarget(configured: string): OfficeTarget | null {
+  let root = configured.trim();
+  if (!root) return null;
+  const base = path.basename(root).toLowerCase();
+  if (base === 'unopkg' || base === 'unopkg.exe' || base === 'unopkg.com') {
+    root = path.dirname(path.dirname(root));
+  } else if (base === 'program') {
+    root = path.dirname(root);
+  }
+  const unopkg = path.join(root, 'program', UNOPKG_NAME);
+  try {
+    if (!fs.existsSync(unopkg)) return null;
+  } catch {
+    return null;
+  }
+  return { vendor: detectOfficeVendor(root), root, unopkg };
+}
+
+/**
+ * The per-user profile ROOT for a vendor: the directory whose versioned
+ * children each hold a `user/` dir (e.g. `%APPDATA%\LibreOffice\4\user`,
+ * `%APPDATA%\OpenOffice\4\user`). Best-known conventions per platform;
+ * non-standard layouts can always be pinned with LO_USER_PROFILE.
+ */
+export function officeProfileRoot(vendor: OfficeVendor): string {
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
+  if (process.platform === 'win32') {
+    const appdata = process.env.APPDATA ?? path.join(home, 'AppData', 'Roaming');
+    if (vendor === 'collabora') return path.join(appdata, 'Collabora');
+    if (vendor === 'openoffice') return path.join(appdata, 'OpenOffice');
+    return path.join(appdata, 'LibreOffice');
+  }
+  if (process.platform === 'darwin') {
+    const sup = path.join(home, 'Library', 'Application Support');
+    if (vendor === 'collabora') return path.join(sup, 'Collabora');
+    if (vendor === 'openoffice') return path.join(sup, 'OpenOffice');
+    return path.join(sup, 'LibreOffice');
+  }
+  const cfg = process.env.XDG_CONFIG_HOME ?? path.join(home, '.config');
+  if (vendor === 'collabora') return path.join(cfg, 'collabora');
+  if (vendor === 'openoffice') return path.join(cfg, 'openoffice');
+  return path.join(cfg, 'libreoffice');
+}
+
+/**
+ * Whether the target office bundles its own Python (the bridge is a
+ * Python UNO component; Apache OpenOffice on Windows does not).
+ */
+export function officeHasBundledPython(target: OfficeTarget): boolean {
+  const names = process.platform === 'win32' ? ['python.exe', 'python'] : ['python', 'python.bin'];
+  return names.some((n) => {
+    try {
+      return fs.existsSync(path.join(target.root, 'program', n));
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * Locate unopkg: a configured officePath (agent setting `officePath`)
+ * wins, then LO_UNOPKG, then the standard LibreOffice install dirs.
+ */
+export function findUnopkg(officePath?: string | null): string | null {
+  if (officePath) {
+    const target = resolveOfficeTarget(officePath);
+    if (target) return target.unopkg;
+    // configured path invalid — fall through to auto-detection; the
+    // preflight route reports which unopkg was actually used
+  }
   const candidates: string[] = [];
   if (process.env.LO_UNOPKG) candidates.push(process.env.LO_UNOPKG);
   if (process.platform === 'win32') {
@@ -63,21 +174,20 @@ export async function sofficeRunning(): Promise<boolean> {
 }
 
 /**
- * Locate the LibreOffice user profile directory (the `user/` dir inside
- * the versioned profile root). Returns null when no profile exists yet.
- * LO_USER_PROFILE env override wins (tests, custom installs).
+ * Locate the office user profile directory (the `user/` dir inside the
+ * versioned profile root). Returns null when no profile exists yet.
+ * LO_USER_PROFILE env override wins (tests, custom installs); a
+ * configured officePath picks the profile root of that suite's vendor
+ * (LibreOffice / Collabora / OpenOffice) before the LibreOffice default.
  */
-export function findLoUserProfile(): string | null {
+export function findLoUserProfile(officePath?: string | null): string | null {
   if (process.env.LO_USER_PROFILE) return process.env.LO_USER_PROFILE;
-  const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
   const roots: string[] = [];
-  if (process.platform === 'win32') {
-    roots.push(path.join(process.env.APPDATA ?? path.join(home, 'AppData', 'Roaming'), 'LibreOffice'));
-  } else if (process.platform === 'darwin') {
-    roots.push(path.join(home, 'Library', 'Application Support', 'LibreOffice'));
-  } else {
-    roots.push(path.join(process.env.XDG_CONFIG_HOME ?? path.join(home, '.config'), 'libreoffice'));
+  if (officePath) {
+    const target = resolveOfficeTarget(officePath);
+    if (target) roots.push(officeProfileRoot(target.vendor));
   }
+  roots.push(officeProfileRoot('libreoffice'));
   for (const root of roots) {
     try {
       for (const entry of fs.readdirSync(root)) {
@@ -135,8 +245,12 @@ export function setRunUnopkgForTesting(fn: ((cmd: string[], timeoutMs: number) =
   runUnopkgForTesting = fn;
 }
 
-/** Remove-then-add (rule 6). A failing remove of an absent extension is OK. */
-export async function installBridge(unopkgPath: string, oxtPath: string): Promise<InstallResult> {
+/**
+ * Remove-then-add (rule 6). A failing remove of an absent extension is OK.
+ * `officePath` (the agent setting of the same name) selects which suite's
+ * user profile gets its package cache cleared.
+ */
+export async function installBridge(unopkgPath: string, oxtPath: string, officePath?: string | null): Promise<InstallResult> {
   const steps: InstallStep[] = [];
   const quoted = (s: string) => (s.includes(' ') ? `"${s}"` : s);
   const doRun = runUnopkgForTesting ?? run;
@@ -157,7 +271,7 @@ export async function installBridge(unopkgPath: string, oxtPath: string): Promis
   // so the next LibreOffice launch re-reads the extension's .xcu
   // config layers (without this the sidebar deck renders empty).
   let cacheCleared = false;
-  const profile = getLoUserProfile();
+  const profile = getLoUserProfile(officePath);
   if (profile) {
     cacheCleared = clearPackageCache(profile);
     steps.push({
@@ -193,9 +307,9 @@ let loUserProfileOverride: string | null | undefined;
 export function setLoUserProfileForTesting(profile: string | null): void {
   loUserProfileOverride = profile;
 }
-function getLoUserProfile(): string | null {
+function getLoUserProfile(officePath?: string | null): string | null {
   if (loUserProfileOverride !== undefined) return loUserProfileOverride;
-  return findLoUserProfile();
+  return findLoUserProfile(officePath);
 }
 
 interface RunResult {

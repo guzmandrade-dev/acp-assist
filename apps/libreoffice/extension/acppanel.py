@@ -48,6 +48,9 @@ from com.sun.star.ui import XSidebarPanel, XToolPanel, XUIElement, XUIElementFac
 
 APP_NAME = "LibreOffice ACP Assist"
 HTTP_TIMEOUT_S = 1.5
+# The status lines are a snapshot; poll so a bridge that starts/stops
+# while the deck is open shows up without clicking "Refresh status".
+STATUS_POLL_INTERVAL_S = 10
 
 
 def _context():
@@ -136,7 +139,10 @@ def _collect_status():
             # written by the companion carries it.
             _get_json(f"http://127.0.0.1:{comp['port']}/api/status",
                       comp.get("token"))
-            out["companion"] = f"Companion: connected ({comp.get('url', '?')})"
+            # Strip the scheme: the label is 244px wide and a full URL
+            # clips horizontally ("http://localhost:8790" does not).
+            url = str(comp.get("url", "?")).replace("https://", "").replace("http://", "")
+            out["companion"] = f"Companion: connected ({url})"
         except Exception:
             out["companion"] = "Companion: running, not responding"
     return out
@@ -183,6 +189,7 @@ class AcpPanel(unohelper.Base, XUIElement, XToolPanel, XSidebarPanel, XComponent
         self.parent = parent
         self.sidebar = sidebar
         self._disposed = False
+        self._stop_poll = threading.Event()
         self._children = []
         smgr = ctx.ServiceManager
         self._tk = smgr.createInstanceWithContext("com.sun.star.awt.Toolkit", ctx)
@@ -200,17 +207,24 @@ class AcpPanel(unohelper.Base, XUIElement, XToolPanel, XSidebarPanel, XComponent
             self._children.append(win)
             return win
 
-        self.lbl_bridge = make("fixedtext", 8, 8, 244, 18)
+        # 30px-tall labels: at high DPI scaling the deck's default font
+        # line height exceeds 22px and the window bottom slices the
+        # glyph descenders (live UI feedback 2026-11-07 — "Companion:"
+        # rendered bottom-cut while "Bridge: stopped" without
+        # descenders looked fine). 30px is the proven-safe height (the
+        # button labels needed it too). Raw VCL windows expose no
+        # XPropertySet/getModel (rule 45), so geometry is the only lever.
+        self.lbl_bridge = make("fixedtext", 8, 8, 244, 30)
         self.lbl_bridge.setText("Bridge: checking…")
-        self.lbl_companion = make("fixedtext", 8, 30, 244, 18)
+        self.lbl_companion = make("fixedtext", 8, 40, 244, 30)
         self.lbl_companion.setText("Companion: checking…")
 
         # 30px-tall buttons: 24px clips the label with the default UI
         # font (live UI feedback 2026-10-21).
         buttons = (
-            ("Refresh status", 56, "refresh"),
-            ("Restart bridge", 90, "restart"),
-            ("Open companion", 124, "open"),
+            ("Refresh status", 78, "refresh"),
+            ("Restart bridge", 112, "restart"),
+            ("Open companion", 146, "open"),
         )
         for label, y, name in buttons:
             # WindowServiceName "pushbutton", NOT "button": the raw VCL
@@ -219,7 +233,17 @@ class AcpPanel(unohelper.Base, XUIElement, XToolPanel, XSidebarPanel, XComponent
             b.setLabel(label)
             b.addActionListener(PanelAction(self, name))
 
+        threading.Thread(target=self._poll_loop, daemon=True,
+                         name="acp-panel-poll").start()
         self.refresh_async()
+
+    def _poll_loop(self):
+        """Re-collect the status every STATUS_POLL_INTERVAL_S while the
+        deck is open (daemon thread; exits on dispose)."""
+        while not self._stop_poll.wait(STATUS_POLL_INTERVAL_S):
+            if self._disposed:
+                return
+            self.refresh_async()
 
     # ---- XUIElement
     def getRealInterface(self):
@@ -243,8 +267,8 @@ class AcpPanel(unohelper.Base, XUIElement, XToolPanel, XSidebarPanel, XComponent
     # ---- XSidebarPanel
     def getHeightForWidth(self, width):
         # LayoutSize struct, NOT a bare long (probe 12kb): preferred
-        # height matches the widget layout (buttons end at y=154).
-        return LayoutSize(162, 162, 162)
+        # height matches the widget layout (buttons end at y=176).
+        return LayoutSize(184, 184, 184)
 
     def getMinimalWidth(self):
         return 260
@@ -254,6 +278,7 @@ class AcpPanel(unohelper.Base, XUIElement, XToolPanel, XSidebarPanel, XComponent
         if self._disposed:
             return
         self._disposed = True
+        self._stop_poll.set()
         for win in self._children:
             try:
                 win.dispose()

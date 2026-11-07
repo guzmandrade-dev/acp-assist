@@ -13,7 +13,7 @@
           <value/>
         </prop>
         <prop oor:name="IconURL">
-          <value>vnd.sun.star.extension:org.libreofficeacp.bridge/icon.png</value>
+          <value>vnd.sun.star.extension://org.libreofficeacp.bridge/icon.png</value>
         </prop>
         <prop oor:name="OrderIndex">
           <value>5000</value>

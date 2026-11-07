@@ -749,3 +749,103 @@ describe('bridge extension install routes', () => {
     srv.close();
   });
 });
+
+describe('bridge install routes: persisted officePath setting', () => {
+  const publicDir = path.join(os.tmpdir(), 'lo-acp-test-public');
+
+  async function makeApp(opts: Partial<Parameters<typeof createServer>[0]> = {}) {
+    const app = createServer({
+      apiToken: API_TOKEN, publicDir, panelConfig: PANEL_CONFIG,
+      agentFactory: () => ({ start: async () => undefined, stop: () => undefined, createSession: async () => undefined, cancel: () => undefined, prompt: async () => '' }),
+      bridgeFactory: () => new FakeBridge(),
+      ...opts,
+    });
+    const srv = app.listen(0, '127.0.0.1');
+    await new Promise<void>((r) => srv.on('listening', r));
+    const addr = srv.address() as { port: number };
+    return { srv, url: `http://127.0.0.1:${addr.port}` };
+  }
+
+  async function makeSettingsDir(tmp: string, officeRoot: string) {
+    const settingsDir = path.join(tmp, 'settings');
+    await fs.mkdir(settingsDir, { recursive: true });
+    await fs.writeFile(path.join(settingsDir, 'agent-settings.json'),
+      JSON.stringify({ command: 'vibe-acp', officePath: officeRoot }), 'utf8');
+    return settingsDir;
+  }
+
+  it('preflight resolves unopkg + vendor from the persisted officePath setting', async () => {
+    const unopkgName = process.platform === 'win32' ? 'unopkg.exe' : 'unopkg';
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'lo-acp-officepath-'));
+    try {
+      const oxtPath = path.join(tmp, 'bridge.oxt');
+      await fs.writeFile(oxtPath, 'fake oxt', 'utf8');
+      const officeRoot = path.join(tmp, 'CollaboraOffice');
+      await fs.mkdir(path.join(officeRoot, 'program'), { recursive: true });
+      await fs.writeFile(path.join(officeRoot, 'program', unopkgName), 'fake unopkg');
+      await fs.writeFile(path.join(officeRoot, 'program', 'versionrc'), 'ProductName=Collabora Office 24.04\n');
+      await fs.writeFile(path.join(officeRoot, 'program', process.platform === 'win32' ? 'python.exe' : 'python'), 'fake python');
+      const settingsDir = await makeSettingsDir(tmp, officeRoot);
+      const { srv, url } = await makeApp({ oxtPath, settingsDir, sofficeProbe: async () => false });
+      const pre = (await (await fetch(`${url}/api/bridge/install/preflight`, { headers: { authorization: 'Bearer ' + API_TOKEN } })).json()) as {
+        canInstall: boolean; unopkg: string; vendor: string; officePath: string; warning?: string;
+      };
+      expect(pre.canInstall).toBe(true);
+      expect(pre.unopkg).toBe(path.join(officeRoot, 'program', unopkgName));
+      expect(pre.vendor).toBe('collabora');
+      expect(pre.officePath).toBe(officeRoot);
+      expect(pre.warning).toBeUndefined();
+      srv.close();
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('preflight warns when the target office bundles no Python (the bridge needs it)', async () => {
+    const unopkgName = process.platform === 'win32' ? 'unopkg.exe' : 'unopkg';
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'lo-acp-officepath-'));
+    try {
+      const oxtPath = path.join(tmp, 'bridge.oxt');
+      await fs.writeFile(oxtPath, 'fake oxt', 'utf8');
+      const officeRoot = path.join(tmp, 'OpenOffice');
+      await fs.mkdir(path.join(officeRoot, 'program'), { recursive: true });
+      await fs.writeFile(path.join(officeRoot, 'program', unopkgName), 'fake unopkg');
+      await fs.writeFile(path.join(officeRoot, 'program', 'versionrc'), 'ProductName=Apache OpenOffice 4.1\n');
+      const settingsDir = await makeSettingsDir(tmp, officeRoot);
+      const { srv, url } = await makeApp({ oxtPath, settingsDir, sofficeProbe: async () => false });
+      const pre = (await (await fetch(`${url}/api/bridge/install/preflight`, { headers: { authorization: 'Bearer ' + API_TOKEN } })).json()) as {
+        canInstall: boolean; vendor: string; warning?: string;
+      };
+      expect(pre.canInstall).toBe(true);
+      expect(pre.vendor).toBe('openoffice');
+      expect(pre.warning).toContain('Python');
+      srv.close();
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('install passes the configured officePath through to the runner', async () => {
+    const seen: Array<string | null | undefined> = [];
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'lo-acp-officepath-install-'));
+    try {
+      const settingsDir = await makeSettingsDir(tmp, 'C:/offices/Collabora');
+      const { srv, url } = await makeApp({
+        oxtPath: 'C:/fake/bridge.oxt',
+        unopkgPath: 'C:/fake/unopkg.exe',
+        settingsDir,
+        sofficeProbe: async () => false,
+        installBridge: async (_unopkg, _oxt, officePath) => {
+          seen.push(officePath);
+          return { ok: true, steps: [], message: 'ok' };
+        },
+      });
+      const res = await fetch(`${url}/api/bridge/install`, { method: 'POST', headers: { authorization: 'Bearer ' + API_TOKEN } });
+      expect(res.status).toBe(200);
+      srv.close();
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+    expect(seen).toEqual(['C:/offices/Collabora']);
+  });
+});
