@@ -107,7 +107,7 @@ export interface ConversationStore {
   /** Replay block for unseen turns ('' when the agent knows everything). */
   buildHistoryPrefix: (key: string) => string;
   /** Record one user + assistant exchange in the current conversation. */
-  recordTurn: (user: string, assistant: string) => Promise<void>;
+  recordTurn: (user: string, assistant: string, attachments?: string[]) => Promise<void>;
   /**
    * Record one step of a multi-action run WITHOUT a matching user turn:
    * the user asked once, the app applied several edits. UI and history
@@ -213,11 +213,16 @@ export function createConversationStore(options: ConversationStoreOptions): Conv
     unseenCount: (key) => historyHandoff.get(key) ?? 0,
     buildHistoryPrefix: (key) =>
       formatHistoryReplay(conversations.get(key) ?? [], historyHandoff.get(key) ?? 0, options.replayOptions),
-    async recordTurn(user: string, assistant: string) {
+    async recordTurn(user: string, assistant: string, attachments?: string[]) {
       const key = keyOf();
       const turns = await ensure(key);
       turns.push(
-        { role: 'user', content: user, timestamp: new Date().toISOString() },
+        {
+          role: 'user',
+          content: user,
+          timestamp: new Date().toISOString(),
+          ...(attachments && attachments.length > 0 ? { attachments } : {}),
+        },
         { role: 'assistant', content: assistant, timestamp: new Date().toISOString() },
       );
       persist(key);

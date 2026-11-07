@@ -648,7 +648,7 @@ export function createCompanionServer<TState>(
         }
 
         if (step === 1) {
-          await storeFor(session).recordTurn(message, reply);
+          await storeFor(session).recordTurn(message, reply, attachments.map((a) => a.name));
         } else {
           await storeFor(session).recordActionStep(reply, step);
         }

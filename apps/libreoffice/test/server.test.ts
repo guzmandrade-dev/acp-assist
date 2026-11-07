@@ -455,6 +455,15 @@ describe('server message loop (fake agent + fake bridge)', () => {
           anchor: payload.anchor ?? 'A1',
         });
       }
+      // No event feed in this fake. Must NOT hit the base HTTP impl: the
+      // resulting BridgeError would trigger the healing proxy's real-bridge
+      // recovery (pickBridge) and hijack the test whenever a real bridge is
+      // running on the machine (fails locally, passes in CI).
+      override events(since: number) {
+        return new Promise((resolve) =>
+          setTimeout(() => resolve({ events: [], last: since }), 25),
+        );
+      }
     })();
     const app = createServer({
       apiToken: API_TOKEN, publicDir, panelConfig: PANEL_CONFIG,
@@ -524,6 +533,15 @@ describe('server message loop (fake agent + fake bridge)', () => {
           applied: true, title: 'Deck', mode: payload.mode,
           slide: payload.slide ?? 0,
         });
+      }
+      // No event feed in this fake. Must NOT hit the base HTTP impl: the
+      // resulting BridgeError would trigger the healing proxy's real-bridge
+      // recovery (pickBridge) and hijack the test whenever a real bridge is
+      // running on the machine (fails locally, passes in CI).
+      override events(since: number) {
+        return new Promise((resolve) =>
+          setTimeout(() => resolve({ events: [], last: since }), 25),
+        );
       }
     })();
     const app = createServer({

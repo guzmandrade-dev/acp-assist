@@ -23,8 +23,11 @@
 export const CONFIG = window.__ACP_PANEL_CONFIG__ ?? {};
 export const APP = CONFIG.appName ?? 'LibreOffice';
 export const FENCE_RE = CONFIG.fenceRe ?? '(?:writer|calc|impress)';
-export const FENCE_STRIP_SRC = '```' + FENCE_RE + '\\s*\\n[\\s\\S]*?```\\s*';
-export const FENCE_BLOCK_SRC = '```' + FENCE_RE + '\\s*\\n([\\s\\S]*?)```';
+// An UNCLOSED app fence (agent truncated the closing ```) still matches
+// through end-of-text, so the block renders/strips instead of leaking a
+// literal "```writer" line into the bubble.
+export const FENCE_STRIP_SRC = '```' + FENCE_RE + '\\s*\\n[\\s\\S]*?(?:```\\s*|$)';
+export const FENCE_BLOCK_SRC = '```' + FENCE_RE + '\\s*\\n([\\s\\S]*?)(?:```|$)';
 
 /**
  * Live-render throttle for streamed replies: re-rendering the WHOLE

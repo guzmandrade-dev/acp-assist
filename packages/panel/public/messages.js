@@ -25,6 +25,34 @@ const COPY_ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" s
   + '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>'
   + '</svg>';
 
+const CLIP_ICON = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>'
+  + '</svg>';
+
+/**
+ * Attachment indicator under a message: a paperclip plus one name chip
+ * per file the user attached to that turn (persisted on the turn, so it
+ * reappears when the history is replayed after a restart).
+ */
+function renderAttachmentList(names) {
+  const row = document.createElement('div');
+  row.className = 'msg-attachments';
+  for (const name of names) {
+    const chip = document.createElement('span');
+    chip.className = 'msg-attachment';
+    chip.title = name;
+    const icon = document.createElement('span');
+    icon.className = 'msg-attachment-icon';
+    icon.innerHTML = CLIP_ICON;
+    const label = document.createElement('span');
+    label.className = 'msg-attachment-name';
+    label.textContent = name;
+    chip.append(icon, label);
+    row.appendChild(chip);
+  }
+  return row;
+}
+
 function showEmpty() {
   if (!state.emptyEl) {
     const emptyEl = document.createElement('div');
@@ -231,6 +259,9 @@ export function addMessage(role, content, opts = {}) {
     textDiv.textContent = content;
   }
   div.appendChild(textDiv);
+  if (opts.attachments && opts.attachments.length > 0) {
+    div.appendChild(renderAttachmentList(opts.attachments));
+  }
   attachMessageActions(div, role);
   chat.appendChild(div);
   scrollToBottomIfNear();
@@ -263,7 +294,10 @@ export function renderConversation(turns) {
       turn.role === 'assistant' && turn.meta?.result === 'applied' && turn.meta.action !== 'none'
         ? turn.meta.action
         : undefined;
-    const { div } = addMessage(turn.role, turn.content, { applied: appliedAction });
+    const { div } = addMessage(turn.role, turn.content, {
+      applied: appliedAction,
+      attachments: Array.isArray(turn.attachments) ? turn.attachments : undefined,
+    });
     // Restore a persisted action outcome (applied/error/cancelled) from a
     // previous app run, so failures are visible after a restart.
     if (turn.role === 'assistant' && turn.meta) {

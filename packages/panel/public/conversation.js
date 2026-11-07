@@ -430,7 +430,10 @@ export async function send() {
     return;
   }
   input.value = '';
-  addMessage('user', message);
+  // Snapshot the pending attachments for this turn BEFORE the stream
+  // consumes them — the user bubble shows what was attached.
+  const attachmentNames = state.pendingAttachments.map((a) => a.name);
+  addMessage('user', message, { attachments: attachmentNames });
   try {
     await streamMessage(message);
     // Attachments were consumed by this message.

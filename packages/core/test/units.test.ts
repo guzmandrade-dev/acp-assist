@@ -45,6 +45,12 @@ describe('readAgentSettingsBody', () => {
     expect(readAgentSettingsBody('nope')).toEqual({});
     expect(readAgentSettingsBody(7)).toEqual({});
   });
+
+  it('passes through a trimmed officePath and ignores non-strings', () => {
+    expect(readAgentSettingsBody({ officePath: '  C:\\Program Files\\Collabora  ' }))
+      .toEqual({ officePath: 'C:\\Program Files\\Collabora' });
+    expect(readAgentSettingsBody({ officePath: 42 })).toEqual({});
+  });
 });
 
 // --- history persistence --------------------------------------------------------
@@ -217,6 +223,21 @@ describe('createConversationStore', () => {
       expect(stored).toHaveLength(2);
       expect(stored[1]?.meta?.action).toBe('none');
     });
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('records attachment names on the user turn', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'core-store-'));
+    const { store } = makeStore(dir);
+    await store.recordTurn('rewrite my CV', 'done [ACTION: none]', ['cv.pdf']);
+    await store.recordTurn('plain message', 'ok [ACTION: none]');
+    const turns = await store.ensure('doc-a');
+    expect(turns[0]?.attachments).toEqual(['cv.pdf']);
+    expect(turns[2]?.attachments).toBeUndefined();
+    await store.flush();
+    const stored = await loadHistory(dir, 'doc-a');
+    expect(stored[0]?.attachments).toEqual(['cv.pdf']);
+    expect(stored[2]?.attachments).toBeUndefined();
     await fs.rm(dir, { recursive: true, force: true });
   });
 

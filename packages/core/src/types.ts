@@ -26,6 +26,8 @@ export interface Turn {
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
+  /** Names of files the user attached to this turn (user turns only). */
+  attachments?: string[];
   /**
    * Outcome of the action the assistant proposed in this turn, recorded
    * after the action was applied (or failed). Absent on older histories
