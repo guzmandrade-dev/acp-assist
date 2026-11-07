@@ -28,6 +28,8 @@ createStandaloneServer({
       attachmentsDir: paths.attachmentsDir,
       logDir: paths.logDir,
       settingsDir: paths.settingsDir,
+      // Standalone dev server: the repo copy of the packaged plugin.
+      pluginPath: path.join(__dirname, '..', 'acp-bridge.plugin'),
     }),
   // No in-editor status panel reads a discovery record (unlike the LO
   // sidebar); the plugin connects straight to this port.

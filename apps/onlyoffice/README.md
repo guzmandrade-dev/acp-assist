@@ -93,6 +93,17 @@ a single `callCommand` — one undo step per edit.
    approval needed. (The packaged app ships the same file next to the
    executable under `resources/`.)
 
+   **Updating / beta installs:** sideloaded plugins have no auto-update,
+   so reinstalling the same `.plugin` through the Plugin Manager is the
+   update path (the plugin GUID stays the same, so the new version
+   replaces the old one in place — no editor restart). The companion
+   panel has a **Download bridge…** button (status line) that downloads
+   the exact `acp-bridge.plugin` this app ships and shows the install
+   steps; it also flags when the connected plugin is older than the
+   bundled one. For a beta, grab the `.plugin` asset from the release
+   page instead. After reinstalling, reopen the bridge plugin tab (press
+   **Reconnect** inside it if the panel doesn't flip green).
+
 3. **Connect**: open the **ACP Assist Bridge** plugin from the editor's
    **Plugins** tab. It connects to the companion (port 8790 by default;
    changeable in the plugin's port field) and the panel's status line

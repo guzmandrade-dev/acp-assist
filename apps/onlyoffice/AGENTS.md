@@ -534,3 +534,20 @@ new op. New rules:
     picked up on the next editor start (the `addons` hash is only
     enforced at Plugin-Manager install time). For the product, repackage
     `acp-bridge.plugin` (zip + rename) and install via Plugin Manager.
+
+64. **Manual plugin update path = the panel's "Download bridge" button**
+    (bridgeDownload in PanelConfig; install.js). The companion serves
+    GET /api/bridge/plugin (bundled version read from the .plugin zip's
+    config.json by src/bridge/plugin-package.ts — no zip dependency;
+    connected version from /bridge/hello; updateNeeded when both known
+    and different) and GET /api/bridge/plugin/download (res.download,
+    X-ACP-Plugin-Version header). Both sit behind the API bearer guard.
+    pluginPath is plumbed from the entry points: packaged =
+    process.resourcesPath/acp-bridge.plugin, dev = the repo copy
+    (apps/onlyoffice, or ../onlyoffice from the unified app). Sideloaded
+    plugins have NO auto-update — reinstalling the same-GUID .plugin via
+    the Plugin Manager replaces it; the `addons` hash registry blocks
+    anything but the Plugin Manager from installing. Marketplace PR
+    (onlyoffice.github.io; needs version/offered/store + CHANGELOG.md)
+    is the only true auto-update path — deferred until the plugin is
+    bullet-proof (user decision 2026-11-07).

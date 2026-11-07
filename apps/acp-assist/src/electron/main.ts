@@ -44,6 +44,8 @@ createElectronMain({
       // Packaged app: the oxt rides in extraResources; dev: the
       // libreoffice app's repo dir.
       oxtPath: oxtPath(),
+      // Same for the ONLYOFFICE bridge plugin (the panel's Download bridge).
+      pluginPath: pluginPath(),
     }),
   // Discovery record for the in-LibreOffice status panel (it reads the
   // hardcoded "LibreOffice ACP Assist" dir). The record's URL opens the
@@ -64,4 +66,10 @@ function oxtPath(): string {
   return app.isPackaged
     ? path.join(process.resourcesPath, 'acp-bridge.oxt')
     : path.join(__dirname, '..', '..', '..', 'libreoffice', 'acp-bridge.oxt');
+}
+
+function pluginPath(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'acp-bridge.plugin')
+    : path.join(__dirname, '..', '..', '..', 'onlyoffice', 'acp-bridge.plugin');
 }

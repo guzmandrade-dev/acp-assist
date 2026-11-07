@@ -73,6 +73,8 @@ export interface UnifiedServerOptions {
   logDir?: string;
   /** LibreOffice bridge .oxt for the one-click install flow. */
   oxtPath?: string;
+  /** ONLYOFFICE bridge .plugin for the panel's "Download bridge" flow. */
+  pluginPath?: string;
   /** Idle-session GC; see createCompanionServer. */
   sessionIdleMs?: number;
   /** Test hook: fixed per-app bearer tokens. */
@@ -151,6 +153,7 @@ export function createServer(options: UnifiedServerOptions): express.Express {
       apiToken: options.apiTokens?.onlyoffice,
       agentFactory: options.agentFactory,
       pluginBridge: options.pluginBridge,
+      pluginPath: options.pluginPath,
     }),
   );
 

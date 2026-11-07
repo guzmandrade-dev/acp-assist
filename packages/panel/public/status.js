@@ -101,7 +101,10 @@ export async function refreshStatus() {
     if (state.bridgeAvailable) {
       setbridgeBusyState(false);
       setStatusText(`${APP} connected`);
-      hideInstallButton();
+      // OO: the Download-bridge button stays available while connected
+      // (plugin updates are manual reinstalls); LO hides it once bridged.
+      if (CONFIG.bridgeDownload) await refreshInstallable();
+      else hideInstallButton();
     } else {
       setStatusText(CONFIG.statusMissing ?? 'Bridge not found — open the editor and start it');
       await refreshInstallable();

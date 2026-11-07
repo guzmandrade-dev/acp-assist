@@ -12,8 +12,10 @@ export const PANEL_CONFIG: PanelConfig = {
   cursorTerm: 'style',
   hasSaveConsent: false,
   // The .plugin is installed via the editor's own Plugin Manager; there
-  // is no one-click install from this panel.
+  // is no one-click install from this panel — but the panel offers the
+  // bundled .plugin as a download (manual install/update path).
   hasInstallFlow: false,
+  bridgeDownload: true,
   composerRefreshSelection: true,
   busyText: 'talking to ONLYOFFICE\u2026',
   eventPush: true,

@@ -93,6 +93,14 @@ describe('shared panel assets', () => {
     expect(html).toContain('id="bridge-spinner"');
   });
 
+  it('install.js wires both install flows (LO one-click + OO bridge download)', async () => {
+    const js = await fs.readFile(path.join(panelPublicDir(), 'install.js'), 'utf8');
+    expect(js).toContain('/api/bridge/install/preflight');
+    expect(js).toContain('/api/bridge/plugin');
+    expect(js).toContain('/api/bridge/plugin/download');
+    expect(js).toContain('bridgeDownload');
+  });
+
   it('index references the boot script; the boot script carries token + config + theme', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'panel-index-'));
     await fs.writeFile(path.join(dir, 'index.html'), '<html><head></head><body></body></html>', 'utf8');

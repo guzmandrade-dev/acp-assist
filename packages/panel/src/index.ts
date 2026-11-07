@@ -33,6 +33,10 @@ export interface PanelConfig {
   hasSaveConsent: boolean;
   /** LO-only: one-click bridge installer. */
   hasInstallFlow: boolean;
+  /** OO-only: "Download bridge" button offering the bundled
+   *  acp-bridge.plugin for manual install/update via the editor's own
+   *  Plugin Manager (sideloaded plugins have no auto-update). */
+  bridgeDownload?: boolean;
   /** Refresh the selection on composer interaction (LO: yes; LyX: NO —
    * the selection read clobbers the user's clipboard). */
   composerRefreshSelection: boolean;

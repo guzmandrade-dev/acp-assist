@@ -265,6 +265,7 @@ describe('server (fake agent + fake plugin bridge)', () => {
   async function serve(options: {
     replies?: string[];
     bridge?: FakePluginBridge;
+    pluginPath?: string;
   } = {}): Promise<{ url: string; bridge: FakePluginBridge; close: () => void }> {
     const bridge = options.bridge ?? new FakePluginBridge();
     // Isolated history dir per server: every session keys conversations
@@ -277,6 +278,7 @@ describe('server (fake agent + fake plugin bridge)', () => {
       panelConfig: PANEL_CONFIG,
       historyDir: dir,
       pluginBridge: bridge,
+      pluginPath: options.pluginPath,
       // ALWAYS a fake agent: a real ACP process must never spawn in tests.
       agentFactory: fakeAgent(options.replies ?? []),
     });
@@ -513,6 +515,84 @@ describe('server (fake agent + fake plugin bridge)', () => {
       expect(sel.hasSelection).toBe(true);
       expect(sel.text).toBe('selected words');
       expect(sel.stats).toEqual([2]);
+    } finally {
+      close();
+    }
+  });
+});
+
+/** The "Download bridge" routes: bundled .plugin info + file download. */
+describe('bridge plugin package routes', () => {
+  async function serveWith(options: { pluginPath?: string } = {}) {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'oo-acp-hist-'));
+    const app = createServer({
+      apiToken: API_TOKEN,
+      publicDir,
+      panelConfig: PANEL_CONFIG,
+      historyDir: dir,
+      pluginBridge: new FakePluginBridge(),
+      pluginPath: options.pluginPath,
+      agentFactory: fakeAgent([]),
+    });
+    const srv = app.listen(0, '127.0.0.1');
+    await new Promise<void>((r) => srv.on('listening', r));
+    const url = `http://127.0.0.1:${(srv.address() as { port: number }).port}`;
+    return {
+      url,
+      close: () => {
+        srv.close();
+        void fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+      },
+    };
+  }
+
+  it('serves plugin info + download, flags an outdated connected plugin, and requires auth', async () => {
+    const { makeZip } = await import('./zip-fixture.js');
+    const zipPath = path.join(os.tmpdir(), `oo-test-bridge-${process.pid}.plugin`);
+    await fs.writeFile(zipPath, makeZip({ 'config.json': JSON.stringify({ version: '0.7.0' }) }));
+    const { url, close } = await serveWith({ pluginPath: zipPath });
+    try {
+      // the in-editor plugin announces an OLDER version via /bridge/hello
+      await fetch(`${url}/bridge/hello`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ plugin: 'ACP Assist Bridge', version: '0.6.0', editor: 'word' }),
+      });
+
+      const infoRes = await fetch(`${url}/api/bridge/plugin`, { headers });
+      expect(infoRes.status).toBe(200);
+      const info = await infoRes.json() as Record<string, unknown>;
+      expect(info.available).toBe(true);
+      expect(info.version).toBe('0.7.0');
+      expect(info.connectedVersion).toBe('0.6.0');
+      expect(info.updateNeeded).toBe(true);
+      expect(Array.isArray(info.instructions)).toBe(true);
+
+      const dl = await fetch(`${url}/api/bridge/plugin/download`, { headers });
+      expect(dl.status).toBe(200);
+      expect(dl.headers.get('content-disposition')).toContain('attachment');
+      expect(dl.headers.get('content-disposition')).toContain('acp-bridge.plugin');
+      expect(dl.headers.get('x-acp-plugin-version')).toBe('0.7.0');
+      const buf = Buffer.from(await dl.arrayBuffer());
+      expect(buf.equals(await fs.readFile(zipPath))).toBe(true);
+
+      // the routes sit behind the API bearer guard
+      expect((await fetch(`${url}/api/bridge/plugin`)).status).toBe(401);
+      expect((await fetch(`${url}/api/bridge/plugin/download`)).status).toBe(401);
+    } finally {
+      close();
+      await fs.rm(zipPath, { force: true }).catch(() => undefined);
+    }
+  });
+
+  it('reports unavailable and 500s the download when no plugin is bundled', async () => {
+    const { url, close } = await serveWith();
+    try {
+      const info = await (await fetch(`${url}/api/bridge/plugin`, { headers })).json() as Record<string, unknown>;
+      expect(info.available).toBe(false);
+      expect(info.updateNeeded).toBe(false);
+      const dl = await fetch(`${url}/api/bridge/plugin/download`, { headers });
+      expect(dl.status).toBe(500);
     } finally {
       close();
     }

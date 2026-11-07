@@ -20,6 +20,8 @@
  */
 
 import express from 'express';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import {
   actionTagNote,
   buildAttachmentBlock,
@@ -40,6 +42,7 @@ import {
   type Attachment,
   type Turn,
   type TurnMeta,
+  type WrapFn,
 } from '@acp-assist/core';
 import { panelPublicDir, type PanelConfig } from '@acp-assist/panel';
 import {
@@ -50,6 +53,7 @@ import {
   type CellDocument,
   type SlideDocument,
 } from './bridge/plugin-bridge.js';
+import { readPluginVersion } from './bridge/plugin-package.js';
 import { writerAdapter, type WriterOutcome } from './modules/writer.js';
 import { calcAdapter, parseCalcAction, type CalcOutcome } from './modules/calc.js';
 import { impressAdapter, parseImpressAction, type ImpressOutcome } from './modules/impress.js';
@@ -81,6 +85,9 @@ export interface ServerOptions {
   sessionIdleMs?: number;
   /** Test hook: inject a fake plugin bridge instead of the real one. */
   pluginBridge?: PluginBridge;
+  /** The bundled acp-bridge.plugin for the panel's "Download bridge"
+   * flow (packaged: resources/acp-bridge.plugin; dev: the repo copy). */
+  pluginPath?: string;
 }
 
 /** The app's parsed action: whichever module's vocabulary the reply used. */
@@ -120,8 +127,67 @@ export function createServer(options: ServerOptions & {
     // channel, so it cannot hold the bearer token (v1 trade-off; the
     // server binds 127.0.0.1 only — see the core option's comment).
     preAuthRoutes: (expressApp) => bridge.register(expressApp),
+    extraRoutes: (expressApp, { wrap }) => registerPluginRoutes(expressApp, wrap, options, bridge),
   });
   return app;
+}
+
+// --- "Download bridge" routes (manual .plugin install/update path) -----------
+
+/** Install instructions for the panel's post-download dialog. */
+export const PLUGIN_INSTALL_INSTRUCTIONS: readonly string[] = [
+  'In ONLYOFFICE Desktop Editors open the Plugins tab → Plugin Manager → "Install plugin manually" and pick the downloaded acp-bridge.plugin. The same plugin GUID replaces the old version — no editor restart needed.',
+  'Reopen the "ACP Assist Bridge" plugin from the Plugins tab so it reconnects. If it looks connected but this panel disagrees, press Reconnect inside the plugin.',
+  'Keep the plugin tab open while chatting. For beta versions, download the .plugin asset from the release page instead of this bundled file.',
+];
+
+function registerPluginRoutes(
+  app: express.Express,
+  wrap: WrapFn,
+  options: ServerOptions,
+  bridge: PluginBridge,
+): void {
+  app.get(
+    '/api/bridge/plugin',
+    wrap(async (_req, res) => {
+      const pluginPath = options.pluginPath ?? null;
+      let available = false;
+      let version: string | null = null;
+      if (pluginPath) {
+        version = await readPluginVersion(pluginPath);
+        available = version !== null || (await fs.stat(pluginPath).then(() => true).catch(() => false));
+      }
+      const hello = bridge.connectedHello;
+      const connectedVersion = hello?.version ?? null;
+      res.json({
+        available,
+        path: pluginPath,
+        version,
+        connected: bridge.isConnected(),
+        connectedVersion,
+        // Only claim an update when both versions are known and differ.
+        updateNeeded: available && version !== null && connectedVersion !== null && version !== connectedVersion,
+        instructions: PLUGIN_INSTALL_INSTRUCTIONS,
+      });
+    }),
+  );
+
+  app.get(
+    '/api/bridge/plugin/download',
+    wrap(async (_req, res) => {
+      const pluginPath = options.pluginPath;
+      if (!pluginPath) throw new Error('Bridge plugin package is not configured on this app.');
+      try {
+        await fs.access(pluginPath);
+      } catch {
+        res.status(404).json({ error: `bridge plugin not found at ${pluginPath}` });
+        return;
+      }
+      const version = await readPluginVersion(pluginPath);
+      if (version) res.setHeader('X-ACP-Plugin-Version', version);
+      res.download(path.resolve(pluginPath), 'acp-bridge.plugin');
+    }),
+  );
 }
 
 /** The ONLYOFFICE backend: plugin bridge + the per-module adapters. */

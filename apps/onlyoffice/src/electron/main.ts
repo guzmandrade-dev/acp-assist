@@ -37,6 +37,10 @@ createElectronMain({
       attachmentsDir: paths.attachmentsDir,
       logDir: paths.logDir,
       settingsDir: paths.userDataDir,
+      // Packaged app: the .plugin rides in extraResources; dev: the repo copy.
+      pluginPath: app.isPackaged
+        ? path.join(process.resourcesPath, 'acp-bridge.plugin')
+        : path.join(__dirname, '..', '..', 'acp-bridge.plugin'),
     }),
   // No in-editor status panel reads a discovery record; the plugin
   // connects straight to this companion's port.

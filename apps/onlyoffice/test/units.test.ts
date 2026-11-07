@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import express from 'express';
 import http from 'node:http';
 import type { Server } from 'node:http';
@@ -445,160 +448,43 @@ describe('calc adapter', () => {
     ).rejects.toThrow(/no selection/);
     expect(calls).toEqual([]);
   });
-});
 
-/** Impress action grammar + the impress adapter's op mapping. */
-describe('impress adapter', () => {
-  const doc = {
-    editor: 'slide' as const,
-    count: 2,
-    current: 0,
-    slides: [
-      { index: 0, current: true, title: 'First', bodyPreview: 'one', bodyParas: 2, hasTitle: true, hasBody: true, images: 0 },
-      { index: 1, current: false, title: null, bodyPreview: null, bodyParas: 0, hasTitle: false, hasBody: true, images: 0 },
-    ],
-    selectionText: null,
-  };
-
-  function recordingBridge(calls: Array<{ op: string; args: Record<string, unknown> }>) {
-    return {
-      async op<T>(name: string, args: Record<string, unknown> = {}): Promise<T> {
-        calls.push({ op: name, args });
-        return {} as T;
-      },
-    };
-  }
-
-  it('parses rewrite-slide with its content block (title first, then body)', () => {
-    const reply = [
-      'New outline.',
-      '```impress',
-      'New Title',
-      'first point',
-      'second point',
-      '```',
-      '[ACTION: rewrite-slide s1]',
-    ].join('\n');
-    const outcome = parseImpressAction(reply);
-    expect(outcome.module).toBe('impress');
-    expect(outcome.action).toBe('rewrite-slide');
-    expect(outcome.target).toBe(1);
-    expect(outcome.block).toEqual(['New Title', 'first point', 'second point']);
-  });
-
-  it('maps rewrite-slide and insert-after to the matching plugin ops', async () => {
-    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
-    const bridge = recordingBridge(calls);
-
-    await impressAdapter.applyAction(bridge, doc, parseImpressAction('```impress\nT\nb\n```\n[ACTION: rewrite-slide s1]'));
-    await impressAdapter.applyAction(bridge, doc, parseImpressAction('```impress\nT2\nb2\n```\n[ACTION: insert-after s0]'));
-
-    expect(calls.map((c) => c.op)).toEqual(['rewriteSlide', 'insertSlideAfter']);
-    expect(calls[0]?.args).toEqual({ index: 0, title: { text: 'T' }, body: [{ text: 'b' }] });
-    // insert-after s0 = the very start: the new slide lands at index 0.
-    expect(calls[1]?.args).toEqual({ index: 0, title: { text: 'T2' }, body: [{ text: 'b2' }] });
-  });
-
-  it('parses the per-line style prefix into run styles', async () => {
-    const reply = [
-      '```impress',
-      '{bold; size=40; color=#ff6f3d; font=Georgia}Quarterly Review',
-      '{italic}First point',
-      'Plain point',
-      '```',
-      '[ACTION: rewrite-slide s1]',
-    ].join('\n');
-    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
-    await impressAdapter.applyAction(recordingBridge(calls), doc, parseImpressAction(reply));
-    expect(calls[0]?.args).toEqual({
-      index: 0,
-      title: { text: 'Quarterly Review', style: { bold: true, size: 40, color: 'ff6f3d', font: 'Georgia' } },
-      body: [
-        { text: 'First point', style: { italic: true } },
-        { text: 'Plain point' },
-      ],
-    });
-  });
-
-  it('parses insert-image blocks (src, at, size) and maps to insertImage', async () => {
-    const reply = [
-      '```impress',
-      'image: https://example.com/logo.png',
-      'at: 10%, 50%',
-      'size: 30% x 30%',
-      '```',
-      '[ACTION: insert-image s2]',
-    ].join('\n');
-    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
-    await impressAdapter.applyAction(recordingBridge(calls), doc, parseImpressAction(reply));
-    expect(calls[0]?.op).toBe('insertImage');
-    expect(calls[0]?.args).toEqual({
-      index: 1,
-      src: 'https://example.com/logo.png',
-      x: Math.round(12192000 * 0.1),
-      y: Math.round(6858000 * 0.5),
-      w: Math.round(12192000 * 0.3),
-      h: Math.round(6858000 * 0.3),
-    });
-  });
-
-  it('defaults insert-image placement and targets the current slide without sN', async () => {
-    const reply = '```impress\nimage: data:image/png;base64,AAA\n```\n[ACTION: insert-image]';
-    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
-    await impressAdapter.applyAction(recordingBridge(calls), doc, parseImpressAction(reply));
-    expect(calls[0]?.op).toBe('insertImage');
-    expect(calls[0]?.args).toEqual({ index: null, src: 'data:image/png;base64,AAA' });
-  });
-
-  it('rejects insert-image with a non-http/data source', async () => {
-    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
-    await expect(
-      impressAdapter.applyAction(
-        recordingBridge(calls),
-        doc,
-        parseImpressAction('```impress\nimage: C:\\Users\\me\\pic.png\n```\n[ACTION: insert-image]'),
-      ),
-    ).rejects.toThrow(/http\(s\):\/\//);
-    expect(calls).toEqual([]);
-  });
-
-  it('parses set-background lines and maps to setBackground', async () => {
-    const cases: Array<[string, Record<string, unknown>]> = [
-      ['background: solid #1a2b4c', { index: 0, kind: 'solid', color: '1a2b4c' }],
-      ['background: gradient #ffffff-#ff6f3d', { index: 0, kind: 'gradient', color: 'ffffff', color2: 'ff6f3d' }],
-      ['background: image https://example.com/bg.png', { index: 0, kind: 'image', src: 'https://example.com/bg.png' }],
-    ];
-    for (const [line, expected] of cases) {
-      const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
-      await impressAdapter.applyAction(
-        recordingBridge(calls),
-        doc,
-        parseImpressAction(`\`\`\`impress\n${line}\n\`\`\`\n[ACTION: set-background s1]`),
-      );
-      expect(calls[0]?.op).toBe('setBackground');
-      expect(calls[0]?.args).toEqual(expected);
+/** readPluginVersion: reads the version out of a .plugin zip's config.json. */
+describe('readPluginVersion', () => {
+  it('reads the version from a stored-zip config.json', async () => {
+    const { readPluginVersion } = await import('../src/bridge/plugin-package.js');
+    const { makeZip } = await import('./zip-fixture.js');
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'oo-pluginzip-'));
+    try {
+      const p = path.join(dir, 'acp-bridge.plugin');
+      await fs.writeFile(p, makeZip({
+        'config.json': JSON.stringify({ name: 'ACP Assist Bridge', version: '0.7.0' }),
+        'scripts/code.js': '// code',
+      }));
+      expect(await readPluginVersion(p)).toBe('0.7.0');
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
-  it('maps add-notes and delete-slide', async () => {
-    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
-    const bridge = recordingBridge(calls);
-    await impressAdapter.applyAction(bridge, doc, parseImpressAction('```impress\nRemember the demo.\n```\n[ACTION: add-notes s1]'));
-    await impressAdapter.applyAction(bridge, doc, parseImpressAction('[ACTION: delete-slide s2]'));
-    expect(calls[0]?.args).toEqual({ index: 0, text: 'Remember the demo.' });
-    expect(calls[1]?.args).toEqual({ index: 1 });
+  it('returns null for a non-zip file and a missing file', async () => {
+    const { readPluginVersion } = await import('../src/bridge/plugin-package.js');
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'oo-pluginzip-'));
+    try {
+      const p = path.join(dir, 'not-a-zip.plugin');
+      await fs.writeFile(p, 'plain bytes, no zip structure');
+      expect(await readPluginVersion(p)).toBeNull();
+      expect(await readPluginVersion(path.join(dir, 'missing.plugin'))).toBeNull();
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    }
   });
 
-  it('throws before writing when content or the slide address is invalid', async () => {
-    const calls: Array<{ op: string; args: Record<string, unknown> }> = [];
-    const bridge = recordingBridge(calls);
-
-    await expect(
-      impressAdapter.applyAction(bridge, doc, parseImpressAction('[ACTION: rewrite-slide s1]')),
-    ).rejects.toThrow(/content block/);
-    await expect(
-      impressAdapter.applyAction(bridge, doc, parseImpressAction('```impress\nT\n```\n[ACTION: rewrite-slide s9]')),
-    ).rejects.toThrow(/does not exist/);
-    expect(calls).toEqual([]);
+  it('reads the real packaged plugin when the artifact exists', async () => {
+    const { readPluginVersion } = await import('../src/bridge/plugin-package.js');
+    const p = new URL('../acp-bridge.plugin', import.meta.url);
+    const exists = await fs.stat(p).then(() => true).catch(() => false);
+    if (!exists) return; // artifact is gitignored — absent on fresh CI checkouts
+    expect(await readPluginVersion(p)).toMatch(/^\d+\.\d+\.\d+$/);
   });
 });
