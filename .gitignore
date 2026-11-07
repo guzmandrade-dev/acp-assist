@@ -14,6 +14,9 @@ node_modules/
 # Session handoff notes (untracked on purpose)
 next-steps.md
 
+# Empty runtime leftover dir (removed; keep status clean if recreated)
+/state/
+
 # OS junk
 .DS_Store
 Thumbs.db# ONLYOFFICE packaged plugin artifact (built by Compress-Archive)
