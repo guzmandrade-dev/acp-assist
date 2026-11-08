@@ -572,13 +572,19 @@ intent; the agent must end its reply with a trailing action tag:
   the document but captured nowhere else).
 - `[ACTION: rewrite]` — replace the active selection with the block
 - `[ACTION: rewrite-at pN]` — replace entire paragraph [pN] (outline
-  address): `buffer-begin` + N-1 × `paragraph-down` + `paragraph-select`,
-  then **verify** by copying and comparing the plain text with the outline
-  preview — on mismatch nothing is pasted (mis-targeted pastes cannot
-  happen) and the selection is cleared (selections persist in LyX and
-  would pollute later commands). Note: `server-goto-file-row` is NOT
-  usable for addressing (it maps rows of the generated TeX file, needs an
-  export first).
+  address): ONE direct `paragraph-goto <pit> 0` jump first ([pN] -> pit
+  N-1; LyX snaps its view to the cursor on EVERY dispatched LFUN, so the
+  old `buffer-begin` + N-1 × `paragraph-down` walk scrolled through every
+  paragraph on the way — the jump snaps once), then `paragraph-select` and
+  **verify** by copying and comparing the plain text with the outline
+  preview — on mismatch (or when the LFUN is rejected, e.g. older LyX) we
+  fall back to the serial walk and verify again; on a second mismatch
+  nothing is pasted (mis-targeted pastes cannot happen) and the selection
+  is cleared (selections persist in LyX and would pollute later commands).
+  Note: `server-goto-file-row` is NOT usable for addressing (it maps rows
+  of the generated TeX file, needs an export first). Pit ids need not line
+  up with the file outline when insets own paragraphs — hence the
+  verify-then-fallback, never trust the jump blindly.
 - Plain `[ACTION: insert]` merges the first pasted paragraph into the
   cursor's paragraph (it takes that paragraph's layout — live-verified
   when a pasted Subsubsection swallowed the document Title). The prompt

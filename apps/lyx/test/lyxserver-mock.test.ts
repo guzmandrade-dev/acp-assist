@@ -66,6 +66,21 @@ describe('LyXServerClient against mock LyX', () => {
     expect(await client.copySelection()).toBe(false);
   });
 
+  it('paragraph-goto jumps directly to a pit id and rejects out-of-range', async () => {
+    const { mock, client } = await startMock([
+      { layout: 'Title', text: 'Doc title' },
+      { layout: 'Standard', text: 'First body' },
+      { layout: 'Standard', text: 'Second body' },
+    ]);
+    // Direct jump to pit 2 (=[p3]) without the buffer-begin + 2x down walk.
+    expect(await client.paragraphGoto(2, 0)).toBe(true);
+    expect(await client.paragraphSelect()).toBe(true);
+    expect(await client.copySelection()).toBe(true);
+    expect(mock.clipboardText).toBe('Second body');
+    // Out-of-range pit is rejected by LyX ("Command disabled") -> false.
+    expect(await client.paragraphGoto(99, 0)).toBe(false);
+  });
+
   it('executes the insert-after pN choreography', async () => {
     const { mock, client } = await startMock([
       { layout: 'Title', text: 'Doc title' },

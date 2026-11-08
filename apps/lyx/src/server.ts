@@ -509,6 +509,14 @@ function createLyxBackend(
    * - mode 'insert-after': the selection is collapsed to the paragraph's
    *   end and a fresh empty paragraph is created BELOW [pN], so the paste
    *   lands in it with its own layout (never merges into [pN]).
+   *
+   * Movement: ONE direct `paragraph-goto` jump first ([pN] -> pit N-1),
+   * because LyX snaps its view to the cursor on EVERY dispatched LFUN
+   * (live-verified) — the old buffer-begin + N-1 x paragraph-down walk
+   * scrolled through every paragraph on the way. The verification copy
+   * guards the jump (pit ids need not line up with the file outline when
+   * insets own paragraphs); on any mismatch we fall back to the serial
+   * walk, which is authoritative.
    */
   async function gotoParagraph(
     session: CompanionSession<LyxState>,
@@ -543,41 +551,66 @@ function createLyxBackend(
     if (!entry) {
       return fail(`Paragraph [p${target}] does not exist (document has ${ctx.outline.length}).`);
     }
-    const moved = await session.state.lyx.beginOfDocument();
-    if (!moved) return fail('buffer-begin failed.');
-    let ok = true;
-    for (let i = 1; i < target && ok; i++) ok = await session.state.lyx.paragraphDown();
-    if (!ok) {
-      return fail(`Could not reach paragraph [p${target}] (paragraph-down failed).`);
+    // Select the target paragraph and verify the landing spot against the
+    // SAVED file: copy the selection and compare its raw .lyx markup with
+    // the file's paragraph (see verifyParagraphSelection — a mis-targeted
+    // paste never happens).
+    const selectAndVerify = async (): Promise<{
+      ok: boolean;
+      payload: string | null;
+      reason: 'select' | 'copy' | 'mismatch' | null;
+      actual: string;
+    }> => {
+      const selected = await session.state.lyx.paragraphSelect();
+      if (!selected) return { ok: false, payload: null, reason: 'select', actual: '' };
+      const copied = await session.state.lyx.copySelection();
+      if (!copied) return { ok: false, payload: null, reason: 'copy', actual: '' };
+      const payload = await pollUntil(() => session.state.clipboard.readLyxDocument(), {
+        timeoutMs: TIMINGS.clipboardPayloadPollMs,
+        intervalMs: TIMINGS.pollIntervalMs,
+      });
+      const clipboardText = payload === null ? await session.state.clipboard.readText() : null;
+      const verify = verifyParagraphSelection({
+        payload,
+        clipboardText,
+        diskRaw: raw,
+        index: target - 1,
+        expectedPreview: entry.preview,
+      });
+      return { ok: verify.ok, payload, reason: verify.ok ? null : 'mismatch', actual: verify.actual };
+    };
+
+    // Direct jump first; fall back to the serial walk when the jump is
+    // rejected or fails verification.
+    let attempt =
+      (await session.state.lyx.paragraphGoto(target - 1, 0))
+        ? await selectAndVerify()
+        : { ok: false, payload: null, reason: 'select' as const, actual: '' };
+    if (!attempt.ok) {
+      // A wrong jump may have left a selection behind — selections persist
+      // in LyX and would pollute the walk's paragraph-select.
+      await session.state.lyx.clearSelection();
+      const moved = await session.state.lyx.beginOfDocument();
+      if (!moved) return fail('buffer-begin failed.');
+      let ok = true;
+      for (let i = 1; i < target && ok; i++) ok = await session.state.lyx.paragraphDown();
+      if (!ok) {
+        return fail(`Could not reach paragraph [p${target}] (paragraph-down failed).`);
+      }
+      attempt = await selectAndVerify();
     }
-    const selected = await session.state.lyx.paragraphSelect();
-    if (!selected) return fail('paragraph-select failed.');
-    // Verify the target against the SAVED file: copy the selection and
-    // compare its raw .lyx markup with the file's paragraph (see
-    // verifyParagraphSelection — a mis-targeted paste never happens).
-    const copied = await session.state.lyx.copySelection();
-    if (!copied) {
-      return fail('Could not copy the selected paragraph for verification.');
-    }
-    const payload = await pollUntil(() => session.state.clipboard.readLyxDocument(), {
-      timeoutMs: TIMINGS.clipboardPayloadPollMs,
-      intervalMs: TIMINGS.pollIntervalMs,
-    });
-    const clipboardText = payload === null ? await session.state.clipboard.readText() : null;
-    const verify = verifyParagraphSelection({
-      payload,
-      clipboardText,
-      diskRaw: raw,
-      index: target - 1,
-      expectedPreview: entry.preview,
-    });
-    if (!verify.ok) {
+    if (!attempt.ok) {
+      if (attempt.reason === 'select') return fail('paragraph-select failed.');
+      if (attempt.reason === 'copy') {
+        return fail('Could not copy the selected paragraph for verification.');
+      }
       return fail(
         `Paragraph targeting failed: [p${target}] should start with ` +
           `"${normalizeForCompare(entry.preview).slice(0, 60)}\u2026" but the cursor landed on ` +
-          `"${verify.actual.slice(0, 60)}\u2026". Nothing was pasted.`,
+          `"${attempt.actual.slice(0, 60)}\u2026". Nothing was pasted.`,
       );
     }
+    const payload = attempt.payload;
     if (mode === 'insert-after') {
       // Collapse the selection to the end of [pN] and break a fresh empty
       // paragraph below it; the paste then merges into that empty

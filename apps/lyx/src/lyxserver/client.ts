@@ -702,6 +702,20 @@ export class LyxServerClient extends EventEmitter {
     }
   }
 
+  /**
+   * Jump DIRECTLY to a paragraph by its pit id (0-based index in the
+   * buffer's paragraph vector) at a position within it — one LFUN instead
+   * of buffer-begin + N x paragraph-down. LyX snaps its view to the cursor
+   * on EVERY dispatched LFUN (live-verified 2026-10-09), so the serial walk
+   * visibly scrolled through each paragraph on the way; the jump snaps
+   * once. Callers MUST still verify the landing spot (the copy-and-compare
+   * check in gotoParagraph): pit ids need not line up with a file outline
+   * when insets own paragraphs. Returns false when LyX rejects the LFUN.
+   */
+  async paragraphGoto(pit: number, pos = 0): Promise<boolean> {
+    return (await this.tryRequest('paragraph-goto', `${pit} ${pos}`)) !== null;
+  }
+
   /** Move the cursor to the beginning of the next paragraph. */
   async paragraphDown(): Promise<boolean> {
     try {

@@ -230,6 +230,15 @@ export class MockLyxServer {
       case 'buffer-begin':
         this.moveCursor(0, 0);
         return { data: '' };
+      case 'paragraph-goto': {
+        // Real LyX: pit id (0-based paragraph index) + position in paragraph.
+        const pit = Number.parseInt(arg.split(/\s+/)[0] ?? '', 10);
+        if (!Number.isInteger(pit) || pit < 0 || pit >= this.paragraphs.length) {
+          return { error: 'Command disabled' };
+        }
+        this.moveCursor(pit, 0);
+        return { data: '' };
+      }
       case 'paragraph-down': {
         if (cursor.p >= this.paragraphs.length - 1) return { error: 'Command disabled' };
         this.moveCursor(cursor.p + 1, 0);

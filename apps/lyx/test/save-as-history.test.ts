@@ -110,6 +110,9 @@ function fakeLyx(initialFile: string, saveMode: 'deferred' | 'immediate', saveAs
     async breakParagraph() {
       return true;
     },
+    async paragraphGoto() {
+      return false;
+    },
     async paragraphDown() {
       return false;
     },

@@ -115,7 +115,7 @@ class FailingAgent implements AgentRunner {
  * In-memory LyXServerClient stand-in. Only the LFUNs the message loop uses
  * are implemented; verification reads go through the raw clipboard stub.
  */
-function fakeLyx(doc: FakeDoc, hooks: { onPaste?: () => Promise<void> } = {}) {
+function fakeLyx(doc: FakeDoc, hooks: { onPaste?: () => Promise<void>; failGoto?: boolean } = {}) {
   let cursor = 0;
   let selection: { p: number; start: number; end: number } | null = null;
   const clip = { text: '' };
@@ -156,6 +156,15 @@ function fakeLyx(doc: FakeDoc, hooks: { onPaste?: () => Promise<void> } = {}) {
     },
     async beginOfDocument() {
       cursor = 0;
+      selection = null;
+      return true;
+    },
+    async paragraphGoto(pit: number) {
+      // Test hook: force the direct jump to be rejected (unknown LFUN) so
+      // the serial-walk fallback is exercised.
+      if (hooks.failGoto) return false;
+      if (pit < 0 || pit >= doc.paragraphs.length) return false;
+      cursor = pit;
       selection = null;
       return true;
     },
@@ -260,7 +269,7 @@ interface Harness {
 
 async function startHarness(
   replies: string[],
-  lyxHooks: { onPaste?: () => Promise<void> } = {},
+  lyxHooks: { onPaste?: () => Promise<void>; failGoto?: boolean } = {},
   agentOverride?: AgentRunner,
 ): Promise<Harness> {
   const doc = await writeFakeDoc();
@@ -384,6 +393,35 @@ describe('multi-action runs over the message stream', () => {
     expect(frames.filter((f) => f.appliedStep).map((f) => f.appliedStep)).toEqual([1, 2]);
     expect(frames.at(-1)).toEqual({ done: true });
     expect(frames.some((f) => f.stopped === 'none')).toBe(true);
+  });
+
+  it('falls back to the serial walk when paragraph-goto is rejected', async () => {
+    // failGoto simulates an older LyX without the paragraph-goto LFUN (or
+    // a rejected jump): gotoParagraph must still address [pN] correctly
+    // via buffer-begin + paragraph-down, verified as usual.
+    const harness = await startHarness(
+      [
+        'Rewriting the first body.\n```lyx\n\\begin_layout Standard\nfirst body rewritten\n\\end_layout\n```\n[ACTION: rewrite-at p2]',
+        'Done.\n[ACTION: none]',
+      ],
+      { failGoto: true },
+    );
+    cleanups.push(async () => {
+      await new Promise<void>((resolve) => harness.server.close(() => resolve()));
+      await fs.rm(harness.doc.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
+
+    const res = await fetch(`${harness.base}/api/session/${harness.sessionId}/message/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${API_TOKEN}` },
+      body: JSON.stringify({ message: 'rewrite the first body' }),
+    });
+    const frames = await readSse(res);
+
+    expect(harness.doc.paragraphs[0].text).toBe('placeholder title');
+    expect(harness.doc.paragraphs[1].text).toBe('first body rewritten');
+    expect(frames.filter((f) => typeof f.applied === 'string').map((f) => f.applied)).toEqual(['rewrite-at']);
+    expect(frames.at(-1)).toEqual({ done: true });
   });
 
   it('stops immediately when the agent has nothing to edit', async () => {
