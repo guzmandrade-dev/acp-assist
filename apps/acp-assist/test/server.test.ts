@@ -136,7 +136,9 @@ describe('unified ACP Assist server', () => {
     expect(res.status).toBe(200);
   });
 
-  it('keeps per-app history directories separate', async () => {
+  // Session creation probes the LyX pipe and may boot the PowerShell
+  // clipboard host — real process spawns, slow on a busy box.
+  it('keeps per-app history directories separate', { timeout: 30_000 }, async () => {
     // The sub-servers were built with history/<app>; a session created
     // through the lyx token must not create files under libreoffice's.
     const res = await fetch(`${base}/api/session`, {
