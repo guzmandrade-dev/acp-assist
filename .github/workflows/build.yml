@@ -129,7 +129,7 @@ jobs:
         run: npm ci
 
       - name: Download app icons
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: app-icons-${{ matrix.app }}
           path: apps/${{ matrix.app }}/build
@@ -137,13 +137,13 @@ jobs:
       # The unified app packages both bridges as extraResources from the
       # sibling app directories.
       - name: Download bridge extension
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: bridge-oxt
           path: apps/libreoffice
 
       - name: Download bridge plugin
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: bridge-plugin
           path: apps/onlyoffice
@@ -233,7 +233,7 @@ jobs:
 
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
