@@ -28,8 +28,6 @@ import {
   assemblePasteDocument,
   extractBodyLayouts,
   findMarkupProblems,
-  splitTopLevelLayouts,
-  normalizeMarkupBlock,
   type DocumentContext,
 } from './lyx/context.js';
 import { NEWFILE_PLACEHOLDER_RE, discoverLyxEnvironment } from './lyxserver/pipe-config.js';
@@ -43,7 +41,7 @@ import {
   formatHistoryReplay,
   LYX_REPLAY_OPTIONS,
 } from './lyx/prompts.js';
-import { verifyParagraphSelection, normalizeForCompare } from './lyx/verification.js';
+import { verifyParagraphSelection, normalizeForCompare, isLikelyMatch } from './lyx/verification.js';
 import { findClassLayouts } from './lyx/layouts.js';
 import {
   UNSAVED_KEY,
@@ -697,24 +695,26 @@ function createLyxBackend(
   ): Promise<string | null> {
     const filePath = session.state.documentPath;
     if (!filePath) return 'Paste verification failed: the document is not saved on disk.';
-    const pasteBlocks = splitTopLevelLayouts(
-      extractBodyLayouts(assemblePasteDocument(header, outcome.body ?? '')) ?? '',
-    );
-    if (pasteBlocks.length === 0) return 'Paste verification failed: empty payload.';
-    const want = pasteBlocks.map(normalizeMarkupBlock);
+    // Compare on plain TEXT, not exact markup: with change tracking ON, LyX
+    // wraps pasted content in \change_inserted and keeps replaced text as
+    // \change_deleted inside the same block, so block-exact comparison fails
+    // even when the paste landed (live-found 2026-11-08).
+    let wantText = '';
+    try {
+      const pasteCtx = buildDocumentContext(assemblePasteDocument(header, outcome.body ?? ''));
+      wantText = normalizeForCompare(pasteCtx.outline.map((o) => o.preview).join('\n'));
+    } catch {
+      return 'Paste verification failed: could not parse the paste payload.';
+    }
+    if (!wantText) return 'Paste verification failed: empty payload.';
     const containsPastedRun = (raw: string): boolean => {
-      const diskBlocks = splitTopLevelLayouts(extractBodyLayouts(raw) ?? '');
-      for (let i = 0; i + want.length <= diskBlocks.length; i++) {
-        let all = true;
-        for (let j = 0; j < want.length; j++) {
-          if (normalizeMarkupBlock(diskBlocks[i + j] ?? '') !== (want[j] ?? '')) {
-            all = false;
-            break;
-          }
-        }
-        if (all) return true;
+      try {
+        const ctx = buildDocumentContext(raw);
+        const hay = normalizeForCompare(ctx.outline.map((o) => o.preview).join('\n'));
+        return isLikelyMatch(wantText, hay);
+      } catch {
+        return false;
       }
-      return false;
     };
     // Deaf pipe: buffer-write is blind, so the file may lag the paste — POLL
     // the file (fresh read each time, bypassing the snapshot cache) until the

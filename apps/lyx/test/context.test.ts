@@ -412,6 +412,16 @@ describe('splitTopLevelLayouts / normalizeMarkupBlock', () => {
     expect(a).toBe(b);
   });
 
+  it('strips change-tracking markers when normalizing (tracked paste == plain paste)', () => {
+    // With change tracking ON, LyX wraps pasted content in change_inserted —
+    // the saved file block must still compare equal to the pasted payload block.
+    const tracked = normalizeMarkupBlock(
+      '\\begin_layout Standard\n\\change_inserted 563965142 1794167887\nTEST REWRITE\n\\end_layout',
+    );
+    const plain = normalizeMarkupBlock('\\begin_layout Standard\nTEST REWRITE\n\\end_layout');
+    expect(tracked).toBe(plain);
+  });
+
   it('round-trips paragraphs extracted from a full document', () => {
     const doc =
       HEADER +

@@ -183,12 +183,19 @@ export function splitTopLevelLayouts(body: string): string[] {
  * blocks (e.g. a clipboard payload block vs the saved file's block):
  * CRLF, trailing spaces, and blank lines are ignored; leading spaces
  * are preserved (LyX uses them for layout argument lines).
+ * Change-tracking marker lines (\change_inserted / \change_deleted /
+ * \change_accepted) are stripped: with change tracking ON, LyX wraps pasted
+ * content in \change_inserted, so the saved file's block differs from the
+ * pasted payload's block only by those markers (live-found 2026-11-08:
+ * post-paste verify failed and undid a good edit because of them).
  */
+const CHANGE_MARKER_RE = /^\\change_(?:inserted|deleted|accepted)\s/;
+
 export function normalizeMarkupBlock(block: string): string {
   return block
     .split(/\r?\n/)
     .map((line) => line.replace(/\s+$/, ''))
-    .filter((line) => line.length > 0)
+    .filter((line) => line.length > 0 && !CHANGE_MARKER_RE.test(line))
     .join('\n');
 }
 
