@@ -2,7 +2,7 @@
 
 // API client + agent settings persistence.
 
-import { cmdEl } from './state.js';
+import { cmdEl, showFullHistoryEl, state } from './state.js';
 
 /**
  * Fetch helper for the companion API: attaches the bearer token that the
@@ -46,6 +46,10 @@ export async function loadSettings() {
   try {
     const s = await api('/api/settings/agent');
     if (typeof s.command === 'string' && s.command) cmdEl.value = formatAgentCommand(s);
+    if (typeof s.showFullHistory === 'boolean') {
+      state.showFullHistory = s.showFullHistory;
+      if (showFullHistoryEl) showFullHistoryEl.checked = s.showFullHistory;
+    }
   } catch {
     /* keep the HTML defaults */
   }
@@ -53,7 +57,11 @@ export async function loadSettings() {
 
 export function saveSettings() {
   const { command, args } = parseAgentCommand(cmdEl.value);
-  const body = JSON.stringify({ command, args });
+  const body = JSON.stringify({
+    command,
+    args,
+    showFullHistory: showFullHistoryEl ? showFullHistoryEl.checked : state.showFullHistory,
+  });
   // Fire-and-forget; a failed save must not break the UI.
   api('/api/settings/agent', { method: 'PUT', body }).catch(() => {});
 }

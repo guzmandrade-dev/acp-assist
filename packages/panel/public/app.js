@@ -19,9 +19,10 @@ import {
   fileInput,
   selectionEl,
   appSelect,
+  showFullHistoryEl,
 } from './state.js';
 import { api, loadSettings, saveSettings } from './api.js';
-import { addSystemMessage, showEmpty } from './messages.js';
+import { addSystemMessage, rerenderAssistantTexts, showEmpty } from './messages.js';
 import {
   maybeSetBusyFromError,
   setStatusText,
@@ -140,6 +141,13 @@ function start() {
   pinBtn.setAttribute('aria-pressed', 'false');
   pinBtn.title = 'Floating disabled';
   cmdEl.addEventListener('blur', saveSettings);
+  if (showFullHistoryEl) {
+    showFullHistoryEl.addEventListener('change', () => {
+      state.showFullHistory = showFullHistoryEl.checked;
+      saveSettings();
+      rerenderAssistantTexts();
+    });
+  }
   const settingsDetails = document.querySelector('.agent-settings');
   document.addEventListener('pointerdown', (e) => {
     if (settingsDetails instanceof HTMLDetailsElement && settingsDetails.open

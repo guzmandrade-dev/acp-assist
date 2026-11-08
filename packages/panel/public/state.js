@@ -58,6 +58,7 @@ export const pinBtn = document.getElementById('pin');
 export const reconnectBtn = document.getElementById('reconnect');
 export const installBtn = document.getElementById('install-btn');
 export const cmdEl = document.getElementById('agent-cmd');
+export const showFullHistoryEl = document.getElementById('show-full-history');
 export const attachBtn = document.getElementById('attach');
 export const fileInput = document.getElementById('file-input');
 export const chipsEl = document.getElementById('chips');
@@ -119,4 +120,11 @@ export const state = {
   followMode: false,
   /** Attachment ids waiting to be sent with the next message. */
   pendingAttachments: [],
+  /**
+   * Show the full operation log: assistant replies render their fenced
+   * content blocks (the payload about to be pasted) in full. When false
+   * the blocks render as a placeholder. Persisted server-side via
+   * /api/settings/agent (showFullHistory); default true.
+   */
+  showFullHistory: true,
 };

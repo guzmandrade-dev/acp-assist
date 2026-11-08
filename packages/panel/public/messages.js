@@ -173,7 +173,25 @@ function messagePlainText(div) {
   if (div._applied && div._applied !== 'none') {
     text = text.replace(new RegExp(FENCE_STRIP_SRC, 'g'), '').trim();
   }
+  // Mirror the render: with the full operation log hidden, the fenced
+  // content block is stripped from the quoted text too.
+  if (!state.showFullHistory) {
+    text = text.replace(new RegExp(FENCE_STRIP_SRC, 'g'), '').trim();
+  }
   return text;
+}
+
+/**
+ * Re-render every assistant bubble from its stored raw text — used when
+ * the "show full operation log" setting flips, so hidden/shown content
+ * blocks update without a reconnect (the recorded history is untouched).
+ */
+export function rerenderAssistantTexts() {
+  for (const div of chat.querySelectorAll('.message.assistant')) {
+    if (typeof div._rawText !== 'string') continue;
+    const textDiv = div.querySelector('.text');
+    if (textDiv) textDiv.innerHTML = renderAssistantText(div._rawText, div._applied);
+  }
 }
 
 /** Insert text into the composer as a GitHub-style blockquote at the caret. */

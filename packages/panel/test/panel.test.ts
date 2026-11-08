@@ -91,6 +91,28 @@ describe('shared panel assets', () => {
     expect(html).toContain('id="save-consent-backdrop"');
     expect(html).toContain('id="install-btn"');
     expect(html).toContain('id="bridge-spinner"');
+    // The "show full operation log" toggle lives in the agent settings panel.
+    expect(html).toContain('id="show-full-history"');
+  });
+
+  it('panel modules wire the show-full-history setting end to end', async () => {
+    const dir = panelPublicDir();
+    const read = async (name: string) => fs.readFile(path.join(dir, name), 'utf8');
+    // state carries the runtime flag + the checkbox element
+    const stateSrc = await read('state.js');
+    expect(stateSrc).toContain('showFullHistory');
+    expect(stateSrc).toContain('show-full-history');
+    // api persists/loads it through /api/settings/agent
+    const apiSrc = await read('api.js');
+    expect(apiSrc).toContain('showFullHistory');
+    // markdown collapses fenced blocks when hidden; messages re-render on toggle
+    const mdSrc = await read('markdown.js');
+    expect(mdSrc).toContain('state.showFullHistory');
+    expect(mdSrc).toContain('block-hidden');
+    const msgSrc = await read('messages.js');
+    expect(msgSrc).toContain('rerenderAssistantTexts');
+    const appSrc = await read('app.js');
+    expect(appSrc).toContain('rerenderAssistantTexts');
   });
 
   it('install.js wires both install flows (LO one-click + OO bridge download)', async () => {

@@ -51,6 +51,12 @@ describe('readAgentSettingsBody', () => {
       .toEqual({ officePath: 'C:\\Program Files\\Collabora' });
     expect(readAgentSettingsBody({ officePath: 42 })).toEqual({});
   });
+
+  it('keeps a boolean showFullHistory and ignores non-booleans', () => {
+    expect(readAgentSettingsBody({ showFullHistory: false })).toEqual({ showFullHistory: false });
+    expect(readAgentSettingsBody({ showFullHistory: true })).toEqual({ showFullHistory: true });
+    expect(readAgentSettingsBody({ showFullHistory: 'no' })).toEqual({});
+  });
 });
 
 // --- history persistence --------------------------------------------------------

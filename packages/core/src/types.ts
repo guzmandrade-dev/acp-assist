@@ -20,6 +20,16 @@ export interface AgentSettings {
    * absent = auto-detect the standard LibreOffice locations.
    */
   officePath?: string;
+  /**
+   * Panel UI preference (persisted alongside the agent command because the
+   * companion's port is random per launch, so the panel cannot use
+   * localStorage): when false, the chat hides the fenced content blocks
+   * (the ```lyx / ```writer payload about to be pasted) in assistant
+   * replies and renders a placeholder instead. Absent = true (full
+   * operation log shown). The recorded history keeps the full text either
+   * way — the setting only affects rendering.
+   */
+  showFullHistory?: boolean;
 }
 
 export interface Turn {

@@ -4,7 +4,7 @@
 // restore safe inline markup, with the app's fenced content blocks as
 // real code blocks.
 
-import { FENCE_STRIP_SRC, FENCE_BLOCK_SRC } from './state.js';
+import { FENCE_STRIP_SRC, FENCE_BLOCK_SRC, state } from './state.js';
 
 export function escapeHtml(text) {
   return text
@@ -47,7 +47,15 @@ export function renderAssistantText(full, applied) {
   let html = '';
   for (const part of parts) {
     if (part.type === 'code') {
-      html += `<pre class="code"><code>${escapeHtml(part.content)}</code></pre>`;
+      // The full operation log is optional: when hidden, the fenced
+      // content block (the payload about to be pasted) collapses to a
+      // placeholder. The raw text stays on div._rawText, so re-enabling
+      // the setting re-renders the block in full.
+      if (!state.showFullHistory) {
+        html += '<p class="block-hidden">content block hidden &mdash; enable &ldquo;Show full operation log&rdquo; in the agent settings</p>';
+      } else {
+        html += `<pre class="code"><code>${escapeHtml(part.content)}</code></pre>`;
+      }
     } else {
       const paragraphs = part.content.split(/\n\s*\n/);
       for (const para of paragraphs) {
