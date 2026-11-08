@@ -88,6 +88,9 @@ describe('parseAction', () => {
     expect(parseAction('[ACTION: rewrite-at p12]').action).toBe('rewrite-at');
     expect(parseAction('[ACTION: delete-at p2]').action).toBe('delete-at');
     expect(parseAction('[ACTION: delete-at p2]').block).toBeNull();
+    expect(parseAction('[ACTION: read-paragraph p7]').action).toBe('read-paragraph');
+    expect(parseAction('[ACTION: read-paragraph p7]').target).toBe(7);
+    expect(parseAction('[ACTION: read-paragraph p7]').block).toBeNull();
   });
 
   it('takes the last tag when several appear', () => {
@@ -528,6 +531,31 @@ describe('writerAdapter applyAction insert-table', () => {
     const pb = parseAction('[ACTION: page-break p2]');
     expect(pb.action).toBe('page-break');
     expect(pb.block).toBeNull();
+  });
+
+  it('read-paragraph fetches the full text without writing', async () => {
+    const edits: EditPayload[] = [];
+    const bridge = {
+      async edit(payload: EditPayload) {
+        edits.push(payload);
+        return {};
+      },
+      async paragraph(index: number) {
+        return { i: index, text: `full text of p${index + 1}`, style: 'Standard' };
+      },
+    } as unknown as BridgeClient;
+    const doc = writerDoc([['a', 'Standard'], ['b', 'Standard']]);
+    const out = parseAction('Need the full paragraph first.\n[ACTION: read-paragraph p2]');
+    const r = await writerAdapter.applyAction(bridge, doc, { hasSelection: false, text: null, cursorStyle: null, calc: null }, out);
+    expect(edits).toEqual([]);
+    expect(r.description).toBe('[ACTION: read-paragraph p2] full text of [p2] (Standard):\nfull text of p2');
+
+    await expect(
+      writerAdapter.applyAction(bridge, doc, { hasSelection: false, text: null, cursorStyle: null, calc: null }, parseAction('[ACTION: read-paragraph p9]')),
+    ).rejects.toThrow(/does not exist/);
+    await expect(
+      writerAdapter.applyAction(bridge, doc, { hasSelection: false, text: null, cursorStyle: null, calc: null }, parseAction('[ACTION: read-paragraph]')),
+    ).rejects.toThrow(/needs a valid paragraph number/);
   });
 });
 // --- Calc adapter ---------------------------------------------------------------

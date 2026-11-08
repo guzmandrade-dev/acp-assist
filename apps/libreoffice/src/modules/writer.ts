@@ -123,6 +123,10 @@ export const writerAdapter: ModuleAdapter = {
         '  include a ```writer block with the comment text.',
         '- [ACTION: page-break pN] to start paragraph [pN] on a NEW PAGE:',
         '  NO ```writer block, just the tag.',
+        '- [ACTION: read-paragraph pN] to READ the FULL text of paragraph [pN]',
+        '  (in a large document the outline previews are truncated): NO',
+        '  ```writer block, just the tag. The app replies with the full text;',
+        '  then continue with your edit.',
       ],
       contentFormat: [
         'Content format (```writer block): markdown-lite, one paragraph per line.',
@@ -175,8 +179,9 @@ export const writerAdapter: ModuleAdapter = {
       head +
       vocabBlock +
       `The document is LARGE (${(doc.paragraphs ?? []).length} paragraphs), so only this\n` +
-      `outline is attached (previews are truncated). Ask the user or use the\n` +
-      `outline structure to plan edits; the [pN] addresses are still valid.\n` +
+      `outline is attached (previews are truncated). Use [ACTION: read-paragraph\n` +
+      `pN] to fetch a paragraph's full text when you need it; the [pN] addresses\n` +
+      `are still valid.\n` +
       `${renderOutline(doc)}\n`
     );
   },
@@ -225,6 +230,22 @@ export const writerAdapter: ModuleAdapter = {
     }
     if (outcome.action === 'rewrite' && !sel.hasSelection) {
       throw new Error('[ACTION: rewrite] but the document has no active selection.');
+    }
+    if (outcome.action === 'read-paragraph') {
+      // Read-only: fetch the full paragraph (the outline preview is
+      // truncated in large documents) and hand it back as this step's
+      // result — the continuation prompt re-quotes it to the agent.
+      if (outcome.target === null || outcome.target < 1) {
+        throw new Error('[ACTION: read-paragraph] needs a valid paragraph number (e.g. read-paragraph p3).');
+      }
+      const count = doc.paragraphs?.length ?? 0;
+      if (outcome.target > count) {
+        throw new Error(`Paragraph [p${outcome.target}] does not exist (document has ${count}).`);
+      }
+      const p = await bridge.paragraph(outcome.target - 1);
+      return {
+        description: `[ACTION: read-paragraph p${outcome.target}] full text of [p${outcome.target}] (${p.style}):\n${p.text}`,
+      };
     }
     const addressed =
       outcome.action === 'insert-after' || outcome.action === 'rewrite-at' ||

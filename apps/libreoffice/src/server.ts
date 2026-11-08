@@ -588,7 +588,7 @@ function readSelection(doc: BridgeDocument): SelectionInfo {
  * missing colon — tagNote reports the auto-correction. The B5 layered
  * resolution and capture extraction live in the core factory. */
 const parseTag = createParseActionTag({
-  actions: 'delete-at|rewrite-at|insert-after|insert-top|insert-table|insert-image|add-comment|page-break|rewrite|insert|none|continue',
+  actions: 'read-paragraph|delete-at|rewrite-at|insert-after|insert-top|insert-table|insert-image|add-comment|page-break|rewrite|insert|none|continue',
   targetPattern: '(?:\\s+p(\\d+))?',
 });
 

@@ -138,6 +138,7 @@ The vocabulary is module-specific.
 | `[ACTION: rewrite]` | Replace the active selection |
 | `[ACTION: rewrite-at pN]` | Replace paragraph `[pN]` (verified first) |
 | `[ACTION: delete-at pN]` | Delete paragraph `[pN]` |
+| `[ACTION: read-paragraph pN]` | Read-only: fetch the full text of `[pN]` (outline previews are truncated in large documents); the app re-prompts the agent with it |
 
 **Calc** (active sheet + selection surfaced as TSV with values *and*
 formulas, cells addressed as `A1`):

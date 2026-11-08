@@ -23,6 +23,7 @@ export type AgentAction =
   | 'insert-image'
   | 'add-comment'
   | 'page-break'
+  | 'read-paragraph'
   // Calc
   | 'write-cells'
   | 'insert-rows'
