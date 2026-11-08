@@ -117,7 +117,7 @@ class FailingAgent implements AgentRunner {
  */
 function fakeLyx(
   doc: FakeDoc,
-  hooks: { onPaste?: () => Promise<void>; failGoto?: boolean; writeOnly?: boolean; noPaste?: boolean } = {},
+  hooks: { onPaste?: () => Promise<void>; failGoto?: boolean; writeOnly?: boolean; noPaste?: boolean; saveDelayMs?: number } = {},
 ) {
   let cursor = 0;
   let selection: { p: number; start: number; end: number } | null = null;
@@ -148,6 +148,8 @@ function fakeLyx(
     },
     async save() {
       client.calls.save += 1;
+      // Test hook: simulate the blind buffer-write landing late on disk.
+      if (hooks.saveDelayMs) await new Promise((r) => setTimeout(r, hooks.saveDelayMs));
       await fs.writeFile(doc.file, fakeDocText(doc.paragraphs), 'utf8');
     },
     async copySelection() {
@@ -282,7 +284,7 @@ interface Harness {
 
 async function startHarness(
   replies: string[],
-  lyxHooks: { onPaste?: () => Promise<void>; failGoto?: boolean; writeOnly?: boolean; noPaste?: boolean } = {},
+  lyxHooks: { onPaste?: () => Promise<void>; failGoto?: boolean; writeOnly?: boolean; noPaste?: boolean; saveDelayMs?: number } = {},
   agentOverride?: AgentRunner,
 ): Promise<Harness> {
   const doc = await writeFakeDoc();
@@ -453,7 +455,7 @@ describe('multi-action runs over the message stream', () => {
         'Rewriting p2.\n```lyx\n\\begin_layout Standard\nsecond body rewritten\n\\end_layout\n```\n[ACTION: rewrite-at p2]',
         'Done.\n[ACTION: none]',
       ],
-      { writeOnly: true },
+      { writeOnly: true, saveDelayMs: 600 },
     );
     cleanups.push(async () => {
       await new Promise<void>((resolve) => harness.server.close(() => resolve()));

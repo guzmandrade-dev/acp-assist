@@ -695,23 +695,50 @@ function createLyxBackend(
     outcome: ActionOutcome,
     header: string,
   ): Promise<string | null> {
-    await saveDocument(session);
-    const snap = await readDocumentSnapshot(session);
+    const filePath = session.state.documentPath;
+    if (!filePath) return 'Paste verification failed: the document is not saved on disk.';
     const pasteBlocks = splitTopLevelLayouts(
       extractBodyLayouts(assemblePasteDocument(header, outcome.body ?? '')) ?? '',
     );
     if (pasteBlocks.length === 0) return 'Paste verification failed: empty payload.';
-    const diskBlocks = splitTopLevelLayouts(extractBodyLayouts(snap.raw) ?? '');
     const want = pasteBlocks.map(normalizeMarkupBlock);
-    for (let i = 0; i + want.length <= diskBlocks.length; i++) {
-      let all = true;
-      for (let j = 0; j < want.length; j++) {
-        if (normalizeMarkupBlock(diskBlocks[i + j] ?? '') !== (want[j] ?? '')) {
-          all = false;
-          break;
+    const containsPastedRun = (raw: string): boolean => {
+      const diskBlocks = splitTopLevelLayouts(extractBodyLayouts(raw) ?? '');
+      for (let i = 0; i + want.length <= diskBlocks.length; i++) {
+        let all = true;
+        for (let j = 0; j < want.length; j++) {
+          if (normalizeMarkupBlock(diskBlocks[i + j] ?? '') !== (want[j] ?? '')) {
+            all = false;
+            break;
+          }
         }
+        if (all) return true;
       }
-      if (all) return null;
+      return false;
+    };
+    // Deaf pipe: buffer-write is blind, so the file may lag the paste — POLL
+    // the file (fresh read each time, bypassing the snapshot cache) until the
+    // pasted run appears, re-issuing the save once if the file is unchanged.
+    await saveDocument(session);
+    const deadline = Date.now() + 4_000;
+    let resentSave = false;
+    for (;;) {
+      let raw: string | null = null;
+      try {
+        raw = await fs.readFile(filePath, 'utf8');
+      } catch {
+        raw = null;
+      }
+      if (raw && containsPastedRun(raw)) {
+        session.state.docSnapshot = null; // force re-parse on next read
+        return null;
+      }
+      if (Date.now() >= deadline) break;
+      if (!resentSave && Date.now() > deadline - 2_500) {
+        resentSave = true;
+        await session.state.lyx.save();
+      }
+      await new Promise((r) => setTimeout(r, 150));
     }
     return (
       'Paste verification failed: the pasted content is not in the document ' +
