@@ -571,6 +571,19 @@ intent; the agent must end its reply with a trailing action tag:
   deletion tells the user to undo in LyX (the paragraph is gone from
   the document but captured nowhere else).
 - `[ACTION: rewrite]` — replace the active selection with the block
+- **Active-buffer switch mid-run (live-observed 2026-11-08):** the pipe
+  dispatches to LyX's CURRENT buffer — the focused window's document — and
+  `server-get-filename` follows it. With two LyX windows open, focusing the
+  other window mid-run silently retargets every cursor/copy/paste LFUN (and
+  flips the panel's document indicator). Symptom seen live: a run started on
+  "PLEE article" failed with "Could not copy the selected paragraph for
+  verification" after the user alt-tabbed to the "Poster Beamer" window
+  while the agent thought. Fix: message runs are PINNED to the document they
+  started on (`runDocKey`, set by readStep(1)); readStep(step>1) and
+  applyAction re-resolve the filename and refuse with "LyX's active document
+  changed mid-run … Nothing was pasted" when it moved (save-as of an unsaved
+  start buffer is the only allowed change). The copy-verify still guards
+  every paste, so a wrong-buffer edit can never land.
 - `[ACTION: rewrite-at pN]` — replace entire paragraph [pN] (outline
   address): ONE direct `paragraph-goto <pit> 0` jump first ([pN] -> pit
   N-1; LyX snaps its view to the cursor on EVERY dispatched LFUN, so the

@@ -118,16 +118,21 @@ class FailingAgent implements AgentRunner {
 function fakeLyx(doc: FakeDoc, hooks: { onPaste?: () => Promise<void>; failGoto?: boolean } = {}) {
   let cursor = 0;
   let selection: { p: number; start: number; end: number } | null = null;
+  let fileOverride: string | null = null;
   const clip = { text: '' };
   const client = {
     calls: { save: 0, paste: 0, copy: 0 },
+    /** Test hook: simulate the user focusing another LyX window mid-run. */
+    setFile(f: string | null) {
+      fileOverride = f;
+    },
     async start() {},
     stop() {},
     isAvailable() {
       return true;
     },
     async getFilename() {
-      return doc.file;
+      return fileOverride ?? doc.file;
     },
     async getLayout() {
       return doc.paragraphs[cursor]?.layout ?? 'Standard';
@@ -393,6 +398,43 @@ describe('multi-action runs over the message stream', () => {
     expect(frames.filter((f) => f.appliedStep).map((f) => f.appliedStep)).toEqual([1, 2]);
     expect(frames.at(-1)).toEqual({ done: true });
     expect(frames.some((f) => f.stopped === 'none')).toBe(true);
+  });
+
+  it('refuses to edit when LyX switches active document mid-run', async () => {
+    // Regression 2026-11-08: the user focused another LyX window while the
+    // agent was thinking; the pipe then reached THAT buffer and the run
+    // failed with "Could not copy the selected paragraph for verification"
+    // (or worse, could have edited the wrong document). The run must abort
+    // with a clear error and paste nothing.
+    let lyxRef: ReturnType<typeof fakeLyx> | null = null;
+    const agent = new FakeAgent([
+      'Rewriting p2.\n```lyx\n\\begin_layout Standard\nrewritten\n\\end_layout\n```\n[ACTION: rewrite-at p2]',
+      'Done.\n[ACTION: none]',
+    ]);
+    const origPrompt = agent.prompt.bind(agent);
+    agent.prompt = async (sid: string, content: ContentBlock[]) => {
+      // Simulate the focus change happening while the agent "thinks".
+      lyxRef?.client.setFile('C:/Users/guzma/Git/tesis-unam/Poster Beamer PLEE.lyx');
+      return origPrompt(sid, content);
+    };
+    const harness = await startHarness([], {}, agent);
+    lyxRef = harness.lyx;
+    cleanups.push(async () => {
+      await new Promise<void>((resolve) => harness.server.close(() => resolve()));
+      await fs.rm(harness.doc.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
+
+    const res = await fetch(`${harness.base}/api/session/${harness.sessionId}/message/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${API_TOKEN}` },
+      body: JSON.stringify({ message: 'rewrite p2' }),
+    });
+    const frames = await readSse(res);
+
+    expect(frames.some((f) => typeof f.error === 'string' && f.error.includes('active document changed mid-run'))).toBe(true);
+    expect(frames.some((f) => typeof f.applied === 'string')).toBe(false);
+    expect(harness.doc.paragraphs[1].text).toBe('first body');
+    expect(frames.at(-1)).toEqual({ done: true });
   });
 
   it('falls back to the serial walk when paragraph-goto is rejected', async () => {

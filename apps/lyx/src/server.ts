@@ -145,6 +145,16 @@ export interface LyxState {
    * clobbers the clipboard on every edit).
    */
   restoreClipboard: () => Promise<void>;
+  /**
+   * Conversation key of the document the current message run started on
+   * (set by readStep(1)). The pipe dispatches to LyX's CURRENT buffer — the
+   * focused window's document — so when the user focuses another LyX window
+   * mid-run the active document silently changes and cursor/copy/paste would
+   * hit the WRONG document. Runs are pinned to this key: readStep and
+   * applyAction re-resolve the filename and refuse when it moved (see
+   * ensureRunDocument).
+   */
+  runDocKey: string | null;
 }
 
 /**
@@ -269,6 +279,31 @@ function createLyxBackend(
 
 
   /** Re-read the active document path from LyX and track it. */
+  /**
+   * Pin a message run to the document it started on. The pipe dispatches
+   * to LyX's CURRENT buffer — the focused window's document — so if the
+   * user focuses another LyX window mid-run, getFilename() silently changes
+   * and cursor/copy/paste would hit the WRONG document (live-observed
+   * 2026-11-08: panel flipped to the other open document during thinking,
+   * then "Could not copy the selected paragraph for verification"). Refuse
+   * when the key moved; the one legitimate change is a save-as of the
+   * unsaved buffer the run started on (placeholder source key only — see
+   * migrateIfSaveAs), which we follow.
+   */
+  async function ensureRunDocument(session: CompanionSession<LyxState>, key: string): Promise<void> {
+    const runKey = session.state.runDocKey;
+    if (runKey === null || key === runKey) return;
+    if (runKey === UNSAVED_KEY) {
+      session.state.runDocKey = key;
+      return;
+    }
+    throw new Error(
+      `LyX's active document changed mid-run (this run started on "${runKey}", ` +
+        `LyX now reports "${key}"). Nothing was pasted — focus the intended ` +
+        `document in LyX and re-send the message.`,
+    );
+  }
+
   async function refreshActiveDocument(session: CompanionSession<LyxState>): Promise<string | null> {
     const prevKey = session.state.documentPath ?? UNSAVED_KEY;
     const raw = await session.state.lyx.getFilename();
@@ -808,6 +843,7 @@ function createLyxBackend(
         saveConsent: new Set(),
         saveAsCandidate: null,
         restoreClipboard: async () => {},
+        runDocKey: null,
       };
     },
 
@@ -891,6 +927,12 @@ function createLyxBackend(
 
     async readStep(session, step): Promise<ReadStepResult<LyxStepData>> {
       await refreshActiveDocument(session);
+      const key = session.state.documentPath ?? UNSAVED_KEY;
+      if (step === 1) {
+        session.state.runDocKey = key;
+      } else {
+        await ensureRunDocument(session, key);
+      }
       if (step === 1) {
         // Save-consent gate: the save below overwrites the file on disk
         // with the assistant's edits. In a VCS working tree the previous
@@ -977,6 +1019,12 @@ function createLyxBackend(
     async applyAction(session, outcome, stepData, step): Promise<AppliedResult> {
       const selection = (stepData as LyxStepData).selection;
       const fail = (error: string): AppliedResult => ({ ok: false, error, description: '' });
+
+      // The agent thinks for a while between readStep and this apply: if
+      // the user focused another LyX window in between, the pipe now
+      // reaches THAT buffer — refuse instead of editing the wrong document.
+      const rawNow = await session.state.lyx.getFilename();
+      await ensureRunDocument(session, rawNow.trim() ? rawNow.trim() : UNSAVED_KEY);
 
       if (outcome.action === 'delete-at') {
         // Delete needs no ```lyx block: walk, verify, select, delete the
