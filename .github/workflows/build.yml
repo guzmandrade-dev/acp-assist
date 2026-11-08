@@ -80,7 +80,7 @@ jobs:
       # acp-assist icons are committed (rendered once from public/logo.svg).
       - name: Upload app icons
         if: matrix.app == 'acp-assist'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: app-icons-${{ matrix.app }}
           path: |
@@ -91,7 +91,7 @@ jobs:
 
       - name: Upload bridge extension
         if: matrix.app == 'libreoffice'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bridge-oxt
           path: apps/libreoffice/acp-bridge.oxt
@@ -99,7 +99,7 @@ jobs:
 
       - name: Upload bridge plugin
         if: matrix.app == 'onlyoffice'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bridge-plugin
           path: apps/onlyoffice/acp-bridge.plugin
@@ -160,7 +160,7 @@ jobs:
 
       - name: Upload macOS artifact
         if: matrix.os == 'macos-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-build-${{ matrix.app }}
           path: apps/${{ matrix.app }}/dist-release/*.dmg
@@ -168,7 +168,7 @@ jobs:
 
       - name: Upload macOS zip artifact
         if: matrix.os == 'macos-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-zip-${{ matrix.app }}
           path: apps/${{ matrix.app }}/dist-release/*.zip
@@ -176,7 +176,7 @@ jobs:
 
       - name: Upload Linux artifact
         if: matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-build-${{ matrix.app }}
           path: apps/${{ matrix.app }}/dist-release/*.AppImage
@@ -184,7 +184,7 @@ jobs:
 
       - name: Upload Linux deb artifact
         if: matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-deb-${{ matrix.app }}
           path: apps/${{ matrix.app }}/dist-release/*.deb
@@ -192,7 +192,7 @@ jobs:
 
       - name: Upload Linux tar artifact
         if: matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-tar-${{ matrix.app }}
           path: apps/${{ matrix.app }}/dist-release/*.tar.gz
@@ -200,7 +200,7 @@ jobs:
 
       - name: Upload Windows artifact
         if: matrix.os == 'windows-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-build-${{ matrix.app }}
           path: |
@@ -212,7 +212,7 @@ jobs:
       # installed on their side; the installer also bundles them).
       - name: Upload bridge extension with Windows build
         if: matrix.os == 'windows-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-oxt
           path: apps/libreoffice/acp-bridge.oxt
@@ -220,7 +220,7 @@ jobs:
 
       - name: Upload bridge plugin with Windows build
         if: matrix.os == 'windows-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-plugin
           path: apps/onlyoffice/acp-bridge.plugin
