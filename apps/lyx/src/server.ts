@@ -718,10 +718,11 @@ function createLyxBackend(
     };
     // Deaf pipe: buffer-write is blind, so the file may lag the paste — POLL
     // the file (fresh read each time, bypassing the snapshot cache) until the
-    // pasted run appears, re-issuing the save once if the file is unchanged.
+    // pasted run appears, re-issuing the save every ~1.5s (a blind write can
+    // be lost entirely on the deaf pipe, not just delayed).
     await saveDocument(session);
     const deadline = Date.now() + 4_000;
-    let resentSave = false;
+    let nextSaveAt = Date.now() + 1_500;
     for (;;) {
       let raw: string | null = null;
       try {
@@ -734,8 +735,8 @@ function createLyxBackend(
         return null;
       }
       if (Date.now() >= deadline) break;
-      if (!resentSave && Date.now() > deadline - 2_500) {
-        resentSave = true;
+      if (Date.now() >= nextSaveAt) {
+        nextSaveAt = Date.now() + 1_500;
         await session.state.lyx.save();
       }
       await new Promise((r) => setTimeout(r, 150));
