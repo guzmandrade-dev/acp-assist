@@ -1,6 +1,6 @@
 {
   "name": "acp-assist-unified",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "description": "ACP Assist: ONE companion app bundling the LyX, LibreOffice, and ONLYOFFICE assistants with an in-app switcher.",
   "author": {
     "name": "guzmandrade-dev",
