@@ -90,7 +90,7 @@
     }
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "^1.7.0",
+    "@agentclientprotocol/sdk": "^2.4.0",
     "@acp-assist/core": "*",
     "@acp-assist/panel": "*",
     "express": "^5.2.1",
