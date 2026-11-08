@@ -28,6 +28,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
+import { pollUntil } from '@acp-assist/core';
 import { TIMINGS } from '../timings.js';
 import {
   NEWFILE_PLACEHOLDER_RE,
@@ -523,7 +524,16 @@ export class LyxServerClient extends EventEmitter {
     const f = this.requireFallbacks();
     await f.clearClipboard();
     this.send(`LYXCMD:${this.clientName}:copy:\n`);
-    await sleep(this.graceFor('copy'));
+    // Poll for the copy to land instead of a fixed grace: the clipboard
+    // was cleared above, so ANY content is fresh. Capped at the old grace,
+    // so a rejected copy (no selection) costs no more than before.
+    await pollUntil(
+      async () => {
+        if ((await f.readClipboardText()).trim().length > 0) return true;
+        return f.hasClipboardLyxPayload();
+      },
+      { timeoutMs: this.graceFor('copy'), intervalMs: TIMINGS.pollIntervalMs },
+    );
     const text = (await f.readClipboardText()).trim();
     const hasLyx = await f.hasClipboardLyxPayload();
     const hasSelection = text.length > 0 || hasLyx;

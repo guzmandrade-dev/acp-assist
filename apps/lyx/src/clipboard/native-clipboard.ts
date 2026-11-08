@@ -137,6 +137,17 @@ while($true){
         Invoke-WithClipRetry { [System.Windows.Forms.Clipboard]::Clear() }
         Write-Output 'OK'
       }
+      'title' {
+        # Main-window title of the running LyX process (write-only mode's
+        # substitute for server-get-filename) — see pipe-config.ts.
+        $t = (Get-Process -Name LyX -ErrorAction SilentlyContinue |
+          Where-Object { $_.MainWindowTitle } | Select-Object -First 1).MainWindowTitle
+        if ($t) {
+          Write-Output ('DATA ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$t)))
+        } else {
+          Write-Output 'NONE'
+        }
+      }
       default { Write-Output ('ERR unknown op ' + $req.op) }
     }
   } catch {
@@ -230,7 +241,7 @@ function setHostRefs(state: HostState, active: boolean): void {
  * unref'd again so a persistent host never holds the app open at exit.
  * The host exits by itself when stdin closes at process exit.
  */
-async function psHostCommand(request: Record<string, unknown>): Promise<string> {
+export async function psHostCommand(request: Record<string, unknown>): Promise<string> {
   let state = psHost.state;
   if (!state) {
     state = startPsHost();

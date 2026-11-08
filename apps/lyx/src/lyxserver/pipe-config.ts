@@ -14,7 +14,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { psHostCommand } from '../clipboard/native-clipboard.js';
 
 export interface LyxEnvironment {
   /** Resolved pipe base (no .in/.out suffix), e.g. `\\.\pipe\lyxpipe`. */
@@ -170,24 +170,16 @@ function compareVersionsDesc(a: string, b: string): number {
  * fallback's substitute for `server-get-filename`). Null when LyX is not
  * running or has no titled window (e.g. only a splash document).
  */
-export function readLyxWindowTitle(): Promise<string | null> {
-  if (process.platform !== 'win32') return Promise.resolve(null);
-  return new Promise((resolve) => {
-    const child = spawn(
-      'powershell',
-      [
-        '-NoProfile',
-        '-Command',
-        '(Get-Process -Name LyX -ErrorAction SilentlyContinue | ' +
-          'Where-Object { $_.MainWindowTitle } | Select-Object -First 1).MainWindowTitle',
-      ],
-      { windowsHide: true },
-    );
-    let stdout = '';
-    child.stdout?.setEncoding('utf8');
-    child.stdout?.on('data', (d: string) => (stdout += d));
-    child.on('error', () => resolve(null));
-    child.on('close', () => resolve(stdout.trim() || null));
-    child.stdin?.end();
-  });
+export async function readLyxWindowTitle(): Promise<string | null> {
+  if (process.platform !== 'win32') return null;
+  // Via the shared persistent PowerShell host (one spawn per call was
+  // ~200-600ms; the host answers in ~2ms warm) — see native-clipboard.ts.
+  try {
+    const line = await psHostCommand({ op: 'title' });
+    if (line === 'NONE') return null;
+    if (!line.startsWith('DATA ')) throw new Error(`Unexpected host reply: ${line.slice(0, 100)}`);
+    return Buffer.from(line.slice(5), 'base64').toString('utf8');
+  } catch {
+    return null;
+  }
 }
