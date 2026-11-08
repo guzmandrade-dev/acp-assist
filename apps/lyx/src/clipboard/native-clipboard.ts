@@ -80,12 +80,13 @@ Add-Type -AssemblyName System.Windows.Forms
 function Invoke-WithClipRetry([scriptblock]$action) {
   # Opening the clipboard fails transiently while another process holds it
   # (the editor mid-copy, a clipboard manager, another LyX instance). The
-  # contention window is short — retry briefly before surfacing an error
-  # (live-reported 2026-10-26: GetText failed the whole message with
-  # "Requested Clipboard operation did not succeed").
+  # contention window can outlast a short retry burst (live-reported
+  # 2026-11-08: Clear failed the whole edit with "Requested Clipboard
+  # operation did not succeed" after 10x30ms), so retry for ~2s before
+  # surfacing an error.
   $last = $null
-  for ($i = 0; $i -lt 10; $i++) {
-    try { return & $action } catch { $last = $_; Start-Sleep -Milliseconds 30 }
+  for ($i = 0; $i -lt 20; $i++) {
+    try { return & $action } catch { $last = $_; Start-Sleep -Milliseconds 100 }
   }
   throw $last
 }
