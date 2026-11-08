@@ -14,5 +14,5 @@
     "skipLibCheck": true
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "src/electron/preload.ts"]
+  "exclude": ["node_modules", "dist", "src/electron/preload.cts"]
 }
