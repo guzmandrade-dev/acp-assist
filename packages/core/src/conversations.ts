@@ -26,9 +26,13 @@ export function createLogError(logDir?: string) {
     const line = `[${new Date().toISOString()}] ${scope}: ${message}\n`;
     console.error(line.trim());
     if (logDir) {
-      fs.appendFile(path.join(logDir, 'errors.log'), line, 'utf8').catch(() => {
-        /* logging must never break the request path */
-      });
+      // appendFile does NOT create the directory — without this the log
+      // silently no-ops whenever <userData>/logs was never created.
+      fs.mkdir(logDir, { recursive: true })
+        .then(() => fs.appendFile(path.join(logDir, 'errors.log'), line, 'utf8'))
+        .catch(() => {
+          /* logging must never break the request path */
+        });
     }
   };
 }

@@ -525,14 +525,17 @@ export class LyxServerClient extends EventEmitter {
     await f.clearClipboard();
     this.send(`LYXCMD:${this.clientName}:copy:\n`);
     // Poll for the copy to land instead of a fixed grace: the clipboard
-    // was cleared above, so ANY content is fresh. Capped at the old grace,
-    // so a rejected copy (no selection) costs no more than before.
+    // was cleared above, so ANY content is fresh. Use the full payload-poll
+    // budget, NOT the blind-command grace — on a deaf pipe LyX executes the
+    // copy asynchronously and can easily outlast the 150ms grace, which made
+    // probeSelection report "no selection" (-> "Could not copy the selected
+    // paragraph for verification") even when the copy succeeded.
     await pollUntil(
       async () => {
         if ((await f.readClipboardText()).trim().length > 0) return true;
         return f.hasClipboardLyxPayload();
       },
-      { timeoutMs: this.graceFor('copy'), intervalMs: TIMINGS.pollIntervalMs },
+      { timeoutMs: TIMINGS.clipboardPayloadPollMs, intervalMs: TIMINGS.pollIntervalMs },
     );
     const text = (await f.readClipboardText()).trim();
     const hasLyx = await f.hasClipboardLyxPayload();
