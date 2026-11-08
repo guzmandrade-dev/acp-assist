@@ -707,7 +707,24 @@ function createLyxBackend(
       .map((o) => normalizeForCompare(o.preview))
       .filter((t) => t.length > 0);
     if (wantBlocks.length === 0) return 'Paste verification failed: empty payload.';
-    await session.state.lyx.paragraphSelect();
+    // Re-position to the paragraph the paste SHOULD have landed in. After a
+    // blind paste the cursor position is not trustworthy (the paste command
+    // may have been processed out of order or lost), so selecting the
+    // cursor's paragraph can read back the wrong one and fail a good paste.
+    // Index map (0-based): rewrite-at pN -> pN-1; insert-after pN -> the new
+    // paragraph below pN = pN; insert-before pN -> pN-1; insert-top -> 0;
+    // plain insert -> unknown, use the cursor as-is.
+    let landIndex: number | null = null;
+    if (outcome.action === 'rewrite-at' && outcome.target) landIndex = outcome.target - 1;
+    else if (outcome.action === 'insert-after' && outcome.target) landIndex = outcome.target;
+    else if (outcome.action === 'insert-before' && outcome.target) landIndex = outcome.target - 1;
+    else if (outcome.action === 'insert-top') landIndex = 0;
+    if (landIndex !== null) {
+      const pos = await gotoParagraph(session, landIndex + 1, 'rewrite', { skipCopyVerify: true });
+      if (pos.error) return `Paste verification failed: could not re-position (${pos.error}).`;
+    } else {
+      await session.state.lyx.paragraphSelect();
+    }
     const copied = await session.state.lyx.copySelection();
     if (!copied) {
       return 'Paste verification failed: could not read back the pasted paragraph (the edit was undone). Please try again.';
@@ -727,6 +744,10 @@ function createLyxBackend(
       actual = normalizeForCompare(await session.state.clipboard.readText());
     }
     if (wantBlocks.some((w) => isLikelyMatch(w, actual))) return null;
+    logError(
+      `[lyx] paste verify mismatch action=${outcome.action} landIndex=${landIndex}`,
+      new Error(`want=${wantBlocks.map((w) => w.slice(0, 60)).join(' | ')} actual=${actual.slice(0, 120)}`),
+    );
     return (
       'Paste verification failed: the pasted content is not in the document ' +
         '(the edit was undone). Please try again.'
