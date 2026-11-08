@@ -46,6 +46,7 @@ import { findClassLayouts } from './lyx/layouts.js';
 import {
   UNSAVED_KEY,
   createCompanionServer,
+  createLogError,
   createWrap,
   isVersionControlled,
   listKnownDocuments as coreListKnownDocuments,
@@ -273,6 +274,10 @@ function createLyxBackend(
     lyxFactory?: () => LyxServerClient;
   },
 ): CompanionBackend<LyxState, ActionOutcome> {
+  // Edit-choreography failures are SSE frames + history meta, which never
+  // reach errors.log — log them here so a dev (`npm start`) run leaves a
+  // trace in <userData>/logs/errors.log.
+  const logError = createLogError(options.logDir);
 
   // --- helpers -----------------------------------------------------------
 
@@ -617,10 +622,10 @@ function createLyxBackend(
 
     // Direct jump first; fall back to the serial walk when the jump is
     // rejected or fails verification.
-    let attempt =
-      (await session.state.lyx.paragraphGoto(target - 1, 0))
-        ? await selectAndVerify()
-        : { ok: false, payload: null, reason: 'select' as const, actual: '' };
+    const viaJump = await session.state.lyx.paragraphGoto(target - 1, 0);
+    let attempt = viaJump
+      ? await selectAndVerify()
+      : { ok: false, payload: null, reason: 'select' as const, actual: '' };
     if (!attempt.ok) {
       // A wrong jump may have left a selection behind — selections persist
       // in LyX and would pollute the walk's paragraph-select.
@@ -635,6 +640,15 @@ function createLyxBackend(
       attempt = await selectAndVerify();
     }
     if (!attempt.ok) {
+      logError(
+        `[lyx] gotoParagraph p${target} mode=${mode} via=${viaJump ? 'jump-then-walk' : 'walk'} ` +
+          `lyxMode=${session.state.lyx.mode} failed at ${attempt.reason}`,
+        new Error(
+          attempt.reason === 'mismatch'
+            ? `landed on "${attempt.actual.slice(0, 120)}"`
+            : (attempt.reason ?? 'unknown'),
+        ),
+      );
       if (attempt.reason === 'select') return fail('paragraph-select failed.');
       if (attempt.reason === 'copy') {
         return fail('Could not copy the selected paragraph for verification.');
@@ -1024,7 +1038,12 @@ function createLyxBackend(
       // the user focused another LyX window in between, the pipe now
       // reaches THAT buffer — refuse instead of editing the wrong document.
       const rawNow = await session.state.lyx.getFilename();
-      await ensureRunDocument(session, rawNow.trim() ? rawNow.trim() : UNSAVED_KEY);
+      try {
+        await ensureRunDocument(session, rawNow.trim() ? rawNow.trim() : UNSAVED_KEY);
+      } catch (e) {
+        logError('[lyx] message run aborted (active document changed)', e);
+        throw e;
+      }
 
       if (outcome.action === 'delete-at') {
         // Delete needs no ```lyx block: walk, verify, select, delete the
