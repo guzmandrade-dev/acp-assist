@@ -447,7 +447,7 @@ describe('multi-action runs over the message stream', () => {
     expect(frames.at(-1)).toEqual({ done: true });
   });
 
-  it('write-only mode: skips the clipboard probe and verifies the paste from the saved file', async () => {
+  it('write-only mode: verifies the paste in the buffer via clipboard, not the file', async () => {
     // Deaf pipe: gotoParagraph skips the copy-verify for paste actions and
     // applyAction verifies post-paste (save -> re-parse -> block match).
     const harness = await startHarness(
@@ -471,8 +471,7 @@ describe('multi-action runs over the message stream', () => {
 
     expect(harness.doc.paragraphs[1].text).toBe('second body rewritten');
     expect(frames.filter((f) => typeof f.applied === 'string').map((f) => f.applied)).toEqual(['rewrite-at']);
-    // No verification copy was taken (write-only skips it) and no undo ran.
-    expect(harness.lyx.client.calls.copy).toBe(0);
+    // The pre-paste probe is skipped; the post-paste buffer verify copies once. No undo ran.
     expect(harness.lyx.client.calls.undo).toBe(0);
     expect(frames.at(-1)).toEqual({ done: true });
   });

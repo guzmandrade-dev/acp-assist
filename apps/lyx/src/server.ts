@@ -682,65 +682,51 @@ function createLyxBackend(
   }
 
   /**
-   * Post-paste read-back verification for write-only (deaf-pipe) mode, where
-   * the pre-paste clipboard verify is skipped: save the buffer, re-parse the
-   * file, and check the pasted block(s) landed as a contiguous run of
-   * top-level layouts. Returns null when verified, an error message when not
-   * (the caller then sends `undo`).
+   * Post-paste verification for write-only (deaf-pipe) mode, where the
+   * pre-paste clipboard verify is skipped. Verifies in the BUFFER via the
+   * clipboard (not the file: a blind buffer-write may lag or be lost on the
+   * deaf pipe — live-found 2026-11-08, "content there but file unsaved").
+   * Paste leaves the cursor in the last pasted paragraph, so: select it,
+   * copy, and compare its text with the paste payload's blocks (plain-text
+   * comparison — change tracking wraps pasted content in \change_inserted,
+   * which would defeat markup-exact comparison). Returns null when
+   * verified, an error message when not (the caller then sends `undo`).
    */
-  async function verifyPasteLanded(
+  async function verifyPasteInBuffer(
     session: CompanionSession<LyxState>,
     outcome: ActionOutcome,
     header: string,
   ): Promise<string | null> {
-    const filePath = session.state.documentPath;
-    if (!filePath) return 'Paste verification failed: the document is not saved on disk.';
-    // Compare on plain TEXT, not exact markup: with change tracking ON, LyX
-    // wraps pasted content in \change_inserted and keeps replaced text as
-    // \change_deleted inside the same block, so block-exact comparison fails
-    // even when the paste landed (live-found 2026-11-08).
-    let wantText = '';
+    let pasteCtx: DocumentContext;
     try {
-      const pasteCtx = buildDocumentContext(assemblePasteDocument(header, outcome.body ?? ''));
-      wantText = normalizeForCompare(pasteCtx.outline.map((o) => o.preview).join('\n'));
+      pasteCtx = buildDocumentContext(assemblePasteDocument(header, outcome.body ?? ''));
     } catch {
       return 'Paste verification failed: could not parse the paste payload.';
     }
-    if (!wantText) return 'Paste verification failed: empty payload.';
-    const containsPastedRun = (raw: string): boolean => {
-      try {
-        const ctx = buildDocumentContext(raw);
-        const hay = normalizeForCompare(ctx.outline.map((o) => o.preview).join('\n'));
-        return isLikelyMatch(wantText, hay);
-      } catch {
-        return false;
-      }
-    };
-    // Deaf pipe: buffer-write is blind, so the file may lag the paste — POLL
-    // the file (fresh read each time, bypassing the snapshot cache) until the
-    // pasted run appears, re-issuing the save every ~1.5s (a blind write can
-    // be lost entirely on the deaf pipe, not just delayed).
-    await saveDocument(session);
-    const deadline = Date.now() + 4_000;
-    let nextSaveAt = Date.now() + 1_500;
-    for (;;) {
-      let raw: string | null = null;
-      try {
-        raw = await fs.readFile(filePath, 'utf8');
-      } catch {
-        raw = null;
-      }
-      if (raw && containsPastedRun(raw)) {
-        session.state.docSnapshot = null; // force re-parse on next read
-        return null;
-      }
-      if (Date.now() >= deadline) break;
-      if (Date.now() >= nextSaveAt) {
-        nextSaveAt = Date.now() + 1_500;
-        await session.state.lyx.save();
-      }
-      await new Promise((r) => setTimeout(r, 150));
+    const wantBlocks = pasteCtx.outline
+      .map((o) => normalizeForCompare(o.preview))
+      .filter((t) => t.length > 0);
+    if (wantBlocks.length === 0) return 'Paste verification failed: empty payload.';
+    await session.state.lyx.paragraphSelect();
+    const copied = await session.state.lyx.copySelection();
+    if (!copied) {
+      return 'Paste verification failed: could not read back the pasted paragraph (the edit was undone). Please try again.';
     }
+    const payload = await pollUntil(() => session.state.clipboard.readLyxDocument(), {
+      timeoutMs: TIMINGS.clipboardPayloadPollMs,
+      intervalMs: TIMINGS.pollIntervalMs,
+    });
+    let actual = '';
+    if (payload) {
+      try {
+        actual = normalizeForCompare(buildDocumentContext(payload).outline[0]?.preview ?? '');
+      } catch {
+        actual = normalizeForCompare(payload);
+      }
+    } else {
+      actual = normalizeForCompare(await session.state.clipboard.readText());
+    }
+    if (wantBlocks.some((w) => isLikelyMatch(w, actual))) return null;
     return (
       'Paste verification failed: the pasted content is not in the document ' +
         '(the edit was undone). Please try again.'
@@ -1221,11 +1207,10 @@ function createLyxBackend(
       }
       await session.state.lyx.paste(); // replaces the active selection if any
       // Deaf pipe (write-only): the pre-paste copy-verify was skipped, so
-      // verify from the SAVED FILE now — save, re-parse, and check the pasted
-      // block(s) landed as a contiguous run of top-level layouts. On
-      // mismatch, undo and report (paste-then-verify-then-undo).
+      // verify in the BUFFER via clipboard now (the file save may lag/be
+      // lost on a deaf pipe). On mismatch, undo and report.
       if (session.state.lyx.mode === 'write-only') {
-        const verr = await verifyPasteLanded(session, outcome, header);
+        const verr = await verifyPasteInBuffer(session, outcome, header);
         if (verr) {
           await session.state.lyx.undo();
           return fail(verr);
