@@ -1,11 +1,11 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "module": "CommonJS",
-    "moduleResolution": "Node",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "sourceMap": false,
     "declaration": false
   },
-  "include": ["src/electron/preload.ts"],
+  "include": ["src/electron/preload.cts"],
   "exclude": ["node_modules", "dist"]
 }

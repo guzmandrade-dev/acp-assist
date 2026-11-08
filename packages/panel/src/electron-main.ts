@@ -43,7 +43,7 @@ export interface ElectronMainOptions {
   watchedProcessName: string | string[];
   /**
    * The APP's compiled-electron directory (its main.ts `__dirname`) —
-   * preload.js and the window icon live there; the panel assets come
+   * preload.cjs and the window icon live there; the panel assets come
    * from this package.
    */
   appDistDir: string;
@@ -243,7 +243,7 @@ export function createElectronMain(options: ElectronMainOptions): void {
         : options.windowTitle,
       webPreferences: {
         contextIsolation: true,
-        preload: path.join(options.appDistDir, 'preload.js'),
+        preload: path.join(options.appDistDir, 'preload.cjs'),
       },
     });
     await mainWindow.loadURL(url);
