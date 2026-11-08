@@ -2,6 +2,8 @@
 
 [![Tests](https://github.com/guzmandrade-dev/acp-assist/actions/workflows/test.yml/badge.svg)](https://github.com/guzmandrade-dev/acp-assist/actions/workflows/test.yml)
 [![Build](https://github.com/guzmandrade-dev/acp-assist/actions/workflows/build.yml/badge.svg)](https://github.com/guzmandrade-dev/acp-assist/actions/workflows/build.yml)
+[![Security scanning](https://github.com/guzmandrade-dev/acp-assist/actions/workflows/security.yml/badge.svg)](https://github.com/guzmandrade-dev/acp-assist/actions/workflows/security.yml)
+[![Scanners](https://img.shields.io/badge/scanners-CodeQL%20%C2%B7%20Semgrep%20%C2%B7%20Gitleaks%20%C2%B7%20Trivy%20%C2%B7%20OSV--Scanner-blue)](https://github.com/guzmandrade-dev/acp-assist/actions/workflows/security.yml)
 
 **Website:** <https://guzmandrade-dev.github.io/acp-assist/>
 
