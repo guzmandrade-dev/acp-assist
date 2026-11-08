@@ -33,9 +33,14 @@ function fakeFallbacks(
   return {
     clearClipboard: async () => {
       mock.clipboardText = '';
+      mock.clipboardLyx = false;
+    },
+    writeClipboardText: async (text: string) => {
+      mock.clipboardText = text;
+      mock.clipboardLyx = false;
     },
     readClipboardText: async () => mock.clipboardText,
-    hasClipboardLyxPayload: async () => mock.clipboardText.length > 0,
+    hasClipboardLyxPayload: async () => mock.clipboardLyx,
     readLyxWindowTitle: async () => title,
     documentCandidates: () => candidates,
   };

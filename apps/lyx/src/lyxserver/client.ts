@@ -62,6 +62,8 @@ export interface LyxServerOptions {
 export interface LyxWriteOnlyFallbacks {
   /** Empty the clipboard (all formats). */
   clearClipboard(): Promise<void>;
+  /** Overwrite the plain-text flavor (sentinel writes in probeSelection). */
+  writeClipboardText(text: string): Promise<void>;
   /** Plain-text clipboard flavor (the selection text after `copy`). */
   readClipboardText(): Promise<string>;
   /** Does the clipboard hold the application/x-lyx format right now? */
@@ -84,6 +86,7 @@ export function createWriteOnlyFallbacks(
 ): LyxWriteOnlyFallbacks {
   return {
     clearClipboard: () => clipboard.clear(),
+    writeClipboardText: (text) => clipboard.writeText(text),
     readClipboardText: () => clipboard.readText(),
     hasClipboardLyxPayload: () => clipboard.hasFormat(LYX_CLIPBOARD_FORMAT),
     readLyxWindowTitle,
@@ -522,24 +525,34 @@ export class LyxServerClient extends EventEmitter {
     stats: [number, number, number];
   }> {
     const f = this.requireFallbacks();
-    await f.clearClipboard();
-    this.send(`LYXCMD:${this.clientName}:copy:\n`);
-    // Poll for the copy to land instead of a fixed grace: the clipboard
-    // was cleared above, so ANY content is fresh. Use the full payload-poll
-    // budget, NOT the blind-command grace — on a deaf pipe LyX executes the
-    // copy asynchronously and can easily outlast the 150ms grace, which made
-    // probeSelection report "no selection" (-> "Could not copy the selected
-    // paragraph for verification") even when the copy succeeded.
-    await pollUntil(
-      async () => {
-        if ((await f.readClipboardText()).trim().length > 0) return true;
-        return f.hasClipboardLyxPayload();
-      },
-      { timeoutMs: TIMINGS.clipboardPayloadPollMs, intervalMs: TIMINGS.pollIntervalMs },
-    );
-    const text = (await f.readClipboardText()).trim();
-    const hasLyx = await f.hasClipboardLyxPayload();
-    const hasSelection = text.length > 0 || hasLyx;
+    // Sentinel instead of Clear: a rejected copy (no selection) leaves the
+    // sentinel in place, a successful one overwrites it. Clear is the slow,
+    // heavily contended op on some machines (measured live: copies land in
+    // 5-400ms after a plain write but take 1.2s+ after a Clear), which made
+    // probeSelection misread a slow copy as "no selection".
+    const sentinel = `__acp_probe_${Date.now()}_${Math.floor(Math.random() * 1e9)}__`;
+    await f.writeClipboardText(sentinel);
+    // Let the sentinel write settle before the copy, and RETRY the copy:
+    // on a deaf pipe the first copy can be lost or land late (measured up
+    // to ~5s), so one poll window is not enough.
+    await sleep(250);
+    let text = '';
+    let hasLyx = false;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      this.send(`LYXCMD:${this.clientName}:copy:\n`);
+      await pollUntil(
+        async () => {
+          if (await f.hasClipboardLyxPayload()) return true;
+          const t = (await f.readClipboardText()).trim();
+          return t.length > 0 && t !== sentinel;
+        },
+        { timeoutMs: 2_500, intervalMs: TIMINGS.pollIntervalMs },
+      );
+      hasLyx = await f.hasClipboardLyxPayload();
+      text = (await f.readClipboardText()).trim();
+      if (hasLyx || (text.length > 0 && text !== sentinel)) break;
+    }
+    const hasSelection = hasLyx || (text.length > 0 && text !== sentinel);
     const stats: [number, number, number] = hasSelection
       ? [
           text.split(/\s+/).filter(Boolean).length,

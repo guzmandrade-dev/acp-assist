@@ -60,6 +60,8 @@ export class MockLyxServer {
   readonly pipeBase: string;
   /** Last text `copy` placed on the mock clipboard. */
   clipboardText: string;
+  /** Whether the mock clipboard holds the application/x-lyx flavor. */
+  clipboardLyx = false;
   /** When set, the next `undo` is rejected as disabled (nothing to undo). */
   nextUndoDisabled = false;
 
@@ -82,6 +84,7 @@ export class MockLyxServer {
     this.filename = options.filename ?? 'C:/mock/doc.lyx';
     this.deaf = options.deaf ?? false;
     this.clipboardText = '';
+    this.clipboardLyx = false;
   }
 
   /**
@@ -255,6 +258,7 @@ export class MockLyxServer {
           this.selection.start,
           this.selection.end,
         );
+        this.clipboardLyx = true;
         return { data: '' };
       }
       case 'paste': {
