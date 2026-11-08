@@ -28,6 +28,8 @@ import {
   assemblePasteDocument,
   extractBodyLayouts,
   findMarkupProblems,
+  splitTopLevelLayouts,
+  normalizeMarkupBlock,
   type DocumentContext,
 } from './lyx/context.js';
 import { NEWFILE_PLACEHOLDER_RE, discoverLyxEnvironment } from './lyxserver/pipe-config.js';
@@ -562,6 +564,7 @@ function createLyxBackend(
     session: CompanionSession<LyxState>,
     target: number | null,
     mode: 'rewrite' | 'insert-after',
+    opts: { skipCopyVerify?: boolean } = {},
   ): Promise<{ target: number | null; error: string | null; payload: string | null }> {
     if (!target || target < 1) {
       return {
@@ -603,6 +606,10 @@ function createLyxBackend(
     }> => {
       const selected = await session.state.lyx.paragraphSelect();
       if (!selected) return { ok: false, payload: null, reason: 'select', actual: '' };
+      // Write-only (deaf pipe): skip the clipboard copy-verify — it is slow
+      // and contended there — paste actions are verified post-paste from
+      // the saved file instead (see verifyPasteLanded).
+      if (opts.skipCopyVerify) return { ok: true, payload: null, reason: null, actual: '' };
       const copied = await session.state.lyx.copySelection();
       if (!copied) return { ok: false, payload: null, reason: 'copy', actual: '' };
       const payload = await pollUntil(() => session.state.clipboard.readLyxDocument(), {
@@ -674,6 +681,42 @@ function createLyxBackend(
       }
     }
     return { target, error: null, payload };
+  }
+
+  /**
+   * Post-paste read-back verification for write-only (deaf-pipe) mode, where
+   * the pre-paste clipboard verify is skipped: save the buffer, re-parse the
+   * file, and check the pasted block(s) landed as a contiguous run of
+   * top-level layouts. Returns null when verified, an error message when not
+   * (the caller then sends `undo`).
+   */
+  async function verifyPasteLanded(
+    session: CompanionSession<LyxState>,
+    outcome: ActionOutcome,
+    header: string,
+  ): Promise<string | null> {
+    await saveDocument(session);
+    const snap = await readDocumentSnapshot(session);
+    const pasteBlocks = splitTopLevelLayouts(
+      extractBodyLayouts(assemblePasteDocument(header, outcome.body ?? '')) ?? '',
+    );
+    if (pasteBlocks.length === 0) return 'Paste verification failed: empty payload.';
+    const diskBlocks = splitTopLevelLayouts(extractBodyLayouts(snap.raw) ?? '');
+    const want = pasteBlocks.map(normalizeMarkupBlock);
+    for (let i = 0; i + want.length <= diskBlocks.length; i++) {
+      let all = true;
+      for (let j = 0; j < want.length; j++) {
+        if (normalizeMarkupBlock(diskBlocks[i + j] ?? '') !== (want[j] ?? '')) {
+          all = false;
+          break;
+        }
+      }
+      if (all) return null;
+    }
+    return (
+      'Paste verification failed: the pasted content is not in the document ' +
+        '(the edit was undone). Please try again.'
+    );
   }
 
   /**
@@ -1093,6 +1136,9 @@ function createLyxBackend(
       }
       let positionError: string | null = null;
       let target = outcome.target;
+      // Deaf pipe: skip the (slow, contended) pre-paste clipboard verify for
+      // paste actions; they are verified post-paste from the saved file.
+      const writeOnly = session.state.lyx.mode === 'write-only';
       if (outcome.action === 'rewrite' && !selection.hasSelection) {
         positionError = 'Agent chose [ACTION: rewrite] but LyX has no active selection.';
       } else if (outcome.action === 'insert' && selection.hasSelection) {
@@ -1111,11 +1157,11 @@ function createLyxBackend(
           await session.state.lyx.breakParagraph();
         }
       } else if (outcome.action === 'rewrite-at') {
-        const gotoResult = await gotoParagraph(session, outcome.target, 'rewrite');
+        const gotoResult = await gotoParagraph(session, outcome.target, 'rewrite', { skipCopyVerify: writeOnly });
         target = gotoResult.target;
         positionError = gotoResult.error;
       } else if (outcome.action === 'insert-after') {
-        const gotoResult = await gotoParagraph(session, outcome.target, 'insert-after');
+        const gotoResult = await gotoParagraph(session, outcome.target, 'insert-after', { skipCopyVerify: writeOnly });
         target = gotoResult.target;
         positionError = gotoResult.error;
       } else if (outcome.action === 'insert-before') {
@@ -1131,7 +1177,7 @@ function createLyxBackend(
             await session.state.lyx.breakParagraph();
           }
         } else {
-          const gotoResult = await gotoParagraph(session, (outcome.target ?? 0) - 1, 'insert-after');
+          const gotoResult = await gotoParagraph(session, (outcome.target ?? 0) - 1, 'insert-after', { skipCopyVerify: writeOnly });
           positionError = gotoResult.error;
         }
       }
@@ -1146,6 +1192,17 @@ function createLyxBackend(
         );
       }
       await session.state.lyx.paste(); // replaces the active selection if any
+      // Deaf pipe (write-only): the pre-paste copy-verify was skipped, so
+      // verify from the SAVED FILE now — save, re-parse, and check the pasted
+      // block(s) landed as a contiguous run of top-level layouts. On
+      // mismatch, undo and report (paste-then-verify-then-undo).
+      if (session.state.lyx.mode === 'write-only') {
+        const verr = await verifyPasteLanded(session, outcome, header);
+        if (verr) {
+          await session.state.lyx.undo();
+          return fail(verr);
+        }
+      }
       return {
         ok: true,
         description: describeAction(outcome),

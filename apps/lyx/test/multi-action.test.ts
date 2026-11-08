@@ -115,13 +115,17 @@ class FailingAgent implements AgentRunner {
  * In-memory LyXServerClient stand-in. Only the LFUNs the message loop uses
  * are implemented; verification reads go through the raw clipboard stub.
  */
-function fakeLyx(doc: FakeDoc, hooks: { onPaste?: () => Promise<void>; failGoto?: boolean } = {}) {
+function fakeLyx(
+  doc: FakeDoc,
+  hooks: { onPaste?: () => Promise<void>; failGoto?: boolean; writeOnly?: boolean; noPaste?: boolean } = {},
+) {
   let cursor = 0;
   let selection: { p: number; start: number; end: number } | null = null;
   let fileOverride: string | null = null;
   const clip = { text: '' };
   const client = {
-    calls: { save: 0, paste: 0, copy: 0 },
+    calls: { save: 0, paste: 0, copy: 0, undo: 0 },
+    mode: hooks.writeOnly ? 'write-only' : 'pipe',
     /** Test hook: simulate the user focusing another LyX window mid-run. */
     setFile(f: string | null) {
       fileOverride = f;
@@ -198,6 +202,8 @@ function fakeLyx(doc: FakeDoc, hooks: { onPaste?: () => Promise<void>; failGoto?
       client.calls.paste += 1;
       // Test hook: mid-choreography seam (the paste LFUN is in flight).
       if (hooks.onPaste) await hooks.onPaste();
+      // Test hook: simulate a lost paste (nothing lands in the document).
+      if (hooks.noPaste) return;
       // LyX reads the x-lyx payload through the OS clipboard (the raw stub
       // in this test), not through this closure: use the global payload.
       const payload = (globalThis as { __clipDoc?: string }).__clipDoc ?? clip.text;
@@ -232,7 +238,9 @@ function fakeLyx(doc: FakeDoc, hooks: { onPaste?: () => Promise<void>; failGoto?
     async mergeWithNextParagraph() {
       return true;
     },
-    async undo() {},
+    async undo() {
+      client.calls.undo += 1;
+    },
   };
   return { client: client as unknown as Partial<LyxServerClient>, clip };
 }
@@ -274,7 +282,7 @@ interface Harness {
 
 async function startHarness(
   replies: string[],
-  lyxHooks: { onPaste?: () => Promise<void>; failGoto?: boolean } = {},
+  lyxHooks: { onPaste?: () => Promise<void>; failGoto?: boolean; writeOnly?: boolean; noPaste?: boolean } = {},
   agentOverride?: AgentRunner,
 ): Promise<Harness> {
   const doc = await writeFakeDoc();
@@ -408,7 +416,7 @@ describe('multi-action runs over the message stream', () => {
     // with a clear error and paste nothing.
     let lyxRef: ReturnType<typeof fakeLyx> | null = null;
     const agent = new FakeAgent([
-      'Rewriting p2.\n```lyx\n\\begin_layout Standard\nrewritten\n\\end_layout\n```\n[ACTION: rewrite-at p2]',
+        'Rewriting p2.\n```lyx\n\\begin_layout Standard\nrewritten\n\\end_layout\n```\n[ACTION: rewrite-at p2]',
       'Done.\n[ACTION: none]',
     ]);
     const origPrompt = agent.prompt.bind(agent);
@@ -434,6 +442,65 @@ describe('multi-action runs over the message stream', () => {
     expect(frames.some((f) => typeof f.error === 'string' && f.error.includes('active document changed mid-run'))).toBe(true);
     expect(frames.some((f) => typeof f.applied === 'string')).toBe(false);
     expect(harness.doc.paragraphs[1].text).toBe('first body');
+    expect(frames.at(-1)).toEqual({ done: true });
+  });
+
+  it('write-only mode: skips the clipboard probe and verifies the paste from the saved file', async () => {
+    // Deaf pipe: gotoParagraph skips the copy-verify for paste actions and
+    // applyAction verifies post-paste (save -> re-parse -> block match).
+    const harness = await startHarness(
+      [
+        'Rewriting p2.\n```lyx\n\\begin_layout Standard\nsecond body rewritten\n\\end_layout\n```\n[ACTION: rewrite-at p2]',
+        'Done.\n[ACTION: none]',
+      ],
+      { writeOnly: true },
+    );
+    cleanups.push(async () => {
+      await new Promise<void>((resolve) => harness.server.close(() => resolve()));
+      await fs.rm(harness.doc.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
+
+    const res = await fetch(`${harness.base}/api/session/${harness.sessionId}/message/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${API_TOKEN}` },
+      body: JSON.stringify({ message: 'rewrite p2' }),
+    });
+    const frames = await readSse(res);
+
+    expect(harness.doc.paragraphs[1].text).toBe('second body rewritten');
+    expect(frames.filter((f) => typeof f.applied === 'string').map((f) => f.applied)).toEqual(['rewrite-at']);
+    // No verification copy was taken (write-only skips it) and no undo ran.
+    expect(harness.lyx.client.calls.copy).toBe(0);
+    expect(harness.lyx.client.calls.undo).toBe(0);
+    expect(frames.at(-1)).toEqual({ done: true });
+  });
+
+  it('write-only mode: a lost paste is detected from the file and undone', async () => {
+    // noPaste simulates the blind paste not landing: post-paste verification
+    // must fail, undo must run, and the run must report the error.
+    const harness = await startHarness(
+      [
+        'Rewriting p2.\n```lyx\n\\begin_layout Standard\nsecond body rewritten\n\\end_layout\n```\n[ACTION: rewrite-at p2]',
+        'Should not be reached.\n[ACTION: none]',
+      ],
+      { writeOnly: true, noPaste: true },
+    );
+    cleanups.push(async () => {
+      await new Promise<void>((resolve) => harness.server.close(() => resolve()));
+      await fs.rm(harness.doc.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
+
+    const res = await fetch(`${harness.base}/api/session/${harness.sessionId}/message/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${API_TOKEN}` },
+      body: JSON.stringify({ message: 'rewrite p2' }),
+    });
+    const frames = await readSse(res);
+
+    expect(frames.some((f) => typeof f.error === 'string' && f.error.includes('Paste verification failed'))).toBe(true);
+    expect(harness.lyx.client.calls.undo).toBe(1);
+    expect(harness.doc.paragraphs[1].text).toBe('first body');
+    expect(frames.some((f) => typeof f.applied === 'string')).toBe(false);
     expect(frames.at(-1)).toEqual({ done: true });
   });
 

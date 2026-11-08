@@ -571,6 +571,16 @@ intent; the agent must end its reply with a trailing action tag:
   deletion tells the user to undo in LyX (the paragraph is gone from
   the document but captured nowhere else).
 - `[ACTION: rewrite]` — replace the active selection with the block
+- **Write-only (deaf pipe) paste verification (2026-11-08):** in write-only
+  mode the pre-paste clipboard copy-verify is SKIPPED for paste actions
+  (rewrite-at/insert-after/insert-before — the copy probe is slow and
+  contended there, measured 1.2-5s+ per copy). Instead the paste is verified
+  POST-paste from the saved file (`verifyPasteLanded`: buffer-write, re-parse,
+  the pasted top-level layout blocks must appear as a contiguous run);
+  on mismatch the edit is undone (`undo` LFUN) and the run errors. Pipe mode
+  keeps the pre-paste copy-verify (cheap there, prevents wrong pastes).
+  probeSelection itself uses a text sentinel + up to 3 copy retries instead
+  of Clear (Clear is the contended op) — verified 5/5 against live LyX.
 - **Active-buffer switch mid-run (live-observed 2026-11-08):** the pipe
   dispatches to LyX's CURRENT buffer — the focused window's document — and
   `server-get-filename` follows it. With two LyX windows open, focusing the
