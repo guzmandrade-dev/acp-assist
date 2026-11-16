@@ -1,8 +1,9 @@
 # ACP Assist (unified)
 
-**One installer, three editors.** This app bundles the LyX, LibreOffice,
-and ONLYOFFICE companions into a single application with an in-app
-switcher (the dropdown in the panel's toolbar). One editor app is active
+**One installer, three editors plus PDF review.** This app bundles the LyX,
+LibreOffice, and ONLYOFFICE companions into a single application with an
+in-app switcher (the dropdown in the panel's toolbar), plus a fourth
+**PDF Review** entry for discussing a compiled PDF. One app is active
 at a time; each app keeps its own sessions and its own per-document
 chat history under the app's profile directory (`history/<app>`), so
 switching never mixes conversations.
@@ -37,6 +38,25 @@ in `resources/`.
   and the app-scoped token.
 - The window floats over whichever bundled editor is focused
   (LyX / soffice / editors).
+- Fourth switcher entry **PDF Review** (`?app=pdf`): a prose-only chat
+  about a read-only PDF, with the conversation keyed by the PDF path
+  (`history/pdf/`). PDFs are opened at their REAL filesystem path —
+  "Open in viewer" picks one via the native dialog when none is open
+  (`acp:pick-pdf` IPC), and attaching a PDF uses `webUtils.getPathForFile`
+  so no hashed upload copy is shown; the upload copy is only a fallback
+  in the standalone host. The PDF backend lives in `@acp-assist/core`
+  (`createPdfBackend` + `createPdfExtraRoutes`): `POST .../pdf/open`
+  opens a PDF (path or uploaded attachment), `POST .../open-external`
+  and `POST .../jump` open the PDF in the user's viewer — SumatraPDF
+  with `-reuse-instance -page <N>` when detected on Windows, else the
+  OS default — and the shared `POST .../review` route produces the
+  structured report (page-aware text + optional page images + history,
+  schema-validated with one conversion retry), rendering suggestions in
+  the panel. Nothing is written into the app's data dir: `GET
+  .../review/download` serves the last review as a ZIP (flat
+  `report.html` + `report.json`) that the panel downloads. In this mode
+  the panel swaps the Undo button for Review… and Open-in-viewer
+  (`pdfMode` panel flag), and chat is refused until a PDF is open.
 
 ## Development
 
