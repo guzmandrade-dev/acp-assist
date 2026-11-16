@@ -13,6 +13,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import express from 'express';
 import {
   AcpClient,
@@ -28,11 +30,25 @@ import {
   createApiAuthGuard,
   generateApiToken,
   MAX_ACTIONS_PER_MESSAGE,
+  buildReviewZip,
+  formatPageList,
+  formatReviewForHistory,
+  generateReview,
+  getPagesText,
+  loadPdfDocument,
+  parsePageRange,
+  renderPdfPageImages,
+  REVIEW_IMAGE_RENDER,
+  REVIEW_TEXT_LIMIT,
+  REVIEW_TIMEOUT_MS,
+  MAX_REVIEW_IMAGE_PAGES,
   type AgentRunner,
   type AgentSettings,
   type Attachment,
   type ConversationStore,
   type HistoryReplayOptions,
+  type PdfDocumentInfo,
+  type Review,
   type Turn,
   type TurnMeta,
   type WrapFn,
@@ -782,6 +798,218 @@ export function createCompanionServer<TState>(
       });
     }
   });
+
+  // --- structured review (the Visual Research Pal report loop) ----------------
+
+  /** Per-session PDF text cache, keyed by absolute path. */
+  const pdfCache = new WeakMap<CompanionSession<TState>, Map<string, PdfDocumentInfo>>();
+  /** Last review per session — served as a ZIP by the download route. */
+  const lastReview = new WeakMap<
+    CompanionSession<TState>,
+    { review: Review; sourceName: string; pages: number[] }
+  >();
+
+  /**
+   * Streaming structured review of a PDF. Page-aware text (cached per
+   * session and file) plus optional page images and the current
+   * conversation go to the agent with the report prompt; the reply is
+   * validated against the review schema (one conversion retry on prose)
+   * and streamed back as {"log"}, {"text"}, {"tool"}, then
+   * {"review", "files"}, {"done"}. The review is recorded as a
+   * conversation turn, so the next review or chat builds on it.
+   *
+   * Body: { attachmentId? | path?, pages?, includeImages?, includeHistory?, prompt? }.
+   * The target defaults to the active document when it is a PDF.
+   */
+  app.post('/api/session/:id/review', async (req, res) => {
+    const maybeSession = sessions.get(param(req.params['id']));
+    if (!maybeSession) {
+      res.status(404).json({ error: 'Unknown session' });
+      return;
+    }
+    const session: CompanionSession<TState> = maybeSession;
+    const body = (req.body ?? {}) as {
+      attachmentId?: string;
+      path?: string;
+      pages?: string;
+      includeImages?: boolean;
+      includeHistory?: boolean;
+      prompt?: string;
+    };
+    // Assigned once the SSE stream starts; the catch block uses it to
+    // turn an agent abort (Stop button) into a {"cancelled"} frame.
+    let send: ((obj: unknown) => void) | null = null;
+    try {
+      // --- resolve the PDF target ---------------------------------------------
+      let pdfPath: string | null = null;
+      let sourceName = '';
+      if (typeof body.attachmentId === 'string' && body.attachmentId) {
+        const att = session.attachments.find((a) => a.id === body.attachmentId);
+        if (!att) {
+          res.status(400).json({ error: 'Unknown attachmentId — attach the PDF first.' });
+          return;
+        }
+        if (!/\.pdf$/i.test(att.name)) {
+          res.status(400).json({ error: `Attachment "${att.name}" is not a PDF.` });
+          return;
+        }
+        pdfPath = att.path;
+        sourceName = att.name;
+      } else if (typeof body.path === 'string' && body.path.trim()) {
+        pdfPath = path.resolve(body.path.trim());
+        if (!/\.pdf$/i.test(pdfPath)) {
+          res.status(400).json({ error: 'path must point to a .pdf file.' });
+          return;
+        }
+        await fs.access(pdfPath).catch(() => {
+          throw new Error(`No such file: ${pdfPath}`);
+        });
+        sourceName = path.basename(pdfPath);
+      } else {
+        const info = (await backend.sessionInfo(session, {})) as { documentPath?: unknown };
+        const docPath = typeof info?.documentPath === 'string' ? info.documentPath : '';
+        if (docPath && /\.pdf$/i.test(docPath)) {
+          pdfPath = docPath;
+          sourceName = path.basename(docPath);
+        } else {
+          res.status(400).json({
+            error:
+              'No PDF to review: attach a PDF (attachmentId), pass a path, or open a PDF in the editor.',
+          });
+          return;
+        }
+      }
+
+      // --- page-aware text (cached per session + file) --------------------------
+      let cache = pdfCache.get(session);
+      if (!cache) {
+        cache = new Map();
+        pdfCache.set(session, cache);
+      }
+      let doc = cache.get(pdfPath);
+      if (!doc) {
+        doc = await loadPdfDocument(pdfPath);
+        cache.set(pdfPath, doc);
+      }
+      const pages = parsePageRange(doc.totalPages, typeof body.pages === 'string' ? body.pages : undefined);
+      let pageText = getPagesText(doc, pages);
+      if (pageText.length > REVIEW_TEXT_LIMIT) {
+        pageText = `${pageText.slice(0, REVIEW_TEXT_LIMIT)}\n\n[TRUNCATED]`;
+      }
+
+      // --- conversation history (the critical loop) -----------------------------
+      let history = '';
+      if (body.includeHistory !== false) {
+        const key = backend.conversationKey(session);
+        const turns = session.conversations.get(key) ?? [];
+        history = turns
+          .map((t) => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content}`)
+          .join('\n\n');
+      }
+
+      // --- optional page images for visual grounding ----------------------------
+      const images: { data: string; mimeType: string }[] = [];
+      if (body.includeImages === true) {
+        const rendered = await renderPdfPageImages(pdfPath, pages.slice(0, MAX_REVIEW_IMAGE_PAGES), {
+          ...REVIEW_IMAGE_RENDER,
+        });
+        for (const img of rendered) images.push({ data: img.base64, mimeType: img.mimeType });
+      }
+
+      const rawSend = startSse(res);
+      send = (obj: unknown) => {
+        session.lastActive = Date.now();
+        rawSend(obj);
+      };
+      const sendLog = (message: string) => send?.({ log: message });
+      session.cancelRequested = false;
+
+      sendLog(`Reviewing ${sourceName} — ${doc.totalPages} pages, reviewing ${formatPageList(pages)}.`);
+      if (session.cancelRequested) {
+        send({ cancelled: true });
+        send({ done: true });
+        res.end();
+        return;
+      }
+
+      const review = await generateReview(
+        session.agent,
+        session.id,
+        {
+          sourceName,
+          totalPages: doc.totalPages,
+          pages,
+          pageText,
+          history,
+          prompt: typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt : undefined,
+          images,
+        },
+        {
+          onChunk: (chunk) => send?.({ text: chunk }),
+          onToolCall: (tool) => send?.({ tool }),
+          onLog: sendLog,
+          timeoutMs: Math.max(backend.promptTimeoutMs, REVIEW_TIMEOUT_MS),
+        },
+      );
+
+      // Record the exchange so the next review/chat builds on it.
+      const userText = `Generate a structured review of ${sourceName} (pages ${formatPageList(pages)})`;
+      await storeFor(session).recordTurn(userText, formatReviewForHistory(review), [sourceName]);
+      await storeFor(session).recordTurnMeta({ action: 'review', result: 'applied' } as TurnMeta);
+
+      // The report is not written into the app's data dir — the panel
+      // downloads it as a ZIP (report.html + report.json) from the route
+      // below, so the user chooses where it lives.
+      lastReview.set(session, { review, sourceName, pages });
+      send({ review, download: true });
+      send({ done: true });
+      await storeFor(session).flush().catch(() => {
+        /* never break the stream */
+      });
+      res.end();
+    } catch (err) {
+      logError('[api] review', err);
+      const message2 = err instanceof Error ? err.message : String(err);
+      if (!res.headersSent) {
+        res.status(backend.mapStatus(err)).json({ error: message2 });
+      } else if (session.cancelRequested) {
+        res.write(`data: ${JSON.stringify({ cancelled: true })}\n\n`);
+        res.write('data: {"done":true}\n\n');
+        res.end();
+      } else {
+        sseFail(res, err);
+      }
+    }
+  });
+
+  /**
+   * Download the session's last structured review as a ZIP archive
+   * containing a flat report.html (inline styles, no images/scripts) and
+   * report.json. 404 until the first review completes.
+   */
+  app.get(
+    '/api/session/:id/review/download',
+    wrap(async (req, res) => {
+      const session = getSession(req.params['id']);
+      const last = lastReview.get(session);
+      if (!last) {
+        res.status(404).json({ error: 'No review has been generated in this session yet.' });
+        return;
+      }
+      const meta = {
+        sourceName: last.sourceName,
+        pages: formatPageList(last.pages),
+        generatedAt: new Date().toISOString(),
+      };
+      const zip = await buildReviewZip(last.review, meta);
+      const slug =
+        last.sourceName.replace(/\.pdf$/i, '').replace(/[^\w.-]+/g, '_').slice(0, 60) || 'review';
+      res.setHeader('content-type', 'application/zip');
+      res.setHeader('content-disposition', `attachment; filename="review-${slug}.zip"`);
+      res.setHeader('content-length', String(zip.length));
+      res.end(zip);
+    }),
+  );
 
   // --- undo --------------------------------------------------------------------
 
