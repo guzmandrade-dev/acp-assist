@@ -1,7 +1,7 @@
 /**
  * Unified ACP Assist server: ONE Express host running the LyX,
- * LibreOffice, and ONLYOFFICE companion backends side by side, with one
- * editor app active in the panel at a time.
+ * LibreOffice, ONLYOFFICE, and PDF-review backends side by side, with one
+ * app active in the panel at a time.
  *
  * Routing: the panel is served at /?app=<id> and the boot script carries
  * an APP-SCOPED bearer token ("<app>:<raw>"), so every /api request is
@@ -38,19 +38,28 @@ import {
 import { PANEL_CONFIG as OO_PANEL_CONFIG } from 'onlyoffice-acp-assist/dist/panel-config.js';
 import type { PluginBridge } from 'onlyoffice-acp-assist/dist/bridge/plugin-bridge.js';
 import {
+  createCompanionServer,
+  createAttachmentExtractor,
+  createPdfBackend,
+  createPdfExtraRoutes,
+  PDF_PANEL_CONFIG,
+  type PdfBackendState,
+} from '@acp-assist/core';
+import {
   createPanelBootScript,
   createPanelIndexHandler,
   panelPublicDir,
   type PanelConfig,
 } from '@acp-assist/panel';
 
-export type UnifiedAppId = 'lyx' | 'libreoffice' | 'onlyoffice';
+export type UnifiedAppId = 'lyx' | 'libreoffice' | 'onlyoffice' | 'pdf';
 
-/** The bundled editor apps, in switcher order. */
+/** The bundled editor apps + the PDF-review mode, in switcher order. */
 const APP_DEFS: { id: UnifiedAppId; label: string }[] = [
   { id: 'libreoffice', label: 'LibreOffice' },
   { id: 'lyx', label: 'LyX' },
   { id: 'onlyoffice', label: 'ONLYOFFICE' },
+  { id: 'pdf', label: 'PDF Review' },
 ];
 
 const DEFAULT_APP: UnifiedAppId = 'libreoffice';
@@ -154,6 +163,28 @@ export function createServer(options: UnifiedServerOptions): express.Express {
       agentFactory: options.agentFactory,
       pluginBridge: options.pluginBridge,
       pluginPath: options.pluginPath,
+    }),
+  );
+  // PDF-review mode: prose-only chat about a read-only PDF, keyed by the
+  // PDF path, plus the structured /review route and the external-viewer
+  // open/jump routes from core.
+  add(
+    'pdf',
+    PDF_PANEL_CONFIG,
+    createCompanionServer<PdfBackendState>({
+      panelConfig: PDF_PANEL_CONFIG,
+      historyDir: path.join(historyRoot, 'pdf'),
+      attachmentsDir: options.attachmentsDir,
+      logDir: options.logDir,
+      settingsDir: userDataDir,
+      sessionIdleMs: options.sessionIdleMs,
+      apiToken: options.apiTokens?.pdf,
+      agentFactory: options.agentFactory,
+      extractText: createAttachmentExtractor({
+        extensions: ['txt', 'md', 'tex', 'bib', 'csv', 'json'],
+      }),
+      backend: createPdfBackend(),
+      extraRoutes: createPdfExtraRoutes(),
     }),
   );
 

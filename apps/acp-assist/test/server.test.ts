@@ -15,6 +15,7 @@ const TOKENS = {
   libreoffice: 'lo-token',
   lyx: 'lyx-token',
   onlyoffice: 'oo-token',
+  pdf: 'pdf-token',
 } as const;
 
 let server: Server;
@@ -104,6 +105,26 @@ describe('unified ACP Assist server', () => {
     });
     expect(ooRes.status).toBe(200);
     expect(await ooRes.json()).toHaveProperty('bridgeAvailable');
+  });
+
+  it('serves the PDF-review mode as a fourth switcher entry', async () => {
+    const res = await fetch(`${base}/?app=pdf`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('/panel-boot.js?app=pdf');
+
+    const boot = await fetch(`${base}/panel-boot.js?app=pdf`);
+    const js = await boot.text();
+    expect(js).toContain(`"pdf:${TOKENS.pdf}"`);
+    expect(js).toContain('"pdfMode":true');
+    expect(js).toContain('"label":"PDF Review"');
+
+    const status = await fetch(`${base}/api/status`, {
+      headers: { authorization: `Bearer pdf:${TOKENS.pdf}` },
+    });
+    expect(status.status).toBe(200);
+    const body = (await status.json()) as Record<string, unknown>;
+    expect(body['pdfMode']).toBe(true);
+    expect(typeof body['viewer']).toBe('string');
   });
 
   it('rejects missing, wrong, or unknown-app tokens', async () => {
