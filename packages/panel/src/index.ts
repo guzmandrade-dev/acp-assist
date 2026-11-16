@@ -71,6 +71,13 @@ export interface PanelConfig {
     current: string;
     apps: { id: string; label: string }[];
   };
+  /**
+   * PDF-review mode (unified app's "PDF Review" entry): the "document"
+   * is a read-only PDF, so the composer shows the Review… and
+   * Open-in-viewer buttons instead of Undo, and the review dialog has no
+   * target picker (the active PDF is the only target).
+   */
+  pdfMode?: boolean;
 }
 
 /** The panel package's public/ directory (shared assets). */

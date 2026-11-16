@@ -1004,3 +1004,161 @@ button:focus-visible {
 }
 .modal-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 
+/* ── Review dialog + structured review card ── */
+/* The review dialog is left-aligned (form fields read better that way);
+   the shared save-consent modal keeps its centered look. */
+#review-backdrop .modal {
+  text-align: left;
+  align-items: stretch;
+}
+#review-backdrop .modal p { text-align: left; }
+#review-backdrop .modal-actions { justify-content: flex-end; }
+.review-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  text-align: left;
+}
+.review-form .settings-check {
+  flex-direction: row;
+  justify-content: flex-start;
+  text-align: left;
+}
+.field-hint {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  font-weight: normal;
+  margin-left: var(--space-2);
+}
+.review-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+.review-form input[type='text'],
+.review-form select {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-3);
+  height: 28px;
+}
+.review-form input[type='text']:focus-visible,
+.review-form select:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.review-log {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: var(--space-2);
+}
+.review-raw {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.review-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.review-title {
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+  font-size: var(--text-base);
+}
+.review-summary {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  line-height: var(--leading-relaxed);
+}
+.review-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.suggestion {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.suggestion-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.suggestion-meta {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.jump-page {
+  border: none;
+  background: none;
+  padding: 0;
+  height: auto;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  color: var(--accent-strong);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.jump-page:hover { color: var(--accent-strong-hover); background: none; }
+.suggestion p {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--text-primary);
+}
+.suggestion-rationale { color: var(--text-secondary); }
+.suggestion-rebuttal {
+  font-style: italic;
+  color: var(--text-tertiary);
+}
+.sev {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.sev-high { background: rgba(192, 57, 43, 0.12); color: var(--error); }
+.sev-medium { background: rgba(138, 90, 20, 0.12); color: var(--status-warn); }
+.sev-low { background: var(--surface-tertiary); color: var(--text-secondary); }
+.conf { font-size: var(--text-xs); color: var(--text-tertiary); }
+.review-files {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  word-break: break-all;
+}
+.review-download {
+  align-self: flex-start;
+  height: 28px;
+  font-size: var(--text-sm);
+}
+

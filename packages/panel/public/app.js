@@ -20,6 +20,8 @@ import {
   selectionEl,
   appSelect,
   showFullHistoryEl,
+  reviewBtn,
+  openViewerBtn,
 } from './state.js';
 import { api, loadSettings, saveSettings } from './api.js';
 import { addSystemMessage, rerenderAssistantTexts, showEmpty } from './messages.js';
@@ -31,6 +33,8 @@ import {
 } from './status.js';
 import { connect, reconnect, send } from './conversation.js';
 import { refreshDocuments, refreshSelection } from './documents.js';
+import './review.js';
+import './pdf.js';
 
 // Refresh the editor context (active document tab + selection indicator) only
 // when the user interacts with the composer — never on a timer. Every pipe
@@ -132,6 +136,17 @@ function setupAppSwitcher() {
 function start() {
   setupAppSwitcher();
   input.placeholder = 'Ask the agent. It reads the document and your selection, then decides: reply here, insert at the cursor, or rewrite what you selected.';
+  // PDF-review mode: the "document" is a read-only PDF, so the composer
+  // swaps Undo for Review… and gains Open-in-viewer; the agent only ever
+  // replies in prose there.
+  if (CONFIG.pdfMode) {
+    undoBtn.hidden = true;
+    reviewBtn.hidden = false;
+    openViewerBtn.hidden = false;
+    input.placeholder = 'Ask about the PDF — the agent answers in prose. Use Review… for the structured report.';
+    const hint = document.getElementById('composer-hint');
+    if (hint) hint.textContent = 'The agent answers in prose — the PDF is never edited. Open in viewer shows the PDF beside this panel.';
+  }
   if (selectionEl) selectionEl.hidden = true;
   showEmpty();
   stopBtn.style.display = '';

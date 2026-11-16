@@ -480,7 +480,11 @@ export async function connect() {
   state.sessionId = info.sessionId;
   state.chatDocKey = info.documentPath ?? '(unsaved)';
   setDocInfo(info.documentPath, info.versionControlled);
-  docEl.textContent = info.documentPath ?? '(unsaved document)';
+  // PDF mode has no unsaved-document concept — the label says how to open one.
+  const emptyDocLabel = CONFIG.pdfMode
+    ? '(no PDF open — attach one with +)'
+    : '(unsaved document)';
+  docEl.textContent = info.documentPath ?? emptyDocLabel;
   docEl.title = info.documentPath ?? '';
   updateDocSelector(info.documentPath, info.documents ?? []);
   const turns = info.conversation ?? [];
@@ -493,7 +497,9 @@ export async function connect() {
       'assistant',
       info.outline
         ? `Connected. Cursor ${CONFIG.cursorTerm ?? 'style'}: ${info.layout}. The agent decides itself whether to reply or write into the document.`
-        : `Connected to ${APP} (document unsaved — outline unavailable).`,
+        : CONFIG.pdfMode
+          ? 'Connected. Attach a PDF with + (or pick a previous one in the dropdown above), then ask — or press Review… for the structured report.'
+          : `Connected to ${APP} (document unsaved — outline unavailable).`,
     );
     hideEmpty();
   }

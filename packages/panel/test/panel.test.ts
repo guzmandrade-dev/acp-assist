@@ -38,7 +38,7 @@ describe('shared panel assets', () => {
     for (const name of [
       'state.js', 'api.js', 'markdown.js', 'messages.js', 'typing.js',
       'status.js', 'save-consent.js', 'install.js', 'documents.js',
-      'events.js', 'conversation.js', 'attachments.js',
+      'events.js', 'conversation.js', 'attachments.js', 'review.js', 'pdf.js',
     ]) {
       await expect(fs.access(path.join(dir, name))).resolves.toBeUndefined();
     }
@@ -121,6 +121,68 @@ describe('shared panel assets', () => {
     expect(js).toContain('/api/bridge/plugin');
     expect(js).toContain('/api/bridge/plugin/download');
     expect(js).toContain('bridgeDownload');
+  });
+
+  it('review.js wires the structured-review flow end to end', async () => {
+    const dir = panelPublicDir();
+    const html = await fs.readFile(path.join(dir, 'index.html'), 'utf8');
+    // Review… and Open-in-viewer ship hidden: only PDF mode shows them.
+    expect(html).toMatch(/<button id="review"[^>]*\bhidden/);
+    expect(html).toMatch(/<button id="open-viewer"[^>]*\bhidden/);
+    expect(html).toContain('id="review-backdrop"');
+    expect(html).toContain('id="review-target"');
+    expect(html).toContain('id="review-run"');
+    const js = await fs.readFile(path.join(dir, 'review.js'), 'utf8');
+    expect(js).toContain('/review');
+    expect(js).toContain('/review/download');
+    expect(js).toContain('review-download');
+    expect(js).toContain('attachmentId');
+    expect(js).toContain('includeImages');
+    expect(js).toContain('review-card');
+    // PDF mode fixes the review target to the active PDF; suggestion page
+    // numbers are jump buttons.
+    expect(js).toContain('CONFIG.pdfMode');
+    expect(js).toContain('jump-page');
+    expect(js).toContain('/jump');
+    // app.js loads the modules; state.js carries the element refs
+    const appSrc = await fs.readFile(path.join(dir, 'app.js'), 'utf8');
+    expect(appSrc).toContain("import './review.js';");
+    expect(appSrc).toContain("import './pdf.js';");
+    expect(appSrc).toContain('CONFIG.pdfMode');
+    const stateSrc = await fs.readFile(path.join(dir, 'state.js'), 'utf8');
+    expect(stateSrc).toContain('reviewBtn');
+    expect(stateSrc).toContain('openViewerBtn');
+    expect(stateSrc).toContain('review-backdrop');
+    // pdf.js opens the active PDF in the external viewer, and picks a PDF
+    // from disk (native dialog) when none is open; attachments.js opens an
+    // attached PDF at its REAL path via webUtils when available.
+    const pdfSrc = await fs.readFile(path.join(dir, 'pdf.js'), 'utf8');
+    expect(pdfSrc).toContain('open-external');
+    expect(pdfSrc).toContain('pickPdf');
+    expect(pdfSrc).toContain('/pdf/open');
+    expect(pdfSrc).toContain('CONFIG.pdfMode');
+    const attSrc = await fs.readFile(path.join(dir, 'attachments.js'), 'utf8');
+    expect(attSrc).toContain('/pdf/open');
+    expect(attSrc).toContain('getPathForFile');
+    expect(attSrc).toContain('CONFIG.pdfMode');
+    // PDF mode adapts the composer hint; the doc selector says "Active PDF".
+    expect(appSrc).toContain('composer-hint');
+    const docSrc = await fs.readFile(path.join(dir, 'documents.js'), 'utf8');
+    expect(docSrc).toContain('Active PDF');
+    // setDocInfo tracks the active path even without save-consent.
+    const scSrc = await fs.readFile(path.join(dir, 'save-consent.js'), 'utf8');
+    expect(scSrc).toContain('state.activeDocPath = docPath || null;');
+    const css = await fs.readFile(path.join(dir, 'style.css'), 'utf8');
+    expect(css).toContain('.review-card');
+    expect(css).toContain('.sev-high');
+    expect(css).toContain('.jump-page');
+    expect(css).toContain('.review-download');
+    // The review dialog is left-aligned.
+    expect(css).toContain('#review-backdrop .modal');
+    // PDF mode replaces the "(unsaved document)" label.
+    const convSrc = await fs.readFile(path.join(dir, 'conversation.js'), 'utf8');
+    expect(convSrc).toContain('no PDF open');
+    expect(convSrc).toContain('CONFIG.pdfMode');
   });
 
   it('index references the boot script; the boot script carries token + config + theme', async () => {

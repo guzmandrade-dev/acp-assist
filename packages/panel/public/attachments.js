@@ -5,6 +5,7 @@
 // next message consumes them.
 
 import {
+  CONFIG,
   state,
   attachBtn,
   fileInput,
@@ -13,6 +14,8 @@ import {
 } from './state.js';
 import { api } from './api.js';
 import { addSystemMessage } from './messages.js';
+
+import { refreshDocuments } from './documents.js';
 
 export function renderChips() {
   chipsEl.innerHTML = '';
@@ -78,6 +81,34 @@ attachBtn.addEventListener('click', () => {
 fileInput.addEventListener('change', async () => {
   if (!state.sessionId || state.busy) return;
   for (const file of fileInput.files ?? []) {
+    // PDF mode + Electron: open the file at its REAL filesystem path — no
+    // uploaded copy, so the doc selector and history show the original name.
+    const realPath =
+      CONFIG.pdfMode && /\.pdf$/i.test(file.name)
+        ? window.electron?.getPathForFile?.(file) ?? null
+        : null;
+    if (realPath) {
+      const tempId = `pending-${Math.random().toString(36).slice(2)}`;
+      state.pendingAttachments.push({ id: tempId, name: file.name, converting: true });
+      renderChips();
+      try {
+        await api(`/api/session/${state.sessionId}/pdf/open`, {
+          method: 'POST',
+          body: JSON.stringify({ path: realPath }),
+        });
+        const i = state.pendingAttachments.findIndex((a) => a.id === tempId);
+        if (i >= 0) state.pendingAttachments.splice(i, 1);
+        renderChips();
+        addSystemMessage(`Opened ${file.name} — ask about it, or use Review… for the structured report.`);
+        await refreshDocuments();
+      } catch (e) {
+        const i = state.pendingAttachments.findIndex((a) => a.id === tempId);
+        if (i >= 0) state.pendingAttachments.splice(i, 1);
+        renderChips();
+        addSystemMessage(`could not open ${file.name}: ${e.message}`, true);
+      }
+      continue;
+    }
     const tempId = `pending-${Math.random().toString(36).slice(2)}`;
     state.pendingAttachments.push({ id: tempId, name: file.name, converting: true });
     renderChips();
@@ -88,6 +119,23 @@ fileInput.addEventListener('change', async () => {
       renderChips();
       if (att.converted === false) {
         addSystemMessage(`Could not read text from ${file.name}. It was still attached; the agent can try to read it itself.`, true);
+      }
+      // PDF mode: an attached PDF becomes the active document immediately
+      // (it is the conversation key), not a pending chat attachment.
+      if (CONFIG.pdfMode && /\.pdf$/i.test(file.name)) {
+        try {
+          await api(`/api/session/${state.sessionId}/pdf/open`, {
+            method: 'POST',
+            body: JSON.stringify({ attachmentId: att.id }),
+          });
+          const i = state.pendingAttachments.findIndex((a) => a.id === tempId);
+          if (i >= 0) state.pendingAttachments.splice(i, 1);
+          renderChips();
+          addSystemMessage(`Opened ${file.name} — ask about it, or use Review… for the structured report.`);
+          await refreshDocuments();
+        } catch (e2) {
+          addSystemMessage(`could not open ${file.name}: ${e2.message}`, true);
+        }
       }
     } catch (e) {
       const idx = state.pendingAttachments.findIndex((a) => a.id === tempId);

@@ -10,7 +10,7 @@
  * layout for no maintenance win.
  */
 
-import { app, BrowserWindow, ipcMain, Menu } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron';
 import { spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -223,6 +223,21 @@ export function createElectronMain(options: ElectronMainOptions): void {
     ipcMain.on('window/toggle-always-on-top', () => {
       followMode = !followMode;
       applyAlwaysOnTop(followMode && watcherLastState !== null && watchedProcesses.has(watcherLastState));
+    });
+
+    // PDF-review mode: native "open a PDF" picker. Resolves to the chosen
+    // file's ABSOLUTE path on disk (the real file — not an uploaded copy),
+    // or null when the dialog is cancelled.
+    ipcMain.handle('acp:pick-pdf', async (): Promise<string | null> => {
+      const opts = {
+        title: 'Open a PDF to review',
+        properties: ['openFile' as const],
+        filters: [{ name: 'PDF documents', extensions: ['pdf'] }],
+      };
+      const result = mainWindow
+        ? await dialog.showOpenDialog(mainWindow, opts)
+        : await dialog.showOpenDialog(opts);
+      return result.canceled ? null : (result.filePaths[0] ?? null);
     });
 
     // Window/taskbar icon: the 256px raster next to the app bundle. Absent in

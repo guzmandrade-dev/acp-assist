@@ -3,6 +3,7 @@
 // Editor context: active document (tab selector) and selection readout.
 
 import {
+  CONFIG,
   state,
   docEl,
   docSelect,
@@ -31,7 +32,7 @@ export async function refreshSelection() {
 
 export function updateDocSelector(active, documents) {
   docSelect.innerHTML = '';
-  docSelect.title = `Active ${APP} document`;
+  docSelect.title = CONFIG.pdfMode ? 'Active PDF' : `Active ${APP} document`;
   for (const p of documents) {
     const opt = document.createElement('option');
     opt.value = p;

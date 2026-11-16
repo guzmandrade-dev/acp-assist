@@ -22,10 +22,12 @@ import { api } from './api.js';
 
 export const HAS_SAVE_CONSENT = Boolean(CONFIG.hasSaveConsent) && Boolean(consentBackdrop);
 
-/** Track the active document + its VCS status; toggle the warning badge. */
+/** Track the active document + its VCS status; toggle the warning badge.
+ *  The active path is tracked even without save-consent (PDF mode uses it
+ *  as "the active PDF"); only the VCS warning is gated on HAS_SAVE_CONSENT. */
 export function setDocInfo(docPath, versionControlled) {
-  if (!HAS_SAVE_CONSENT) return;
   state.activeDocPath = docPath || null;
+  if (!HAS_SAVE_CONSENT) return;
   state.docVersionControlled = versionControlled ?? null;
   if (vcsWarnEl) vcsWarnEl.hidden = !(state.activeDocPath && state.docVersionControlled === false);
 }
