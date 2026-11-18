@@ -665,7 +665,9 @@ paste.
 the tag + block; markup problems trigger one corrective retry
 (`buildMarkupRetryPrompt`). The app keeps the mechanical/unsafe part
 (clipboard write + `paste`), the agent owns intent. SSE frames:
-`{"text"}`, `{"tool": {title, status}}` (agent tool activity), `{"applied":
+`{"text"}`, `{"thought"}` (agent_thought_chunk reasoning, shown as a
+one-line tail in the panel's typing indicator), `{"tool": {title, status}}`
+(agent tool activity), `{"applied":
 "insert"|"insert-top"|"rewrite"}`, `{"action":"none"}`,
 `{"cancelled":true}`, `{"error"}`, `{"done":true}`.
 

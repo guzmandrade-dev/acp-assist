@@ -417,6 +417,57 @@ describe('server message loop (fake agent + fake bridge)', () => {
     srv.close();
   });
 
+  it('streams agent thought chunks as {"thought"} frames before the reply text', async () => {
+    const app = createServer({
+      apiToken: API_TOKEN, publicDir, panelConfig: PANEL_CONFIG,
+      historyDir,
+      agentFactory: () => ({
+        start: async () => undefined,
+        stop: () => undefined,
+        createSession: async () => undefined,
+        cancel: () => undefined,
+        prompt: async (_id, _content, options) => {
+          options?.onThought?.('Let me read the document. ');
+          options?.onThought?.('Paragraph p2 is the insertion point.');
+          options?.onChunk?.('All good. ');
+          options?.onToolCall?.({ title: 'read file', status: 'completed', kind: 'read' });
+          return 'All good. [ACTION: none]';
+        },
+      }),
+      bridgeFactory: () => new FakeBridge(),
+    });
+    const srv = app.listen(0, '127.0.0.1');
+    await new Promise<void>((r) => srv.on('listening', r));
+    const addr = srv.address() as { port: number };
+    const url = `http://127.0.0.1:${addr.port}`;
+    try {
+      const headers = { 'content-type': 'application/json', authorization: 'Bearer ' + API_TOKEN };
+      const created = await fetch(`${url}/api/session`, { method: 'POST', headers });
+      expect(created.status).toBe(200);
+      const session = (await created.json()) as { sessionId: string };
+      const res = await fetch(`${url}/api/session/${session.sessionId}/message/stream`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ message: 'hello' }),
+      });
+      const frames = sseFrames(await res.text());
+      const thoughts = frames.filter((f) => typeof f.thought === 'string');
+      expect(thoughts.map((f) => f['thought'])).toEqual([
+        'Let me read the document. ',
+        'Paragraph p2 is the insertion point.',
+      ]);
+      // Reasoning streams before the reply text starts.
+      const firstText = frames.findIndex((f) => typeof f.text === 'string');
+      const lastThought = frames.findLastIndex((f) => typeof f.thought === 'string');
+      expect(firstText).toBeGreaterThan(-1);
+      expect(lastThought).toBeLessThan(firstText);
+      expect(frames.some((f) => f.stopped === 'none')).toBe(true);
+      expect(frames[frames.length - 1]).toEqual({ done: true });
+    } finally {
+      srv.close();
+    }
+  });
+
   it('runs a Calc write-cells action through the calc adapter', async () => {
     const edits: EditPayload[] = [];
     const calcBridge = new (class extends BridgeClient {

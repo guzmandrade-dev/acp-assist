@@ -173,6 +173,8 @@ export interface ReviewRequest {
 
 export interface ReviewRunHooks {
   onChunk?: (chunk: string) => void;
+  /** Reasoning chunks, streamed to the panel as {"thought"}. */
+  onThought?: (chunk: string) => void;
   onToolCall?: (tool: { title: string; status: string; kind: string }) => void;
   /** Progress lines (phase changes), streamed to the panel as {"log"}. */
   onLog?: (message: string) => void;
@@ -280,6 +282,7 @@ export async function generateReview(
 ): Promise<Review> {
   const promptOptions = {
     onChunk: hooks.onChunk,
+    onThought: hooks.onThought,
     onToolCall: hooks.onToolCall,
     timeoutMs: hooks.timeoutMs,
   };

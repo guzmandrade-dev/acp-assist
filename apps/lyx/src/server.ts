@@ -1098,6 +1098,7 @@ function createLyxBackend(
           const retry = buildMarkupRetryPrompt(outcome.action, problems);
           return await session.agent.prompt(session.id, [{ type: 'text', text: retry }], {
             onChunk: (chunk) => send({ text: `\n${chunk}`, ...(step > 1 ? { step } : {}) }),
+            onThought: (chunk) => send({ thought: chunk, ...(step > 1 ? { step } : {}) }),
             onToolCall: (tool) => send({ tool }),
             // Same budget as the main prompt (this call originally had NO
             // timeoutMs, so a stuck retry could hang the stream).

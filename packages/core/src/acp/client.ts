@@ -22,6 +22,12 @@ export interface AcpClientOptions {
 export interface PromptOptions {
   /** Called with each text chunk as it streams in. */
   onChunk?: (chunk: string) => void;
+  /**
+   * Called with each reasoning chunk (agent_thought_chunk) as it streams
+   * in. Agents that expose their thinking emit these before/alongside the
+   * message text; the UI shows only a tail of it as a liveness signal.
+   */
+  onThought?: (chunk: string) => void;
   /** Called with each tool-call lifecycle update the agent emits. */
   onToolCall?: (tool: { title: string; status: string; kind: string }) => void;
   /** Abort with an error if the agent takes longer than this. */
@@ -160,14 +166,29 @@ export class AcpClient {
     };
 
     await active.prompt(content);
+    // First-chunk timings per prompt: tells apart "agent slow to start
+    // streaming" from "no reasoning emitted at all" in the app console.
+    const sentAt = Date.now();
+    let firstTextAt: number | null = null;
+    let firstThoughtAt: number | null = null;
     let text = '';
     for (;;) {
       const message = await nextWithTimeout();
       if (message.kind === 'stop') return text;
       const update = message.update;
       if (update.sessionUpdate === 'agent_message_chunk' && update.content.type === 'text') {
+        if (firstTextAt === null) {
+          firstTextAt = Date.now();
+          console.log(`[acp] first agent_message_chunk +${firstTextAt - sentAt}ms`);
+        }
         text += update.content.text;
         options.onChunk?.(update.content.text);
+      } else if (update.sessionUpdate === 'agent_thought_chunk' && update.content.type === 'text') {
+        if (firstThoughtAt === null) {
+          firstThoughtAt = Date.now();
+          console.log(`[acp] first agent_thought_chunk +${firstThoughtAt - sentAt}ms`);
+        }
+        options.onThought?.(update.content.text);
       } else if (update.sessionUpdate === 'tool_call') {
         const tool = update as unknown as {
           toolCallId: string;

@@ -256,6 +256,26 @@ describe('generateReview', () => {
     expect(content[0]?.type).toBe('text');
     expect(content[1]).toMatchObject({ type: 'image', data: 'aGVsbG8=', mimeType: 'image/jpeg' });
   });
+
+  it('forwards streamed agent thoughts (onThought) on both prompts of a retry', async () => {
+    const thoughts: string[] = [];
+    let call = 0;
+    const agent: AgentRunner = {
+      start: async () => undefined,
+      stop: () => undefined,
+      createSession: async () => undefined,
+      cancel: () => undefined,
+      prompt: async (_sessionId, _content, options) => {
+        call += 1;
+        options?.onThought?.(`thought on call ${call}`);
+        // First reply is prose, so generateReview runs its conversion retry.
+        return call === 1 ? 'prose first' : reviewJson;
+      },
+    };
+    const review = await generateReview(agent, 's1', req, { onThought: (c) => thoughts.push(c) });
+    expect(review.title).toBe('Paper review');
+    expect(thoughts).toEqual(['thought on call 1', 'thought on call 2']);
+  });
 });
 
 describe('formatReviewForHistory', () => {

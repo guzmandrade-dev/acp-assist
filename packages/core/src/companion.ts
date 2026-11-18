@@ -5,8 +5,9 @@
  * carries its document-source specifics (bridge vs pipe, module adapters
  * vs paste choreographies); the app vocabularies become backend methods.
  *
- * The SSE frame protocol ({"text"}, {"tool"}, {"applied"}, {"appliedStep"},
- * {"stopped"}, {"done"}, {"cancelled"}, {"error"}, {"tagNote"}), the
+ * The SSE frame protocol ({"text"}, {"thought"}, {"tool"}, {"applied"},
+ * {"appliedStep"}, {"stopped"}, {"done"}, {"cancelled"}, {"error"},
+ * {"tagNote"}), the
  * MAX_ACTIONS_PER_MESSAGE multi-action orchestration, cancel handling,
  * the conversation store + history replay, and the idle-session GC (B2)
  * are IDENTICAL across the apps and live here once.
@@ -571,7 +572,9 @@ export function createCompanionServer<TState>(
    * document and prompts the agent again for the next edit (multi-action
    * loop), up to MAX_ACTIONS_PER_MESSAGE edits.
    *
-   * SSE frames: {"text": ...} chunks, {"tool": ...} agent tool activity,
+   * SSE frames: {"text": ...} chunks, {"thought": ...} reasoning chunks
+   * (agent_thought_chunk — a liveness signal, shown as a one-line tail in
+   * the panel's typing indicator), {"tool": ...} agent tool activity,
    * {"applied": action, ...} per applied edit, {"appliedStep": n},
    * {"stopped": reason}, {"done": true}. Errors: {"error": ...},
    * {"cancelled": true}.
@@ -657,6 +660,7 @@ export function createCompanionServer<TState>(
         // --- prompt once, parse the action, apply it --------------------
         let reply = await session.agent.prompt(session.id, [{ type: 'text', text: prompt }], {
           onChunk: (chunk) => send({ text: chunk, ...(step > 1 ? { step } : {}) }),
+          onThought: (chunk) => send({ thought: chunk, ...(step > 1 ? { step } : {}) }),
           onToolCall: (tool) => send({ tool }),
           timeoutMs: backend.promptTimeoutMs,
         });
@@ -814,7 +818,7 @@ export function createCompanionServer<TState>(
    * session and file) plus optional page images and the current
    * conversation go to the agent with the report prompt; the reply is
    * validated against the review schema (one conversion retry on prose)
-   * and streamed back as {"log"}, {"text"}, {"tool"}, then
+   * and streamed back as {"log"}, {"thought"}, {"text"}, {"tool"}, then
    * {"review", "files"}, {"done"}. The review is recorded as a
    * conversation turn, so the next review or chat builds on it.
    *
@@ -946,6 +950,7 @@ export function createCompanionServer<TState>(
         },
         {
           onChunk: (chunk) => send?.({ text: chunk }),
+          onThought: (chunk) => send?.({ thought: chunk }),
           onToolCall: (tool) => send?.({ tool }),
           onLog: sendLog,
           timeoutMs: Math.max(backend.promptTimeoutMs, REVIEW_TIMEOUT_MS),

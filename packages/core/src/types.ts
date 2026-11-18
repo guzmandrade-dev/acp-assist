@@ -77,6 +77,8 @@ export interface AgentRunner {
     content: ContentBlock[],
     options?: {
       onChunk?: (chunk: string) => void;
+      /** Reasoning chunks (agent_thought_chunk), streamed like text. */
+      onThought?: (chunk: string) => void;
       onToolCall?: (tool: { title: string; status: string; kind: string }) => void;
       timeoutMs?: number;
     },
