@@ -1,0 +1,17 @@
+# OSV-Scanner config, applied to all scans via --config in
+# .github/workflows/security.yml (per-directory osv-scanner.toml files do
+# not apply to package-lock.json).
+#
+# Ignored advisories must have a reason and an expiry: after effectiveUntil
+# the ignore stops applying, so if the package is still vulnerable the scan
+# fails again and the ignore gets re-reviewed.
+
+[[IgnoredVulns]]
+# CVE-2026-112366: picomatch ReDoS via single-branch repeated extglobs.
+# Affects every released version through 4.0.7 (the latest) — no fixed
+# version exists. picomatch is a dev-only transitive dependency of vitest
+# (test tooling); the glob input that triggers the ReDoS never occurs in
+# tests, and picomatch is not shipped in the Electron app.
+id = "GHSA-fc5q-39xc-vjpf"
+reason = "No fixed version available; dev-only transitive dep of vitest, not reachable in the shipped app"
+effectiveUntil = 2027-02-18

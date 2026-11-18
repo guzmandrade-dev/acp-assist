@@ -77,3 +77,4 @@ jobs:
         with:
           scan-args: |-
             --lockfile=./package-lock.json
+            --config=./.osv-scanner.toml
