@@ -10,7 +10,7 @@
  * layout for no maintenance win.
  */
 
-import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, screen } from 'electron';
 import { spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -245,9 +245,21 @@ export function createElectronMain(options: ElectronMainOptions): void {
     const windowIcon = path.join(options.appDistDir, '..', '..', 'build', 'icon-256.png');
     const windowIconOpt = fs.existsSync(windowIcon) ? { icon: windowIcon } : {};
 
+    // Open slightly right of center (a centered window sits at 50% of the
+    // free space; 62% nudges it toward the right edge without docking) —
+    // the panel is designed to live beside the editor. Display nearest the
+    // cursor + work area = taskbar/dock-aware on Windows, macOS and Linux.
+    const windowWidth = 420;
+    const windowHeight = 680;
+    const { workArea } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+    const windowX = workArea.x + Math.round((workArea.width - windowWidth) * 0.62);
+    const windowY = workArea.y + Math.round((workArea.height - windowHeight) / 2);
+
     mainWindow = new BrowserWindow({
-      width: 420,
-      height: 680,
+      width: windowWidth,
+      height: windowHeight,
+      x: windowX,
+      y: windowY,
       // Framed window: frameless has cross-platform issues (Linux/macOS).
       alwaysOnTop: false, // managed by the editor-follow watcher below
       ...windowIconOpt,
