@@ -27,7 +27,7 @@ import {
   withbridgeBusy,
   refreshStatus,
 } from './status.js';
-import { showTyping, hideTyping, scheduleTypingResume } from './typing.js';
+import { showTyping, hideTyping, scheduleTypingResume, pushThought, resetThoughts, setTypingHint } from './typing.js';
 import { scrollToBottomIfNear } from './messages.js';
 import { HAS_SAVE_CONSENT, ensureSaveConsent, requestSaveConsent, setDocInfo } from './save-consent.js';
 import { updateDocSelector, refreshDocuments, refreshSelection } from './documents.js';
@@ -140,8 +140,8 @@ export function renderFeedback(msgDiv, { applied, target, target2, address, modu
 
 /**
  * Stream one message: POST to the SSE endpoint, parse the {"text"},
- * {"tool"}, {"applied"}, and {"appliedStep"} frames, and render the
- * reply live. Returns the turn outcome for the caller.
+ * {"thought"}, {"tool"}, {"applied"}, and {"appliedStep"} frames, and render
+ * the reply live. Returns the turn outcome for the caller.
  */
 export async function streamMessage(message) {
   let { div, textDiv } = addMessage('assistant', '');
@@ -149,13 +149,16 @@ export async function streamMessage(message) {
   state.currentAbort = ctrl;
   setBusy(true);
   state.generationStart = Date.now();
+  state.agentStart = 0;
   showTyping();
+  resetThoughts();
 
   let res;
   try {
     // The response headers arrive only after the server has finished reading
     // the document context from the editor (save + outline + selection), so this
-    // fetch window is exactly the "talking to the editor" phase.
+    // fetch window is exactly the "talking to the editor" phase — and its end
+    // is when the agent gets prompted (state.agentStart drives the hint label).
     res = await withbridgeBusy(
       fetch(`/api/session/${state.sessionId}/message/stream`, {
         method: 'POST',
@@ -201,6 +204,11 @@ export async function streamMessage(message) {
     setBusy(false);
     throw err;
   }
+
+  // Headers received: the editor round-trip is done and the agent prompt is
+  // on its way — from here on the elapsed time is agent time.
+  state.agentStart = Date.now();
+  setTypingHint();
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -272,6 +280,11 @@ export async function streamMessage(message) {
         if (payload.error) {
           error = payload.error;
           maybeSetBusyFromError({ message: error });
+        } else if (payload.thought) {
+          // Streamed reasoning (agent_thought_chunk): a live one-line tail
+          // in the typing indicator — shown until the reply text starts.
+          pushThought(String(payload.thought));
+          if (!started) showTyping();
         } else if (payload.text) {
           full += payload.text;
           started = true;
@@ -299,8 +312,9 @@ export async function streamMessage(message) {
         } else if (payload.appliedStep) {
           // Boundary between two edits of one multi-action run: close the
           // current bubble (with its feedback) and start a fresh one below
-          // for the next agent step.
+          // for the next agent step (whose thinking starts from scratch).
           cancelLiveRender();
+          resetThoughts();
           div._rawText = full;
           div._applied = applied;
           textDiv.innerHTML =

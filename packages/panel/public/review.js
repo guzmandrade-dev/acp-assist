@@ -26,7 +26,7 @@ import {
 import { api } from './api.js';
 import { addMessage, addSystemMessage, scrollToBottomIfNear } from './messages.js';
 import { maybeSetBusyFromError, setBusy } from './status.js';
-import { showTyping, hideTyping } from './typing.js';
+import { showTyping, hideTyping, pushThought, resetThoughts, setTypingHint } from './typing.js';
 
 /** PDF-review mode: the active PDF is the only review target. */
 const PDF_MODE = Boolean(CONFIG.pdfMode);
@@ -263,7 +263,9 @@ async function runReview() {
 
   setBusy(true);
   state.generationStart = Date.now();
+  state.agentStart = 0;
   showTyping();
+  resetThoughts();
   let streamed = '';
   try {
     const res = await fetch(`/api/session/${state.sessionId}/review`, {
@@ -278,6 +280,11 @@ async function runReview() {
       const errBody = await res.json().catch(() => ({}));
       throw new Error(errBody.error ?? `${res.status} ${res.statusText}`);
     }
+
+    // Headers received: PDF text extraction is done and the agent prompt is
+    // on its way (the review route starts the SSE stream only after that).
+    state.agentStart = Date.now();
+    setTypingHint();
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -299,6 +306,10 @@ async function runReview() {
         }
         if (payload.log) {
           log(String(payload.log));
+        } else if (payload.thought) {
+          // Streamed reasoning: live one-line tail in the typing indicator.
+          pushThought(String(payload.thought));
+          showTyping();
         } else if (payload.text) {
           streamed += String(payload.text);
         } else if (payload.tool) {

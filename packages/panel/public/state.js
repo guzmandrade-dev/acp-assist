@@ -102,6 +102,14 @@ export const state = {
   typingIndicator: null,
   /** When the current turn started (0 = no turn). */
   generationStart: 0,
+  /**
+   * When the agent was actually prompted in the current turn (0 = still in
+   * the pre-prompt phase). The stream fetch resolves only after the server
+   * finished the editor round-trip (save + document read), so the gap
+   * generationStart → agentStart is "talking to the editor", not agent
+   * time. The typing hint uses this to label the phase.
+   */
+  agentStart: 0,
   typingTimer: null,
   typingResumeTimer: null,
   /** Document path whose conversation is currently rendered in the chat. */

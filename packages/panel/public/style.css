@@ -603,6 +603,7 @@ main::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius:
   color: var(--text-tertiary);
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
   background: var(--surface);
@@ -610,6 +611,19 @@ main::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius:
   border-radius: var(--radius-pill);
   align-self: flex-start;
   box-shadow: var(--shadow-sm);
+  max-width: 100%;
+}
+/* Live tail of the agent's streamed reasoning ({"thought"} frames): one
+   italic line under the dots, ellipsized — a liveness signal, not reading
+   material. */
+.typing-thought {
+  flex-basis: 100%;
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 46ch;
+  animation: typing-pulse 2.4s ease-in-out infinite;
 }
 .tdots { display: inline-flex; gap: 3px; }
 .tdots i {
