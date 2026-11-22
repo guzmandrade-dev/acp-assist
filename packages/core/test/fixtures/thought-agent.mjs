@@ -20,6 +20,12 @@ app.onRequest('session/prompt', async (ctx) => {
     content: { type: 'text', text: 'Deciding on the reply.' },
   });
   await send({
+    sessionUpdate: 'usage_update',
+    used: 12345,
+    size: 200000,
+    cost: { amount: 0.0123, currency: 'USD' },
+  });
+  await send({
     sessionUpdate: 'agent_message_chunk',
     content: { type: 'text', text: 'Here is ' },
   });

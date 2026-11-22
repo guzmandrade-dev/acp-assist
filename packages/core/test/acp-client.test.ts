@@ -37,4 +37,26 @@ describe('AcpClient prompt loop (fixture agent over stdio)', () => {
       client.stop();
     }
   });
+
+  it('forwards usage_update snapshots to onUsage', async () => {
+    const client = new AcpClient({
+      appName: 'acp-client-test',
+      writerName: 'Test',
+      command: process.execPath,
+      args: [fixture],
+      env: {},
+    });
+    await client.start();
+    try {
+      await client.createSession('test-session');
+      const usages = [];
+      await client.prompt('test-session', [{ type: 'text', text: 'hi' }], {
+        onUsage: (u) => usages.push(u),
+        timeoutMs: 20_000,
+      });
+      expect(usages).toEqual([{ used: 12345, size: 200000, cost: { amount: 0.0123, currency: 'USD' } }]);
+    } finally {
+      client.stop();
+    }
+  });
 });

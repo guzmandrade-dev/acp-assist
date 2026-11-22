@@ -30,6 +30,27 @@ export interface AgentSettings {
    * way — the setting only affects rendering.
    */
   showFullHistory?: boolean;
+  /**
+   * Max document edits the multi-action loop applies per user message
+   * before stopping and asking for "continue" (default
+   * MAX_ACTIONS_PER_MESSAGE = 10). Persisted server-side like the agent
+   * command; clamped to [1, 50] on read/write.
+   */
+  maxActionsPerMessage?: number;
+}
+
+/**
+ * Context-window usage reported by the agent mid-turn (ACP
+ * `usage_update`). Agents that do not report usage never produce it;
+ * the panel simply shows nothing then.
+ */
+export interface UsageInfo {
+  /** Tokens currently in context. */
+  used: number;
+  /** Total context window size in tokens. */
+  size: number;
+  /** Cumulative session cost, when the agent reports one. */
+  cost: { amount: number; currency: string } | null;
 }
 
 export interface Turn {
@@ -80,6 +101,8 @@ export interface AgentRunner {
       /** Reasoning chunks (agent_thought_chunk), streamed like text. */
       onThought?: (chunk: string) => void;
       onToolCall?: (tool: { title: string; status: string; kind: string }) => void;
+      /** Context-window usage snapshots (ACP usage_update), when supported. */
+      onUsage?: (usage: UsageInfo) => void;
       timeoutMs?: number;
     },
   ): Promise<string>;

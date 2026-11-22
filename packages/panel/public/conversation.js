@@ -226,6 +226,7 @@ export async function streamMessage(message) {
   let started = false;
   const usedTools = [];
   let toolLine = null;
+  let usageEl = null;
   // Multi-action runs: close one assistant bubble per applied edit and
   // start a fresh bubble for the next agent step in the same request.
   const streamSteps = [];
@@ -237,6 +238,24 @@ export async function streamMessage(message) {
       div.appendChild(toolLine);
     }
     toolLine.textContent = text;
+  };
+
+  // Context-window usage (ACP usage_update frames, forwarded as {"usage"}):
+  // a small muted line under the bubble, e.g. "context 87.2k / 200k · $0.01".
+  // Agents that never report usage simply never create the line.
+  const fmtTokens = (n) =>
+    typeof n === 'number' && n >= 1000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}k` : String(n);
+  const setUsageLine = (u) => {
+    if (!usageEl) {
+      usageEl = document.createElement('div');
+      usageEl.className = 'usage';
+      div.appendChild(usageEl);
+    }
+    let text = `context ${fmtTokens(u.used)} / ${fmtTokens(u.size)} tokens`;
+    if (u.cost && typeof u.cost.amount === 'number') {
+      text += ` · ${u.cost.amount} ${u.cost.currency}`;
+    }
+    usageEl.textContent = text;
   };
 
   // Throttled live render (see LIVE_RENDER_MS): one full fence-aware
@@ -301,6 +320,9 @@ export async function streamMessage(message) {
           hideTyping();
           scheduleTypingResume();
           scrollToBottomIfNear();
+        } else if (payload.usage) {
+          // usage_update snapshot: context fill (and cost when reported).
+          setUsageLine(payload.usage);
         } else if (payload.applied) {
           applied = payload.applied;
           target = payload.target ?? null;
@@ -325,6 +347,7 @@ export async function streamMessage(message) {
           div = next.div;
           textDiv = next.textDiv;
           toolLine = null;
+          usageEl = null;
           usedTools.length = 0;
           applied = null;
           target = null;

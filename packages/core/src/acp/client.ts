@@ -8,6 +8,8 @@ import type {
 import fs from 'node:fs/promises';
 import { spawnAgentProcess, type AgentProcess } from './agent-process.js';
 
+import type { UsageInfo } from '../types.js';
+
 export interface AcpClientOptions {
   /** App name used in the ACP handshake (e.g. "lyx-acp-assist"). */
   appName: string;
@@ -30,6 +32,12 @@ export interface PromptOptions {
   onThought?: (chunk: string) => void;
   /** Called with each tool-call lifecycle update the agent emits. */
   onToolCall?: (tool: { title: string; status: string; kind: string }) => void;
+  /**
+   * Called with each usage_update the agent emits (context window fill +
+   * optional cumulative cost). Agents that don't report usage simply
+   * never trigger this.
+   */
+  onUsage?: (usage: UsageInfo) => void;
   /** Abort with an error if the agent takes longer than this. */
   timeoutMs?: number;
 }
@@ -200,6 +208,12 @@ export class AcpClient {
           title: tool.title ?? tool.toolCallId,
           status: tool.status ?? 'in_progress',
           kind: tool.kind ?? 'execute',
+        });
+      } else if (update.sessionUpdate === 'usage_update') {
+        options.onUsage?.({
+          used: update.used,
+          size: update.size,
+          cost: update.cost ?? null,
         });
       }
     }

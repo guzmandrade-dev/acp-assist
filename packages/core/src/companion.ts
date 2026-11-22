@@ -662,6 +662,9 @@ export function createCompanionServer<TState>(
           onChunk: (chunk) => send({ text: chunk, ...(step > 1 ? { step } : {}) }),
           onThought: (chunk) => send({ thought: chunk, ...(step > 1 ? { step } : {}) }),
           onToolCall: (tool) => send({ tool }),
+          // usage_update: context fill (used/size) + optional cost, only
+          // when the agent reports it — the panel hides the line otherwise.
+          onUsage: (usage) => send({ usage }),
           timeoutMs: backend.promptTimeoutMs,
         });
         let outcome = backend.parseAction(session, reply, stepData);
