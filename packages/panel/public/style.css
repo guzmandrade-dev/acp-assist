@@ -157,6 +157,19 @@ body {
   border-radius: var(--radius-sm);
 }
 
+/* ACP (Agent Client Protocol) mark next to the app logo — follows the theme text color */
+.acp-mark {
+  height: 15px;
+  width: auto;
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+.acp-mark-sm {
+  height: 12px;
+  vertical-align: -2px;
+  margin-left: 2px;
+}
+
 /* ── Toolbar — clean white with green accent line ── */
 .toolbar {
   display: flex;
