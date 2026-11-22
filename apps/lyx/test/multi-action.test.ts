@@ -286,6 +286,7 @@ async function startHarness(
   replies: string[],
   lyxHooks: { onPaste?: () => Promise<void>; failGoto?: boolean; writeOnly?: boolean; noPaste?: boolean; saveDelayMs?: number } = {},
   agentOverride?: AgentRunner,
+  extraOptions: { settingsDir?: string } = {},
 ): Promise<Harness> {
   const doc = await writeFakeDoc();
   const lyx = fakeLyx(doc, lyxHooks);
@@ -296,6 +297,7 @@ async function startHarness(
     historyDir: doc.dir,
     lyxFactory: () => lyx.client as unknown as LyxServerClient,
     agentFactory: () => agent,
+    ...(extraOptions.settingsDir ? { settingsDir: extraOptions.settingsDir } : {}),
   });
   const server = await new Promise<Server>((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
@@ -636,6 +638,40 @@ describe('multi-action runs over the message stream', () => {
     expect(frames.filter((f) => typeof f.applied === 'string')).toHaveLength(10);
     expect(frames.some((f) => f.stopped === 'limit')).toBe(true);
     expect(frames.some((f) => typeof f.text === 'string' && f.text.includes('safety limit'))).toBe(true);
+  });
+
+  it('honors the user-configured max edits per message (settingsDir)', async () => {
+    const edit = (n: number) =>
+      `Edit ${n}.\n\`\`\`lyx\n\\begin_layout Standard\nedit ${n}\n\\end_layout\n\`\`\`\n[ACTION: rewrite-at p2]`;
+    const replies = Array.from({ length: 8 }, (_, i) => edit(i + 1));
+    const settingsDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lyx-settings-'));
+    await fs.writeFile(
+      path.join(settingsDir, 'agent-settings.json'),
+      JSON.stringify({ maxActionsPerMessage: 3 }),
+      'utf8',
+    );
+    const harness = await startHarness(replies, {}, undefined, { settingsDir });
+    cleanups.push(async () => {
+      await new Promise<void>((resolve) => harness.server.close(() => resolve()));
+      await fs.rm(harness.doc.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      await fs.rm(settingsDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
+
+    const res = await fetch(`${harness.base}/api/session/${harness.sessionId}/message/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${API_TOKEN}` },
+      body: JSON.stringify({ message: 'rewrite the body many times' }),
+    });
+    const frames = await readSse(res);
+    expect(harness.doc.paragraphs[1].text).toBe('edit 3'); // 3rd edit, configured cap hit
+    expect(harness.agent.prompts).toHaveLength(3); // never a 4th prompt
+    expect(frames.filter((f) => typeof f.applied === 'string')).toHaveLength(3);
+    expect(frames.some((f) => f.stopped === 'limit')).toBe(true);
+    expect(
+      frames.some((f) => typeof f.text === 'string' && f.text.includes('Stopped after 3 document edits')),
+    ).toBe(true);
+    // The continuation prompt tells the agent the configured limit.
+    expect(harness.agent.prompts[1]).toContain('safety limit of 3');
   });
 });
 

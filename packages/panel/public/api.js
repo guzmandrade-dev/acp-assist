@@ -2,7 +2,7 @@
 
 // API client + agent settings persistence.
 
-import { cmdEl, showFullHistoryEl, state } from './state.js';
+import { cmdEl, maxActionsEl, showFullHistoryEl, state } from './state.js';
 
 /**
  * Fetch helper for the companion API: attaches the bearer token that the
@@ -50,6 +50,9 @@ export async function loadSettings() {
       state.showFullHistory = s.showFullHistory;
       if (showFullHistoryEl) showFullHistoryEl.checked = s.showFullHistory;
     }
+    if (typeof s.maxActionsPerMessage === 'number' && maxActionsEl) {
+      maxActionsEl.value = String(s.maxActionsPerMessage);
+    }
   } catch {
     /* keep the HTML defaults */
   }
@@ -57,10 +60,16 @@ export async function loadSettings() {
 
 export function saveSettings() {
   const { command, args } = parseAgentCommand(cmdEl.value);
+  // Only send maxActionsPerMessage when the input holds a usable number;
+  // the server clamps to [1, 50] and falls back to the default otherwise.
+  const maxActions = maxActionsEl ? Number(maxActionsEl.value) : NaN;
   const body = JSON.stringify({
     command,
     args,
     showFullHistory: showFullHistoryEl ? showFullHistoryEl.checked : state.showFullHistory,
+    ...(Number.isFinite(maxActions) && maxActions > 0
+      ? { maxActionsPerMessage: maxActions }
+      : {}),
   });
   // Fire-and-forget; a failed save must not break the UI.
   api('/api/settings/agent', { method: 'PUT', body }).catch(() => {});

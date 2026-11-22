@@ -25,6 +25,7 @@ export function buildContinuationPrompt(
   selection: { hasSelection: boolean; lyxBody: string | null; text: string | null; layout: string | null },
   originalMessage: string,
   completed: string[],
+  maxActions = MAX_ACTIONS_PER_MESSAGE,
 ): string {
   const parts = [
     'You are continuing the SAME user request after one edit was applied ' +
@@ -45,7 +46,7 @@ export function buildContinuationPrompt(
       `question, reply in prose only and end with [ACTION: none].`,
     `If you are not sure whether more edits remain, ask one short question ` +
       `with [ACTION: none] instead of guessing.`,
-    `The app enforces a safety limit of ${MAX_ACTIONS_PER_MESSAGE} document ` +
+    `The app enforces a safety limit of ${maxActions} document ` +
       `edits per user message; if that limit is reached it stops and tells ` +
       `the user, who can ask you to continue in a follow-up message.`,
     '',

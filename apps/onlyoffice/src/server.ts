@@ -363,9 +363,9 @@ function createOoBackend(
       return buildAutoPrompt(s.contextText, s.selection, message, attachments, historyPrefix, s.module);
     },
 
-    async buildContinuationPrompt(_session, stepData, originalMessage, completed) {
+    async buildContinuationPrompt(_session, stepData, originalMessage, completed, maxActions) {
       const s = stepData as OoStepData;
-      return buildContinuationPrompt(s.contextText, s.selection, originalMessage, completed, s.module);
+      return buildContinuationPrompt(s.contextText, s.selection, originalMessage, completed, s.module, maxActions);
     },
 
     parseAction(_session, reply, stepData): OoOutcome {
@@ -572,6 +572,7 @@ export function buildContinuationPrompt(
   originalMessage: string,
   completed: string[],
   module: OoModule = 'writer',
+  maxActions = MAX_ACTIONS_PER_MESSAGE,
 ): string {
   const parts = [
     'You are continuing the SAME user request after one edit was applied ' +
@@ -589,7 +590,7 @@ export function buildContinuationPrompt(
     'If the request is now complete, reply in prose only and end with [ACTION: none].',
     'If you are not sure whether more edits remain, ask one short question ' +
       'with [ACTION: none] instead of guessing.',
-    `The app enforces a safety limit of ${MAX_ACTIONS_PER_MESSAGE} document ` +
+    `The app enforces a safety limit of ${maxActions} document ` +
       'edits per user message; if that limit is reached it stops and tells ' +
       'the user, who can ask you to continue in a follow-up message.',
     '',

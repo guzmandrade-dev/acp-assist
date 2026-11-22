@@ -20,6 +20,7 @@ import {
   selectionEl,
   appSelect,
   showFullHistoryEl,
+  maxActionsEl,
   reviewBtn,
   openViewerBtn,
 } from './state.js';
@@ -143,6 +144,9 @@ function start() {
     undoBtn.hidden = true;
     reviewBtn.hidden = false;
     openViewerBtn.hidden = false;
+    // PDF review is prose-only: the edits-per-message limit does not apply.
+    const maxActionsRow = document.getElementById('max-actions-row');
+    if (maxActionsRow) maxActionsRow.hidden = true;
     input.placeholder = 'Ask about the PDF — the agent answers in prose. Use Review… for the structured report.';
     const hint = document.getElementById('composer-hint');
     if (hint) hint.textContent = 'The agent answers in prose — the PDF is never edited. Open in viewer shows the PDF beside this panel.';
@@ -162,6 +166,9 @@ function start() {
       saveSettings();
       rerenderAssistantTexts();
     });
+  }
+  if (maxActionsEl) {
+    maxActionsEl.addEventListener('change', saveSettings);
   }
   const settingsDetails = document.querySelector('.agent-settings');
   document.addEventListener('pointerdown', (e) => {

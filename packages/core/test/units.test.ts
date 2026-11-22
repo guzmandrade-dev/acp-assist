@@ -57,6 +57,19 @@ describe('readAgentSettingsBody', () => {
     expect(readAgentSettingsBody({ showFullHistory: true })).toEqual({ showFullHistory: true });
     expect(readAgentSettingsBody({ showFullHistory: 'no' })).toEqual({});
   });
+
+  it('keeps a valid maxActionsPerMessage and clamps it to [1, 50]', () => {
+    expect(readAgentSettingsBody({ maxActionsPerMessage: 20 })).toEqual({ maxActionsPerMessage: 20 });
+    expect(readAgentSettingsBody({ maxActionsPerMessage: 2.7 })).toEqual({ maxActionsPerMessage: 3 });
+    expect(readAgentSettingsBody({ maxActionsPerMessage: 0 })).toEqual({ maxActionsPerMessage: 1 });
+    expect(readAgentSettingsBody({ maxActionsPerMessage: 999 })).toEqual({ maxActionsPerMessage: 50 });
+  });
+
+  it('ignores a non-numeric maxActionsPerMessage', () => {
+    expect(readAgentSettingsBody({ maxActionsPerMessage: 'many' })).toEqual({});
+    expect(readAgentSettingsBody({ maxActionsPerMessage: NaN })).toEqual({});
+    expect(readAgentSettingsBody({ maxActionsPerMessage: undefined })).toEqual({});
+  });
 });
 
 // --- history persistence --------------------------------------------------------

@@ -1078,9 +1078,9 @@ function createLyxBackend(
       return buildAutoPrompt(s.contextText, s.selection, message, attachments, historyPrefix);
     },
 
-    async buildContinuationPrompt(_session, stepData, originalMessage, completed) {
+    async buildContinuationPrompt(_session, stepData, originalMessage, completed, maxActions) {
       const s = stepData as LyxStepData;
-      return buildContinuationPrompt(s.contextText, s.selection, originalMessage, completed);
+      return buildContinuationPrompt(s.contextText, s.selection, originalMessage, completed, maxActions);
     },
 
     parseAction(_session, reply) {

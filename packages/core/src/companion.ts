@@ -31,6 +31,7 @@ import {
   createApiAuthGuard,
   generateApiToken,
   MAX_ACTIONS_PER_MESSAGE,
+  normalizeMaxActionsPerMessage,
   buildReviewZip,
   formatPageList,
   formatReviewForHistory,
@@ -191,13 +192,14 @@ export interface CompanionBackend<
    * Called once per step; the returned data is opaque to the core.
    */
   readStep(session: CompanionSession<TState>, step: number): Promise<ReadStepResult>;
-  /** The step-1 prompt. */
+  /** The step-1 prompt. `maxActions` = the effective edits-per-message limit. */
   buildAutoPrompt(
     session: CompanionSession<TState>,
     stepData: unknown,
     message: string,
     attachments: Attachment[],
     historyPrefix: string,
+    maxActions: number,
   ): Promise<string>;
   /** Continuation prompts for steps > 1 (fresh context after each edit). */
   buildContinuationPrompt(
@@ -205,6 +207,7 @@ export interface CompanionBackend<
     stepData: unknown,
     originalMessage: string,
     completed: string[],
+    maxActions: number,
   ): Promise<string>;
   /** Parse one reply against the app's action vocabulary. */
   parseAction(session: CompanionSession<TState>, reply: string, stepData: unknown): TOutcome;
@@ -570,12 +573,15 @@ export function createCompanionServer<TState>(
    * intent and ends its reply with an action tag (the backend's
    * vocabulary). After a document action is applied, the app re-reads the
    * document and prompts the agent again for the next edit (multi-action
-   * loop), up to MAX_ACTIONS_PER_MESSAGE edits.
+   * loop), up to the effective max-actions-per-message limit (user setting
+   * clamped, default MAX_ACTIONS_PER_MESSAGE).
    *
    * SSE frames: {"text": ...} chunks, {"thought": ...} reasoning chunks
    * (agent_thought_chunk — a liveness signal, shown as a one-line tail in
    * the panel's typing indicator), {"tool": ...} agent tool activity,
-   * {"applied": action, ...} per applied edit, {"appliedStep": n},
+   * {"usage": {used, size, cost}} context-window snapshots (usage_update,
+   * agents that support it only), {"applied": action, ...} per applied
+   * edit, {"appliedStep": n},
    * {"stopped": reason}, {"done": true}. Errors: {"error": ...},
    * {"cancelled": true}.
    */
@@ -620,12 +626,18 @@ export function createCompanionServer<TState>(
 
       const key = backend.conversationKey(session);
       const historyPrefix = storeFor(session).buildHistoryPrefix(key);
+      // Effective edits-per-message limit for this run: the user setting
+      // (persisted in agent-settings.json) clamped, else the default.
+      const maxActions =
+        normalizeMaxActionsPerMessage((await agentSettings.read()).maxActionsPerMessage) ??
+        MAX_ACTIONS_PER_MESSAGE;
       const initialPrompt = await backend.buildAutoPrompt(
         session,
         stepData1,
         message,
         attachments,
         historyPrefix,
+        maxActions,
       );
       // The replayed (pre-restart) turns are in this prompt now, so the
       // agent knows them; only turns recorded from here on are new to it.
@@ -638,7 +650,7 @@ export function createCompanionServer<TState>(
       let stepData = stepData1;
       let stoppedReason: 'done' | 'none' | 'cancelled' | 'error' | 'limit' = 'done';
 
-      while (step < MAX_ACTIONS_PER_MESSAGE) {
+      while (step < maxActions) {
         step += 1;
         if (session.cancelRequested) {
           send({ cancelled: true });
@@ -654,7 +666,7 @@ export function createCompanionServer<TState>(
             throw new Error('Message refused mid-run.');
           }
           stepData = fresh.data;
-          prompt = await backend.buildContinuationPrompt(session, stepData, message, completed);
+          prompt = await backend.buildContinuationPrompt(session, stepData, message, completed, maxActions);
         }
 
         // --- prompt once, parse the action, apply it --------------------
@@ -751,10 +763,10 @@ export function createCompanionServer<TState>(
         if (appliedStepFrame) send(appliedStepFrame);
       }
 
-      if (step >= MAX_ACTIONS_PER_MESSAGE && stoppedReason === 'done') {
+      if (step >= maxActions && stoppedReason === 'done') {
         stoppedReason = 'limit';
         send({
-          text: `\nStopped after ${MAX_ACTIONS_PER_MESSAGE} document edits (safety limit). Send "continue" to apply more edits.`,
+          text: `\nStopped after ${maxActions} document edits (safety limit). Send "continue" to apply more edits.`,
         });
       }
       send({ stopped: stoppedReason, appliedCount: completed.length });

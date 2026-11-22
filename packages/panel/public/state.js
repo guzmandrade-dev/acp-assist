@@ -59,6 +59,7 @@ export const reconnectBtn = document.getElementById('reconnect');
 export const installBtn = document.getElementById('install-btn');
 export const cmdEl = document.getElementById('agent-cmd');
 export const showFullHistoryEl = document.getElementById('show-full-history');
+export const maxActionsEl = document.getElementById('max-actions');
 export const attachBtn = document.getElementById('attach');
 export const fileInput = document.getElementById('file-input');
 export const chipsEl = document.getElementById('chips');

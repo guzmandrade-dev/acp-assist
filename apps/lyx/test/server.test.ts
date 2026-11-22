@@ -211,6 +211,22 @@ describe('agent settings persistence', () => {
         body: JSON.stringify({ command: 'vibe-acp', args: '' }),
       });
       expect(await noArgs.json()).toEqual({ command: 'vibe-acp', args: [] });
+
+      // maxActionsPerMessage round-trips, clamped to [1, 50].
+      const putMax = await fetch(`${base}/api/settings/agent`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${API_TOKEN}` },
+        body: JSON.stringify({ maxActionsPerMessage: 20 }),
+      });
+      expect(await putMax.json()).toEqual({ command: 'vibe-acp', args: [], maxActionsPerMessage: 20 });
+      const putClamped = await fetch(`${base}/api/settings/agent`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${API_TOKEN}` },
+        body: JSON.stringify({ maxActionsPerMessage: 500 }),
+      });
+      expect((await putClamped.json()).maxActionsPerMessage).toBe(50);
+      const got2 = await (await fetch(`${base}/api/settings/agent`, { headers: { authorization: 'Bearer ' + API_TOKEN } })).json();
+      expect(got2.maxActionsPerMessage).toBe(50);
     } finally {
       await new Promise<void>((resolve) => srv.close(() => resolve()));
       await fsp.rm(dir, { recursive: true, force: true });

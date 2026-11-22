@@ -9,6 +9,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type express from 'express';
 import type { AgentSettings } from './types.js';
+import { normalizeMaxActionsPerMessage } from './conversations.js';
 
 /** The app-level async error wrapper (see each app's createServer). */
 export type WrapFn = (
@@ -85,5 +86,7 @@ export function readAgentSettingsBody(body: unknown): Partial<AgentSettings> {
   }
   if (typeof b.officePath === 'string') out.officePath = b.officePath.trim();
   if (typeof b.showFullHistory === 'boolean') out.showFullHistory = b.showFullHistory;
+  const maxActions = normalizeMaxActionsPerMessage(b.maxActionsPerMessage);
+  if (maxActions !== undefined) out.maxActionsPerMessage = maxActions;
   return out;
 }

@@ -16,6 +16,24 @@ import { formatHistoryReplay, type HistoryReplayOptions, loadHistory, removeHist
 /** Max document edits one user message may apply (app-level safety stop). */
 export const MAX_ACTIONS_PER_MESSAGE = 10;
 
+/** Allowed range for the user-configurable max edits per message. */
+export const MIN_ACTIONS_PER_MESSAGE = 1;
+export const MAX_ACTIONS_PER_MESSAGE_LIMIT = 50;
+
+/**
+ * Normalize a user-supplied max-edits-per-message value: an integer clamped
+ * to [MIN_ACTIONS_PER_MESSAGE, MAX_ACTIONS_PER_MESSAGE_LIMIT]. Returns
+ * undefined when absent or not a finite number (the caller then falls back
+ * to MAX_ACTIONS_PER_MESSAGE).
+ */
+export function normalizeMaxActionsPerMessage(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  return Math.min(
+    MAX_ACTIONS_PER_MESSAGE_LIMIT,
+    Math.max(MIN_ACTIONS_PER_MESSAGE, Math.round(value)),
+  );
+}
+
 /**
  * The app-level error logger: console + best-effort append to
  * `<logDir>/errors.log`. Logging must never break the request path.
