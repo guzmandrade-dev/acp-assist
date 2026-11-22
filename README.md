@@ -1,4 +1,10 @@
-# ACP Assist
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-acp-dark.svg">
+    <img src="docs/logo-acp.svg" alt="ACP" height="40">
+  </picture>
+  Assist
+</h1>
 
 [![Tests](https://github.com/guzmandrade-dev/acp-assist/actions/workflows/test.yml/badge.svg)](https://github.com/guzmandrade-dev/acp-assist/actions/workflows/test.yml)
 [![Build](https://github.com/guzmandrade-dev/acp-assist/actions/workflows/build.yml/badge.svg)](https://github.com/guzmandrade-dev/acp-assist/actions/workflows/build.yml)
@@ -12,7 +18,8 @@ companion app for LyX, LibreOffice, and ONLYOFFICE — pick the editor with the
 in-app switcher — with a fourth **PDF Review** mode for discussing a compiled
 PDF. The panel reads your document, chats, and writes **directly into
 the live editor document**. All reasoning is delegated to an external agent
-over the [Agent Client Protocol](https://agentclientprotocol.com/) (ACP);
+over the [Agent Client Protocol](https://agentclientprotocol.com/)
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/logo-acp-dark.svg"><img src="docs/logo-acp.svg" alt="ACP" height="14"></picture>;
 there is no LLM and no API key inside the app.
 
 | App | Description |
