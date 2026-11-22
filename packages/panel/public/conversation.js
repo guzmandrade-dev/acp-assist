@@ -30,7 +30,7 @@ import {
 import { showTyping, hideTyping, scheduleTypingResume, pushThought, resetThoughts, setTypingHint } from './typing.js';
 import { scrollToBottomIfNear } from './messages.js';
 import { HAS_SAVE_CONSENT, ensureSaveConsent, requestSaveConsent, setDocInfo } from './save-consent.js';
-import { updateDocSelector, refreshDocuments, refreshSelection } from './documents.js';
+import { updateDocSelector, refreshDocuments, refreshSelection, switchDocument } from './documents.js';
 import { closeEventChannel, openEventChannel } from './events.js';
 import { renderChips } from './attachments.js';
 
@@ -506,6 +506,18 @@ export async function send() {
 
 /** Create the session and render its initial state. */
 export async function connect() {
+  // One (re)connect at a time: the boot connect and a reconnect fired by the
+  // file dropdown (see app.js) must not race two /api/session POSTs.
+  if (state.connecting) return;
+  state.connecting = true;
+  try {
+    await doConnect();
+  } finally {
+    state.connecting = false;
+  }
+}
+
+async function doConnect() {
   await refreshStatus();
   saveSettings();
   const { command, args } = parseAgentCommand(cmdEl.value);
@@ -546,7 +558,8 @@ export async function connect() {
 
 /** Tear down the current session (agent process included) and start a new one. */
 export async function reconnect() {
-  if (state.busy) return;
+  if (state.busy || state.connecting) return;
+  state.connecting = true;
   reconnectBtn.disabled = true;
   try {
     if (state.sessionId) {
@@ -562,7 +575,15 @@ export async function reconnect() {
     state.pendingAttachments.length = 0;
     renderChips();
     showEmpty();
-    await connect();
+    await doConnect();
+    // A document picked from the dropdown while this reconnect was tearing
+    // the old session down was parked by the change handler — apply it now
+    // that the fresh session has re-read the editor's document list.
+    if (state.pendingDocSwitch) {
+      const path = state.pendingDocSwitch;
+      state.pendingDocSwitch = null;
+      await switchDocument(path);
+    }
   } catch (e) {
     maybeSetBusyFromError(e);
     if (!state.bridgeBusy) {
@@ -572,6 +593,7 @@ export async function reconnect() {
     const details = document.querySelector('.agent-settings');
     if (details && typeof details.open === 'boolean') details.open = true;
   } finally {
+    state.connecting = false;
     reconnectBtn.disabled = false;
   }
 }

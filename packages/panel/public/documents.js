@@ -44,13 +44,14 @@ export function updateDocSelector(active, documents) {
   docSelect.hidden = documents.length === 0;
 }
 
-docSelect.addEventListener('change', async () => {
+/** Switch the editor's active document to `path` and re-render around it. */
+export async function switchDocument(path) {
   if (!state.sessionId || state.busy) return;
   try {
     const r = await withbridgeBusy(
       api(`/api/session/${state.sessionId}/documents/switch`, {
         method: 'POST',
-        body: JSON.stringify({ path: docSelect.value }),
+        body: JSON.stringify({ path }),
       }),
     );
     docEl.textContent = r.active ?? '(unsaved document)';
@@ -66,6 +67,18 @@ docSelect.addEventListener('change', async () => {
     maybeSetBusyFromError(e);
     addSystemMessage(`error: ${e.message}`, true);
   }
+}
+
+docSelect.addEventListener('change', () => {
+  if (!state.sessionId || state.busy) {
+    // Clicking this dropdown also fires a reconnect (see app.js): while that
+    // reconnect is tearing the old session down there is no session to
+    // switch on, so park the picked document — reconnect() applies it to the
+    // fresh session once connect() has re-read the document list.
+    if (state.connecting && docSelect.value) state.pendingDocSwitch = docSelect.value;
+    return;
+  }
+  switchDocument(docSelect.value);
 });
 
 /**

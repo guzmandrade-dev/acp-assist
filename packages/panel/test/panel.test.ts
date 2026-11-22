@@ -273,6 +273,31 @@ describe('shared panel assets', () => {
     }
   });
 
+  it('file dropdown click triggers the reconnect action (fresh list on open)', async () => {
+    const dir = panelPublicDir();
+    const read = (name: string) => fs.readFile(path.join(dir, name), 'utf8');
+    // app.js wires the dropdown's mousedown to the same reconnect() the
+    // Reconnect button runs.
+    const appSrc = await read('app.js');
+    expect(appSrc).toContain("docSelect.addEventListener('mousedown'");
+    expect(appSrc).toMatch(/docSelect\.addEventListener\('mousedown'[\s\S]{0,120}reconnect\(\)/);
+    // conversation.js allows one (re)connect at a time and applies a
+    // document picked mid-reconnect to the fresh session.
+    const convSrc = await read('conversation.js');
+    expect(convSrc).toContain('if (state.busy || state.connecting) return;');
+    expect(convSrc).toContain('state.pendingDocSwitch');
+    expect(convSrc).toContain('switchDocument');
+    // documents.js parks the dropdown pick when there is no session to
+    // switch on because a reconnect is in flight.
+    const docSrc = await read('documents.js');
+    expect(docSrc).toContain('export async function switchDocument(path)');
+    expect(docSrc).toContain('state.pendingDocSwitch = docSelect.value;');
+    // state.js carries both flags.
+    const stateSrc = await read('state.js');
+    expect(stateSrc).toContain('connecting: false');
+    expect(stateSrc).toContain('pendingDocSwitch: null');
+  });
+
   it('shared panel carries the app-switcher seam (hidden select + wiring)', async () => {
     const dir = panelPublicDir();
     const html = await fs.readFile(path.join(dir, 'index.html'), 'utf8');

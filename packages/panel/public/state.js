@@ -99,6 +99,14 @@ export const state = {
   bridgeAvailable: false,
   /** AbortController of the running stream. */
   currentAbort: null,
+  /** A connect/reconnect is in flight — one session POST at a time. */
+  connecting: false,
+  /**
+   * Document picked from the file dropdown while a reconnect fired by that
+   * same click was tearing the old session down; applied to the new session
+   * once connect() has re-read the editor's document list.
+   */
+  pendingDocSwitch: null,
   /** The typing-indicator element (lazily created). */
   typingIndicator: null,
   /** When the current turn started (0 = no turn). */

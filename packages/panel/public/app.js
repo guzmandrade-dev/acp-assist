@@ -16,6 +16,7 @@ import {
   pinBtn,
   reconnectBtn,
   cmdEl,
+  docSelect,
   fileInput,
   selectionEl,
   appSelect,
@@ -102,6 +103,18 @@ undoBtn.addEventListener('click', async () => {
 });
 
 reconnectBtn.addEventListener('click', reconnect);
+
+// Clicking the file dropdown means "show me the open documents", but the
+// list is only as fresh as the last connect — and the editor pipe (LyX/LO)
+// can answer slowly after an app restart. So opening the dropdown also
+// fires the Reconnect action (the button disables while it runs), which
+// re-reads the document list. reconnect() no-ops while a turn is streaming
+// or a (re)connect is already in flight; a document picked from the
+// dropdown during that reconnect is parked and applied to the new session
+// (see documents.js / conversation.js).
+docSelect.addEventListener('mousedown', () => {
+  reconnect();
+});
 
 pinBtn.addEventListener('click', () => {
   state.followMode = !state.followMode;
