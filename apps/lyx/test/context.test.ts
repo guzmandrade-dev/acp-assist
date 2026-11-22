@@ -189,6 +189,79 @@ describe('findMarkupProblems — spaces around inline insets', () => {
   });
 });
 
+describe('findMarkupProblems — line breaks are not spaces', () => {
+  it('flags a sentence glued across a line break (no edge space)', () => {
+    // Live bug 2026-11-22: "probability space.\nThe central idea" pasted
+    // as "probability space.The central idea" in the saved .lyx file.
+    const body =
+      '\\begin_layout Standard\nFirst sentence.\nSecond sentence\n\\end_layout';
+    const problems = findMarkupProblems(body);
+    expect(problems.some((p) => p.includes('Missing space at a line break'))).toBe(true);
+  });
+
+  it('accepts a trailing space on the first line', () => {
+    const body =
+      '\\begin_layout Standard\nFirst sentence. \nSecond sentence\n\\end_layout';
+    expect(findMarkupProblems(body)).toEqual([]);
+  });
+
+  it('accepts a leading space on the second line', () => {
+    const body =
+      '\\begin_layout Standard\nFirst sentence.\n Second sentence\n\\end_layout';
+    expect(findMarkupProblems(body)).toEqual([]);
+  });
+
+  it('flags across a blank line too (blank line is a separator, not a space)', () => {
+    const body =
+      '\\begin_layout Standard\nFirst sentence.\n\nSecond sentence\n\\end_layout';
+    const problems = findMarkupProblems(body);
+    expect(problems.some((p) => p.includes('Missing space at a line break'))).toBe(true);
+  });
+
+  it('does not flag inset property lines (status/key/LatexCommand are syntax)', () => {
+    const body = [
+      '\\begin_layout Standard',
+      'See ',
+      '\\begin_inset CommandInset citation',
+      'LatexCommand citep',
+      'key "Demey2014"',
+      'literal "false"',
+      '',
+      '\\end_inset',
+      ' for details.',
+      '\\end_layout',
+    ].join('\n');
+    expect(findMarkupProblems(body)).toEqual([]);
+  });
+
+  it('flags a glued joint inside a Note inset inner layout', () => {
+    const body = [
+      '\\begin_layout Standard',
+      '\\begin_inset Note Note',
+      'status open',
+      '',
+      '\\begin_layout Plain Layout',
+      'First note sentence.',
+      'Second note sentence',
+      '\\end_layout',
+      '',
+      '\\end_inset',
+      '\\end_layout',
+    ].join('\n');
+    const problems = findMarkupProblems(body);
+    expect(problems.some((p) => p.includes('Missing space at a line break'))).toBe(true);
+  });
+
+  it('does not double-flag joints already covered by the inset checks', () => {
+    const body =
+      '\\begin_layout Standard\nThe value is\n\\begin_inset Formula $x$\n\\end_inset\nand more\n\\end_layout';
+    const problems = findMarkupProblems(body);
+    expect(problems.some((p) => p.includes('Missing space at a line break'))).toBe(false);
+    expect(problems.some((p) => p.includes('Missing space before'))).toBe(true);
+    expect(problems.some((p) => p.includes('Missing space after'))).toBe(true);
+  });
+});
+
 describe('LYX_MARKUP_KNOWLEDGE spacing rules', () => {
   it('teaches explicit spaces around inline insets (guard against editors stripping them)', () => {
     // "is" carries a trailing space before the inset (the ${' '} in the
@@ -198,6 +271,12 @@ describe('LYX_MARKUP_KNOWLEDGE spacing rules', () => {
     expect(LYX_MARKUP_KNOWLEDGE).toMatch(/\\end_inset\n {3}and it is conserved\./);
     // The URL example shows the space between "See" and the inset.
     expect(LYX_MARKUP_KNOWLEDGE).toMatch(/See \n {2}\\begin_inset Flex URL/);
+  });
+
+  it('teaches that a line break is never a space (live bug 2026-11-22)', () => {
+    expect(LYX_MARKUP_KNOWLEDGE).toMatch(/LINE BREAKS ARE NEVER SPACES/);
+    // The example shows a real trailing space after the first sentence.
+    expect(LYX_MARKUP_KNOWLEDGE).toMatch(/First sentence\. \n {2}Second sentence/);
   });
 });
 

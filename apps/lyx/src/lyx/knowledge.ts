@@ -100,6 +100,18 @@ SPACES AROUND INSETS (the format has NO implicit spaces)
   \\end_inset), and a Foot inset attaches to its word like a footnote
   marker.
 
+LINE BREAKS ARE NEVER SPACES (plain text, same rule)
+- A newline between two text lines inside a paragraph renders as
+  NOTHING: "First sentence.\\nSecond sentence" renders as
+  "First sentence.Second sentence" (live bug 2026-11-22 — a missing
+  space after "." is invisible in the raw markup).
+- Always put the space as a real SPACE CHARACTER at the line edge: end
+  the first line with a space or start the next line with one:
+  \\begin_layout Standard
+  First sentence.${' '}
+  Second sentence
+  \\end_layout
+
 EVERY \\begin_inset with a body (Note, Foot, URL, ...) MUST contain a
 \\begin_layout Plain Layout ... \\end_layout block inside it — an inset
 without its inner layout renders EMPTY in LyX.`;

@@ -276,6 +276,67 @@ export function findMarkupProblems(body: string): string[] {
       }
     }
   }
+
+  // Glued text across a plain line break: a newline between two text lines
+  // is NOT a space in .lyx either — LyX's own writer always keeps an
+  // explicit space at the line edge — so "First sentence.\nSecond" pastes
+  // as "First sentence.Second" (live-reported 2026-11-22, PLEE article:
+  // "probability space.\nThe central idea" landed glued in the saved
+  // file). Inset-adjacent joints are covered above; this catches
+  // text-to-text joints, including inside Note/Foot inner layouts. Inset
+  // property lines (status/key/LatexCommand/...) and verbatim-style inset
+  // bodies are syntax, not rendered text: they sit directly on an inset
+  // frame, not on a layout frame, and are skipped.
+  const frameStack: Array<'layout' | 'inset'> = [];
+  const popFrame = (kind: 'layout' | 'inset') => {
+    for (let i = frameStack.length - 1; i >= 0; i--) {
+      if (frameStack[i] === kind) {
+        frameStack.length = i;
+        return;
+      }
+    }
+  };
+  let lastText: string | null = null;
+  for (const line of insetLines) {
+    if (/^\\begin_layout\b/.test(line)) {
+      frameStack.push('layout');
+      lastText = null;
+      continue;
+    }
+    if (/^\\end_layout\b/.test(line)) {
+      popFrame('layout');
+      lastText = null;
+      continue;
+    }
+    if (/^\\begin_inset\b/.test(line)) {
+      frameStack.push('inset');
+      lastText = null;
+      continue;
+    }
+    if (/^\\end_inset\b/.test(line)) {
+      popFrame('inset');
+      lastText = null;
+      continue;
+    }
+    if (line.trim() === '') continue; // blank line: separator, not a space
+    if (line.startsWith('\\')) {
+      lastText = null; // font/format token or other markup line
+      continue;
+    }
+    if (frameStack[frameStack.length - 1] === 'layout') {
+      if (lastText !== null && !lastText.endsWith(' ') && !line.startsWith(' ')) {
+        problems.push(
+          `Missing space at a line break: "${lastText.trim().slice(-48)}" and ` +
+            `"${line.trim().slice(0, 48)}" are joined by a newline, which is NOT a ` +
+            'space in .lyx — it will render glued ("…sentence.Next…"). End the ' +
+            'first line with a real space character or start the next line with one.',
+        );
+      }
+      lastText = line;
+    } else {
+      lastText = null;
+    }
+  }
   return problems;
 }
 
