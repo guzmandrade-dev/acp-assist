@@ -629,6 +629,34 @@ describe('verifyParagraphSelection', () => {
     expect(v.via).toBe('markup');
   });
 
+  it('verifies a paragraph with pending tracked changes (deleted text stripped)', () => {
+    // Live 2026-11-22: after a tracked rewrite-at, the saved file wraps the
+    // old text in \change_deleted and the new text in \change_inserted
+    // inside one layout, while the clipboard payload has only the live
+    // text — the comparison must use the live view on both sides.
+    const changedPara = [
+      '\\begin_layout Standard',
+      '',
+      '\\change_deleted 563965142 1795369421',
+      'Old text that was replaced.',
+      '\\change_inserted 563965142 1795369421',
+      'Fresh live text.',
+      '\\change_unchanged',
+      '\\end_layout',
+    ].join('\n');
+    const livePara = ['\\begin_layout Standard', 'Fresh live text.', '\\end_layout'].join('\n');
+    const trackedDoc = `${VH}\n\n\\begin_body\n\n${changedPara}\n\n\\end_body\n\\end_document\n`;
+    const v = verifyParagraphSelection({
+      payload: payloadDoc(livePara),
+      clipboardText: null,
+      diskRaw: trackedDoc,
+      index: 0,
+      expectedPreview: 'Fresh live text.',
+    });
+    expect(v.ok).toBe(true);
+    expect(v.via).toBe('markup');
+  });
+
   it('falls back to the same-parser preview on cosmetic re-serialization', () => {
     // LyX re-serialized the copy: an extra inset line changes the raw
     // markup but the visible paragraph text is unchanged.

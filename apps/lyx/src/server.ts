@@ -478,7 +478,7 @@ function createLyxBackend(
         `Text class: ${ctx.textclass ?? 'unknown'}\n` +
         `LyX format: ${ctx.formatVersion ?? 'unknown'}\n` +
         `Cursor paragraph layout: ${layout || 'unknown'}\n\n` +
-        `Document outline ([pN] ids address paragraphs):\n${renderOutline(ctx.outline)}\n\n`;
+        `Document outline ([pN] ids with L<line> file anchors address paragraphs):\n${renderOutline(ctx.outline)}\n\n`;
       let contextText = head;
       const classLayouts = ctx.textclass ? await findClassLayouts(ctx.textclass) : null;
       if (classLayouts) {
@@ -498,9 +498,10 @@ function createLyxBackend(
         `The document is LARGE (${ctx.body.length} chars), so only the outline above is\n` +
         `attached. To see the exact text of any paragraph, read or search the saved\n` +
         `file "${session.state.documentPath}" with your file tools — it is the exact live\n` +
-        `document, and it was saved moments ago. The [pN] ids correspond to the\n` +
-        `\\begin_layout blocks of the body in document order (inset inner layouts count\n` +
-        `too), so you can locate paragraph [pN] by counting \\begin_layout occurrences.\n`
+        `document, and it was saved moments ago. The [pN] ids correspond to the TOP-LEVEL\n` +
+        `\\begin_layout blocks of the body in document order — layouts nested inside insets\n` +
+        `do NOT count. Do not count \\begin_layout occurrences yourself: use the L<line>\n` +
+        `anchor of each outline entry to map a file line to its [pN].\n`
       );
     } catch (e) {
       return (

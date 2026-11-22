@@ -7,6 +7,7 @@ import {
   renderOutline,
   splitTopLevelLayouts,
   normalizeMarkupBlock,
+  stripTrackedDeletions,
 } from '../src/lyx/context.js';
 import { parse } from '../src/lyx/parser.js';
 import { LYX_MARKUP_KNOWLEDGE } from '../src/lyx/knowledge.js';
@@ -313,6 +314,65 @@ describe('buildDocumentContext', () => {
     const ctx = buildDocumentContext(doc);
     expect(renderOutline(ctx.outline)).toContain('[p1] (Section)');
     expect(renderOutline(ctx.outline)).toContain('[p2] (Standard)');
+  });
+
+  it('renders the outline with 1-based L<line> anchors', () => {
+    const ctx = buildDocumentContext(doc);
+    const out = renderOutline(ctx.outline);
+    // doc: HEADER is 6 lines, blank (7), \begin_body (8), blank (9),
+    // \begin_layout Section at 1-based line 10 (0-based index 9).
+    expect(out).toContain('[p1] (Section) L10');
+    expect(ctx.outline[0].line).toBe(9); // 0-based parser line
+  });
+
+  it('shows the LIVE text of a tracked-changed paragraph, not the deleted text', () => {
+    // Live 2026-11-22: a tracked rewrite-at stores \change_deleted (old)
+    // + \change_inserted (new) in one layout; the outline preview must be
+    // the live (inserted) text — the cursor walk and clipboard see only that.
+    const tracked = [
+      HEADER,
+      '',
+      '\\begin_body',
+      '',
+      '\\begin_layout Standard',
+      '',
+      '\\change_deleted 563965142 1795369421',
+      'Old text that was replaced.',
+      '\\change_inserted 563965142 1795369421',
+      'Fresh live text.',
+      '\\change_unchanged',
+      '\\end_layout',
+      '',
+      '\\end_body',
+      '\\end_document',
+    ].join('\n');
+    const ctx = buildDocumentContext(tracked);
+    expect(ctx.outline).toHaveLength(1);
+    expect(ctx.outline[0].preview).toBe('Fresh live text.');
+  });
+
+  it('stripTrackedDeletions drops deleted segments and markers, keeps inserted content', () => {
+    const raw = [
+      '\\begin_layout Standard',
+      '\\change_deleted 1 2',
+      'gone',
+      '\\change_inserted 1 2',
+      'kept',
+      '\\change_unchanged',
+      '\\end_layout',
+      '',
+      '\\change_deleted 1 2',
+      '\\begin_layout Standard',
+      'whole paragraph deleted',
+      '\\end_layout',
+      '\\change_accepted 1 2',
+      '\\begin_layout Standard',
+      'survivor',
+      '\\end_layout',
+    ].join('\n');
+    expect(stripTrackedDeletions(raw)).toBe(
+      ['\\begin_layout Standard', 'kept', '\\end_layout', '', '\\begin_layout Standard', 'survivor', '\\end_layout'].join('\n'),
+    );
   });
 
   it('omits inset property syntax from previews (status / LatexCommand args)', () => {

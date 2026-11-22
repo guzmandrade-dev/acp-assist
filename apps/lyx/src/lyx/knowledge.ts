@@ -120,6 +120,12 @@ without its inner layout renders EMPTY in LyX.`;
 export const CHAT_KNOWLEDGE = `${LYX_MARKUP_KNOWLEDGE}
 
 ADDRESSING
-- The document outline lists paragraphs as [pN] ids with layouts.
+- The document outline lists paragraphs as [pN] ids with layouts and a
+  file-line anchor (L<line>).
+- The [pN] ids are the ONLY valid paragraph addresses. Count top-level
+  paragraphs exactly as the outline does — inset-inner layouts are NOT
+  counted — and never derive your own numbering from raw line counts. If
+  you read the file by lines, map a line to its [pN] via the L<line>
+  anchors, not by counting \\begin_layout occurrences.
 - To suggest an edit, quote the [pN] id and show the replacement in a
   \`\`\`lyx fenced block.`;

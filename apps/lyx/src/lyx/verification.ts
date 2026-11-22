@@ -8,6 +8,7 @@ import {
   extractBodyLayouts,
   normalizeMarkupBlock,
   splitTopLevelLayouts,
+  stripTrackedDeletions,
 } from './context.js';
 
 /**
@@ -94,8 +95,16 @@ export function verifyParagraphSelection(
   const expected = normalizeForCompare(input.expectedPreview);
 
   if (input.payload) {
-    const diskBlocks = splitTopLevelLayouts(extractBodyLayouts(input.diskRaw) ?? '');
-    const payloadBlocks = splitTopLevelLayouts(extractBodyLayouts(input.payload) ?? '');
+    // Compare LIVE views: with tracked changes pending, the saved file
+    // still contains \change_deleted content that the clipboard payload
+    // (copied from the live buffer) does not — strip it on both sides or
+    // every paragraph after a tracked edit fails verification.
+    const diskBlocks = splitTopLevelLayouts(
+      extractBodyLayouts(stripTrackedDeletions(input.diskRaw)) ?? '',
+    );
+    const payloadBlocks = splitTopLevelLayouts(
+      extractBodyLayouts(stripTrackedDeletions(input.payload)) ?? '',
+    );
     const diskBlock = diskBlocks[input.index] ?? null;
     const payloadBlock = payloadBlocks[0] ?? null;
     if (diskBlock && payloadBlock) {

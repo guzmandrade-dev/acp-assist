@@ -20,6 +20,8 @@ export interface OutlineEntry {
   depth: number;
   preview: string;
   hasMath: boolean;
+  /** 1-based line number of the paragraph's `\begin_layout` in the file. */
+  line: number;
 }
 
 export interface DocumentContext {
@@ -33,6 +35,34 @@ export interface DocumentContext {
 }
 
 const PREVIEW_LIMIT = 160;
+
+/**
+ * Reduce tracked-change markup to the LIVE view of the document: content
+ * inside `\change_deleted …` segments is dropped (LyX keeps deleted content
+ * in the saved file, but the live buffer the cursor walks and the clipboard
+ * export do not contain it), and the `\change_inserted` / `\change_deleted`
+ * / `\change_accepted` / `\change_unchanged` marker lines are removed.
+ * Without this, a document with pending tracked changes mis-targets: the
+ * file-side paragraph text still contains the deleted content while the
+ * clipboard payload does not (live-observed 2026-11-22: "Paragraph targeting
+ * failed" on the step after a tracked rewrite-at).
+ */
+export function stripTrackedDeletions(text: string): string {
+  const out: string[] = [];
+  let deleted = false;
+  for (const line of text.split(/\r?\n/)) {
+    if (/^\\change_deleted\b/.test(line)) {
+      deleted = true;
+      continue;
+    }
+    if (/^\\change_(?:inserted|accepted|unchanged)\b/.test(line)) {
+      deleted = false;
+      continue;
+    }
+    if (!deleted) out.push(line);
+  }
+  return out.join('\n');
+}
 
 export function extractHeader(lyxText: string): string | null {
   const end = lyxText.indexOf('\\end_header');
@@ -83,6 +113,7 @@ export function buildDocumentContext(lyxText: string): DocumentContext {
         outline.push({
           id: `p${counter}`,
           layout: node.args ?? 'Standard',
+          line: node.line,
           depth,
           preview,
           hasMath: hasFormulaInset(node.children),
@@ -113,8 +144,11 @@ export function renderOutline(outline: OutlineEntry[]): string {
     .map((e) => {
       const indent = '  '.repeat(e.depth);
       const math = e.hasMath ? ' [math]' : '';
+      // L<line> anchors the paragraph to its file line so the agent can
+      // reconcile line-based file reads with the [pN] ids.
+      const line = ` L${e.line + 1}`;
       const preview = e.preview ? ` — ${e.preview}` : '';
-      return `${indent}[${e.id}] (${e.layout}${math})${preview}`;
+      return `${indent}[${e.id}] (${e.layout}${math})${line}${preview}`;
     })
     .join('\n');
 }
@@ -189,10 +223,13 @@ export function splitTopLevelLayouts(body: string): string[] {
  * pasted payload's block only by those markers (live-found 2026-11-08:
  * post-paste verify failed and undid a good edit because of them).
  */
-const CHANGE_MARKER_RE = /^\\change_(?:inserted|deleted|accepted)\s/;
+const CHANGE_MARKER_RE = /^\\change_(?:inserted|deleted|accepted|unchanged)\s/;
 
 export function normalizeMarkupBlock(block: string): string {
-  return block
+  // Defensive: drop tracked-deleted segments and marker lines even when
+  // the caller did not strip them (verifyParagraphSelection strips first).
+  const live = stripTrackedDeletions(block);
+  return live
     .split(/\r?\n/)
     .map((line) => line.replace(/\s+$/, ''))
     .filter((line) => line.length > 0 && !CHANGE_MARKER_RE.test(line))
@@ -431,9 +468,31 @@ function hasFormulaInset(nodes: LyxNode[]): boolean {
   return false;
 }
 
-function collectTexts(nodes: LyxNode[], insideInset = false): string[] {
+function collectTexts(
+  nodes: LyxNode[],
+  insideInset = false,
+  changeState: { deleted: boolean } = { deleted: false },
+): string[] {
   const out: string[] = [];
   for (const node of nodes) {
+    if (node.type === 'property') {
+      // Tracked-change markers: content inside \change_deleted … is NOT
+      // part of the live document (LyX's cursor walk and clipboard export
+      // exclude it), so previews must skip it too — otherwise a document
+      // with pending tracked changes shows the deleted text in the
+      // outline and paragraph targeting fails on the next step
+      // (live-observed 2026-11-22).
+      if (node.key === 'change_deleted') changeState.deleted = true;
+      else if (
+        node.key === 'change_inserted' ||
+        node.key === 'change_accepted' ||
+        node.key === 'change_unchanged'
+      ) {
+        changeState.deleted = false;
+      }
+      continue;
+    }
+    if (changeState.deleted) continue;
     if (node.type === 'text') {
       const cleaned = node.text.replace(/\\(begin|end)_[A-Za-z0-9_]+/g, '').trim();
       // Only treat property-like lines as syntax when they sit directly
@@ -443,7 +502,7 @@ function collectTexts(nodes: LyxNode[], insideInset = false): string[] {
       out.push(cleaned);
     } else if (node.type === 'block') {
       // Skip opaque blocks' raw markup in the preview, but note formulas.
-      const inner = collectTexts(node.children, insideInset || node.tag === 'inset');
+      const inner = collectTexts(node.children, insideInset || node.tag === 'inset', changeState);
       out.push(...inner);
     }
   }
