@@ -1,0 +1,8 @@
+name: acp-assist codeql config
+
+# The apps/onlyoffice/spike/* trees are throwaway probe code (a local probe
+# server + an in-editor probe plugin that only ever talks plain HTTP to
+# 127.0.0.1:8792). They are not shipped in any build; scanning them produces
+# only noise (insecure-request, file-system-race).
+paths-ignore:
+  - 'apps/*/spike/**'
