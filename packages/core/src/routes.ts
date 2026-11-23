@@ -97,9 +97,24 @@ export function registerAttachmentRoutes(
         return;
       }
       await fs.mkdir(options.attachmentsDir, { recursive: true });
-      const safe = name.replace(/[^\w.\- ]+/g, '_');
+      // Sanitize the client-supplied name down to a single safe path
+      // segment, then verify the joined path stays inside attachmentsDir
+      // (defense in depth against path traversal, js/path-injection).
+      const safe = path
+        .basename(name)
+        .replace(/[^\w.\- ]+/g, '_')
+        .replace(/^\.+/, '');
+      if (!safe) {
+        res.status(400).json({ error: 'name must contain at least one usable character' });
+        return;
+      }
       const id = randomUUID();
-      const filePath = path.join(options.attachmentsDir, `${id}-${safe}`);
+      const root = path.resolve(options.attachmentsDir);
+      const filePath = path.join(root, `${id}-${safe}`);
+      if (!filePath.startsWith(root + path.sep)) {
+        res.status(400).json({ error: 'invalid name' });
+        return;
+      }
       await fs.writeFile(filePath, Buffer.from(data, 'base64'));
       const text = await options.extractText(filePath, name);
       const att: Attachment = { id, name, path: filePath, text };

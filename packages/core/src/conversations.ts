@@ -41,7 +41,11 @@ export function normalizeMaxActionsPerMessage(value: unknown): number | undefine
 export function createLogError(logDir?: string) {
   return (scope: string, err: unknown): void => {
     const message = err instanceof Error ? err.message : String(err);
-    const line = `[${new Date().toISOString()}] ${scope}: ${message}\n`;
+    // One line per entry: strip CR/LF and other control chars so an error
+    // message containing newlines cannot forge extra log lines
+    // (js/log-injection).
+    const safe = message.replace(/[\x00-\x1f\x7f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+    const line = `[${new Date().toISOString()}] ${scope}: ${safe}\n`;
     console.error(line.trim());
     if (logDir) {
       // appendFile does NOT create the directory — without this the log

@@ -70,7 +70,9 @@ export function sniffImageSize(bytes: Uint8Array): { width: number; height: numb
 /** Parse a `width:`/`height:` block value into centimeters. Supports
  * "10cm", "4in"/"4"" (inches), "300px" (at 96 dpi). Null when invalid. */
 export function sizeToCm(raw: string): number | null {
-  const m = /^\s*([\d.]+)\s*(cm|in|inch|"|px)?\s*$/i.exec(raw);
+  // (?:\d+(?:\.\d+)?|\.\d+) instead of [\d.]+: the latter backtracks
+  // polynomially on inputs like "1.1.1.1..." (js/polynomial-redos).
+  const m = /^\s*(\d+(?:\.\d+)?|\.\d+)\s*(cm|in|inch|"|px)?\s*$/i.exec(raw);
   if (!m) return null;
   const n = Number.parseFloat(m[1] ?? '');
   if (!Number.isFinite(n) || n <= 0) return null;

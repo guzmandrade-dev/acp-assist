@@ -4,7 +4,7 @@
  * (document path or URL) and stored as `<sha256-prefix>.json` files.
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Turn, TurnMeta } from './types.js';
@@ -79,9 +79,21 @@ export async function loadHistory(dir: string, key: string): Promise<Turn[]> {
 
 export async function saveHistory(dir: string, key: string, turns: Turn[]): Promise<void> {
   await fs.mkdir(dir, { recursive: true });
-  // Compact JSON: history grows per turn and the file is rewritten per
-  // persisted turn — pretty-printing roughly doubles the bytes written.
-  await fs.writeFile(historyFile(dir, key), JSON.stringify({ key, turns }), 'utf8');
+  const target = historyFile(dir, key);
+  // Atomic replace: write a randomly-named sibling, then rename over the
+  // target. A direct write of the predictable <hash>.json name is both
+  // corruptible mid-write (crash between open and rename) and flagged as an
+  // insecure temporary file (js/insecure-temporary-file).
+  const tmp = path.join(dir, `.${randomUUID()}.tmp`);
+  try {
+    // Compact JSON: history grows per turn and the file is rewritten per
+    // persisted turn — pretty-printing roughly doubles the bytes written.
+    await fs.writeFile(tmp, JSON.stringify({ key, turns }), 'utf8');
+    await fs.rename(tmp, target);
+  } catch (err) {
+    await fs.rm(tmp, { force: true }).catch(() => undefined);
+    throw err;
+  }
 }
 
 /** Delete a persisted conversation (used when its key migrates away). */

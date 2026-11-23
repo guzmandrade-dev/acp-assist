@@ -21,6 +21,14 @@ export function spawnAgentProcess(
   const isWindows = process.platform === 'win32';
   const isBareName = !command.includes('\\') && !command.includes('/');
   const useShell = isWindows && isBareName && !command.endsWith('.exe');
+  // The command comes from the user's own local agent settings, not from a
+  // request — but when it is routed through cmd.exe it must be a bare
+  // program name: reject anything carrying shell metacharacters so a
+  // crafted setting cannot smuggle in extra commands
+  // (js/shell-command-constructed-from-input).
+  if (useShell && /[&|<>^%"!\r\n]/.test(command)) {
+    throw new Error(`Refusing to spawn agent command through cmd.exe: ${command}`);
+  }
 
   const child = useShell
     ? spawn(command, args, {

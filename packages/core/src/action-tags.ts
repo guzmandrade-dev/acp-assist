@@ -42,10 +42,19 @@ export function lastFencedMatch(reply: string, tagRe: RegExp): RegExpMatchArray 
   // matchAll needs the global flag; the caller's regex may be non-global.
   const flags = tagRe.flags.includes('g') ? tagRe.flags : `${tagRe.flags}g`;
   const re = new RegExp(tagRe.source, flags);
-  for (const fence of reply.matchAll(/```[^\n]*\n[\s\S]*?```/g)) {
-    for (const m of (fence[0] ?? '').matchAll(re)) {
+  // Fences are scanned manually (indexOf walk) instead of the regex
+  // /```[^\n]*\n[\s\S]*?```/g: that pattern backtracks polynomially on
+  // inputs with many ``` runs (js/polynomial-redos).
+  let open = reply.indexOf('```');
+  while (open !== -1) {
+    const lineEnd = reply.indexOf('\n', open + 3);
+    if (lineEnd === -1) break;
+    const close = reply.indexOf('```', lineEnd + 1);
+    if (close === -1) break;
+    for (const m of reply.slice(open, close + 3).matchAll(re)) {
       last = m;
     }
+    open = reply.indexOf('```', close + 3);
   }
   return last;
 }
