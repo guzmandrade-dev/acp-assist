@@ -154,8 +154,8 @@ describe('server message loop (fake agent + fake bridge)', () => {
   let httpServer: Server;
   let baseUrl: string;
   let bridge: FakeBridge;
-  const publicDir = path.join(os.tmpdir(), 'lo-acp-test-public');
-  const historyDir = path.join(os.tmpdir(), 'lo-acp-test-history');
+  let publicDir: string;
+  let historyDir: string;
 
   it('requires the API bearer token and a loopback Host', async () => {    const noAuth = await fetch(`${baseUrl}/api/status`);
     expect(noAuth.status).toBe(401);
@@ -193,6 +193,11 @@ describe('server message loop (fake agent + fake bridge)', () => {
   });
 
   beforeAll(async () => {
+    // mkdtemp: unpredictable per-run dirs instead of fixed names in the
+    // shared tmpdir (js/insecure-temporary-file).
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lo-acp-test-'));
+    publicDir = path.join(tmpRoot, 'public');
+    historyDir = path.join(tmpRoot, 'history');
     await fs.mkdir(publicDir, { recursive: true });
     await fs.writeFile(path.join(publicDir, 'index.html'), '<html><head></head><body></body></html>', 'utf8');
     await fs.rm(historyDir, { recursive: true, force: true });
@@ -736,7 +741,7 @@ describe('bridge extension install routes', () => {
   });
 
   it('preflight reports installable when oxt + unopkg are present', async () => {
-    const oxtPath = path.join(os.tmpdir(), 'lo-acp-test.oxt');
+    const oxtPath = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'lo-acp-test-oxt-')), 'fake.oxt');
     await fs.writeFile(oxtPath, 'fake oxt', 'utf8');
     const { srv, url } = await makeApp({
       oxtPath,
@@ -754,7 +759,7 @@ describe('bridge extension install routes', () => {
   });
 
   it('preflight reports not installable when unopkg is missing', async () => {
-    const oxtPath = path.join(os.tmpdir(), 'lo-acp-test.oxt');
+    const oxtPath = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'lo-acp-test-oxt-')), 'fake.oxt');
     await fs.writeFile(oxtPath, 'fake oxt', 'utf8');
     const { srv, url } = await makeApp({ oxtPath, unopkgPath: null });
     const pre = (await (await fetch(`${url}/api/bridge/install/preflight`, { headers: { authorization: 'Bearer ' + API_TOKEN } })).json()) as { canInstall: boolean; reason: string };
