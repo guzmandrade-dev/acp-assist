@@ -107,8 +107,20 @@ export function buildDocumentContext(lyxText: string): DocumentContext {
       if (node.tag === 'deeper') {
         walk(node.children, depth + 1);
       } else if (node.tag === 'layout') {
-        counter++;
         const texts = collectTexts(node.children);
+        // A TRULY EMPTY paragraph (no live text and no inset) is NOT a row
+        // in LyX's live paragraph walk — `paragraph-down` skips it
+        // (live-verified 2026-11-23 on LyX 2.5: a doc with
+        // Alpha/EMPTY/Beta/Gamma walks as 3 rows). Counting it here shifted
+        // every [pN] above an empty shell by one, so targeting failed with
+        // "landed on <next paragraph>" (delete-at leaves exactly such a
+        // shell when the merge-away is tracked/not applied — observed
+        // 2026-11-23 on the PLEE article, p61/p139/p142). Skip empty
+        // paragraphs so the outline matches the live walk 1:1. A paragraph
+        // holding only an inset (Newpage, Separator, …) IS a walk row —
+        // keep those.
+        if (texts.length === 0 && !hasAnyInset(node.children)) continue;
+        counter++;
         const preview = texts.join(' ').slice(0, PREVIEW_LIMIT);
         outline.push({
           id: `p${counter}`,
@@ -210,6 +222,33 @@ export function splitTopLevelLayouts(body: string): string[] {
   }
   if (current && current.length > 0) blocks.push(current.join('\n'));
   return blocks;
+}
+
+/**
+ * True for a top-level layout block with no live content: after stripping
+ * tracked deletions it holds neither text nor any inset. These are the
+ * paragraphs LyX's `paragraph-down` walk skips (live-verified 2026-11-23),
+ * so the outline (and any index into paragraph blocks) must skip them too.
+ */
+export function isEmptyParagraphBlock(block: string): boolean {
+  const live = stripTrackedDeletions(block);
+  let hasInset = false;
+  let hasText = false;
+  for (const line of live.split(/\r?\n/)) {
+    if (/^\\begin_inset\b/.test(line)) hasInset = true;
+    // Property/syntax lines start with `\`; plain text lines do not.
+    else if (line.trim() !== '' && !line.startsWith('\\')) hasText = true;
+  }
+  return !hasInset && !hasText;
+}
+
+/**
+ * Like {@link splitTopLevelLayouts}, but drops truly empty paragraphs so the
+ * returned indices line up with the outline's [pN] ids and with LyX's live
+ * paragraph walk.
+ */
+export function splitTopLevelParagraphs(body: string): string[] {
+  return splitTopLevelLayouts(body).filter((b) => !isEmptyParagraphBlock(b));
 }
 
 /**
@@ -464,6 +503,21 @@ function hasFormulaInset(nodes: LyxNode[]): boolean {
     if (node.type !== 'block') continue;
     if (node.tag === 'inset' && (node.args ?? '').startsWith('Formula')) return true;
     if (hasFormulaInset(node.children)) return true;
+  }
+  return false;
+}
+
+/**
+ * True when the subtree contains ANY inset (Formula, Newpage, Separator,
+ * Note, …). An inset is live content: LyX's paragraph walk stops on a
+ * paragraph that holds only an inset, so such paragraphs must stay in the
+ * outline (only truly empty paragraphs are skipped — see walk()).
+ */
+function hasAnyInset(nodes: LyxNode[]): boolean {
+  for (const node of nodes) {
+    if (node.type !== 'block') continue;
+    if (node.tag === 'inset') return true;
+    if (hasAnyInset(node.children)) return true;
   }
   return false;
 }

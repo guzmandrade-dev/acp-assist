@@ -124,7 +124,9 @@ ADDRESSING
   file-line anchor (L<line>).
 - The [pN] ids are the ONLY valid paragraph addresses. Count top-level
   paragraphs exactly as the outline does — inset-inner layouts are NOT
-  counted — and never derive your own numbering from raw line counts. If
+  counted, and neither are TRULY EMPTY paragraphs (no text and no inset;
+  LyX's cursor walk skips those too, e.g. shells left by deletions) — and
+  never derive your own numbering from raw line counts. If
   you read the file by lines, map a line to its [pN] via the L<line>
   anchors, not by counting \\begin_layout occurrences.
 - To suggest an edit, quote the [pN] id and show the replacement in a

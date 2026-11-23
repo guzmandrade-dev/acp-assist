@@ -189,8 +189,14 @@ function fakeLyx(
       return true;
     },
     async paragraphDown() {
-      if (cursor >= doc.paragraphs.length - 1) return false;
-      cursor += 1;
+      // Live-verified 2026-11-23 on LyX 2.5: `paragraph-down` does NOT stop on
+      // a truly empty paragraph — it skips to the next non-empty one. The
+      // walk must reproduce that, otherwise the fake walk and the outline
+      // disagree about empty shells exactly like the real run did.
+      let next = cursor + 1;
+      while (next < doc.paragraphs.length && doc.paragraphs[next].text === '') next += 1;
+      if (next >= doc.paragraphs.length) return false;
+      cursor = next;
       selection = null;
       return true;
     },
@@ -542,6 +548,41 @@ describe('multi-action runs over the message stream', () => {
     expect(harness.doc.paragraphs[0].text).toBe('placeholder title');
     expect(harness.doc.paragraphs[1].text).toBe('first body rewritten');
     expect(frames.filter((f) => typeof f.applied === 'string').map((f) => f.applied)).toEqual(['rewrite-at']);
+    expect(frames.at(-1)).toEqual({ done: true });
+  });
+
+  it('keeps [pN] targeting aligned when delete-at leaves an empty shell (live-found 2026-11-23)', async () => {
+    // Regression for the 2026-11-23 PLEE run: delete-at emptied a paragraph
+    // and the merge-away did not remove it, leaving an empty shell in the
+    // saved file. LyX's paragraph-down walk SKIPS empty paragraphs but the
+    // outline counted them, so every [pN] past the shell was off by one
+    // ("[pN] should start with … but the cursor landed on <next paragraph>").
+    // The outline now skips empty paragraphs too, so p2 after the delete is
+    // 'second body' again and the rewrite lands there — not in the shell.
+    const harness = await startHarness([
+      'Deleting the first body.\n[ACTION: delete-at p2]',
+      'Rewriting p2 (now the old second body).\n```lyx\n\\begin_layout Standard\nsecond body rewritten\n\\end_layout\n```\n[ACTION: rewrite-at p2]',
+      'Done.\n[ACTION: none]',
+    ]);
+    cleanups.push(async () => {
+      await new Promise<void>((resolve) => harness.server.close(() => resolve()));
+      await fs.rm(harness.doc.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
+
+    const res = await fetch(`${harness.base}/api/session/${harness.sessionId}/message/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${API_TOKEN}` },
+      body: JSON.stringify({ message: 'delete p2, then rewrite the new p2' }),
+    });
+    const frames = await readSse(res);
+
+    // No targeting failure anywhere in the run.
+    expect(frames.some((f) => typeof f.error === 'string' && String(f.error).includes('Paragraph targeting failed'))).toBe(false);
+    expect(frames.filter((f) => typeof f.applied === 'string').map((f) => f.applied)).toEqual(['delete-at', 'rewrite-at']);
+    // The shell stays empty (merge-away is a no-op here) but is harmless:
+    // the rewrite landed on the paragraph AFTER it.
+    expect(harness.doc.paragraphs[1].text).toBe('');
+    expect(harness.doc.paragraphs[2].text).toBe('second body rewritten');
     expect(frames.at(-1)).toEqual({ done: true });
   });
 

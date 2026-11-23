@@ -6,6 +6,8 @@ import {
   buildDocumentContext,
   renderOutline,
   splitTopLevelLayouts,
+  splitTopLevelParagraphs,
+  isEmptyParagraphBlock,
   normalizeMarkupBlock,
   stripTrackedDeletions,
 } from '../src/lyx/context.js';
@@ -351,6 +353,98 @@ describe('buildDocumentContext', () => {
     expect(ctx.outline[0].preview).toBe('Fresh live text.');
   });
 
+  it('skips truly empty paragraphs so [pN] matches the live paragraph walk (live-found 2026-11-23)', () => {
+    // LyX's `paragraph-down` does not stop on an empty paragraph
+    // (live-verified on LyX 2.5: Alpha/EMPTY/Beta/Gamma walks as 3 rows), and
+    // delete-at leaves exactly such an empty shell in the saved file when
+    // the merge-away is tracked/not applied. Counting shells in the outline
+    // shifted every [pN] above them by one ("[p62] should start with X but
+    // landed on the next paragraph" — PLEE article run 2026-11-23).
+    const withShell = [
+      HEADER,
+      '',
+      '\\begin_body',
+      '',
+      '\\begin_layout Standard',
+      'Alpha one',
+      '\\end_layout',
+      '',
+      '\\begin_layout Standard',
+      '',
+      '\\end_layout',
+      '',
+      '\\begin_layout Standard',
+      'Beta two',
+      '\\end_layout',
+      '',
+      '\\end_body',
+      '\\end_document',
+      '',
+    ].join('\n');
+    const ctx = buildDocumentContext(withShell);
+    expect(ctx.outline.map((e) => e.preview)).toEqual(['Alpha one', 'Beta two']);
+    expect(ctx.outline.map((e) => e.id)).toEqual(['p1', 'p2']);
+  });
+
+  it('keeps inset-only paragraphs (Newpage/Separator) as outline rows', () => {
+    // An inset is live buffer content: the walk stops there, so the outline
+    // must count these even though the text preview is empty.
+    const withInsetOnly = [
+      HEADER,
+      '',
+      '\\begin_body',
+      '',
+      '\\begin_layout Standard',
+      'Alpha one',
+      '\\end_layout',
+      '',
+      '\\begin_layout Standard',
+      '\\begin_inset Separator plain',
+      '\\end_inset',
+      '',
+      '\\end_layout',
+      '',
+      '\\begin_layout Standard',
+      'Beta two',
+      '\\end_layout',
+      '',
+      '\\end_body',
+      '\\end_document',
+      '',
+    ].join('\n');
+    const ctx = buildDocumentContext(withInsetOnly);
+    expect(ctx.outline.map((e) => e.preview)).toEqual(['Alpha one', '', 'Beta two']);
+  });
+
+  it('skips tracked-deleted shells (a change_deleted-only paragraph is empty in the live buffer)', () => {
+    const shell = [
+      HEADER,
+      '',
+      '\\begin_body',
+      '',
+      '\\begin_layout Standard',
+      'Alpha one',
+      '\\end_layout',
+      '',
+      '\\begin_layout Standard',
+      '\\change_deleted 563965142 1795369421',
+      'Deleted Spanish note.',
+      '\\change_unchanged',
+      '',
+      '\\end_layout',
+      '',
+      '\\begin_layout Standard',
+      'Beta two',
+      '\\end_layout',
+      '',
+      '\\end_body',
+      '\\end_document',
+      '',
+    ].join('\n');
+    const ctx = buildDocumentContext(shell);
+    expect(ctx.outline.map((e) => e.preview)).toEqual(['Alpha one', 'Beta two']);
+  });
+
   it('stripTrackedDeletions drops deleted segments and markers, keeps inserted content', () => {
     const raw = [
       '\\begin_layout Standard',
@@ -571,5 +665,54 @@ describe('splitTopLevelLayouts / normalizeMarkupBlock', () => {
     expect(blocks.length).toBe(2);
     const firstBlock = body.split('\n').slice(0, 12).join('\n');
     expect(normalizeMarkupBlock(blocks[0] ?? '')).toBe(normalizeMarkupBlock(firstBlock));
+  });
+});
+
+describe('splitTopLevelParagraphs / isEmptyParagraphBlock', () => {
+  it('drops empty and tracked-deleted blocks, keeps inset-only blocks', () => {
+    const body = [
+      '\\begin_layout Standard',
+      'Alpha one',
+      '\\end_layout',
+      '',
+      '\\begin_layout Standard',
+      '',
+      '\\end_layout',
+      '',
+      '\\begin_layout Standard',
+      '\\change_deleted 1 2',
+      'gone',
+      '\\change_unchanged',
+      '',
+      '\\end_layout',
+      '',
+      '\\begin_layout Standard',
+      '\\begin_inset Newpage newpage',
+      '\\end_inset',
+      '',
+      '',
+      '\\end_layout',
+      '',
+      '\\begin_layout Standard',
+      'Beta two',
+      '\\end_layout',
+    ].join('\n');
+    const blocks = splitTopLevelParagraphs(body);
+    expect(blocks.length).toBe(3);
+    expect(blocks[0]).toContain('Alpha one');
+    expect(blocks[1]).toContain('\\begin_inset Newpage newpage');
+    expect(blocks[2]).toContain('Beta two');
+  });
+
+  it('isEmptyParagraphBlock: text vs properties vs insets', () => {
+    expect(isEmptyParagraphBlock('\\begin_layout Standard\n\n\\end_layout')).toBe(true);
+    expect(isEmptyParagraphBlock('\\begin_layout Standard\n\\series bold\n\\end_layout')).toBe(true);
+    expect(isEmptyParagraphBlock('\\begin_layout Standard\nHello.\n\\end_layout')).toBe(false);
+    expect(
+      isEmptyParagraphBlock('\\begin_layout Standard\n\\begin_inset Separator plain\n\\end_inset\n\\end_layout'),
+    ).toBe(false);
+    expect(
+      isEmptyParagraphBlock('\\begin_layout Standard\n\\change_deleted 1 2\nGone.\n\\change_unchanged\n\\end_layout'),
+    ).toBe(true);
   });
 });

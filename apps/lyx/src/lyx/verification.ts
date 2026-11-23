@@ -8,6 +8,7 @@ import {
   extractBodyLayouts,
   normalizeMarkupBlock,
   splitTopLevelLayouts,
+  splitTopLevelParagraphs,
   stripTrackedDeletions,
 } from './context.js';
 
@@ -99,7 +100,11 @@ export function verifyParagraphSelection(
     // still contains \change_deleted content that the clipboard payload
     // (copied from the live buffer) does not — strip it on both sides or
     // every paragraph after a tracked edit fails verification.
-    const diskBlocks = splitTopLevelLayouts(
+    // Filter to non-empty paragraphs: the outline's [pN] index (input.index)
+    // skips truly empty paragraphs because LyX's paragraph walk skips them
+    // (live-verified 2026-11-23) — the disk blocks must be filtered the same
+    // way or every paragraph after an empty shell mis-verifies.
+    const diskBlocks = splitTopLevelParagraphs(
       extractBodyLayouts(stripTrackedDeletions(input.diskRaw)) ?? '',
     );
     const payloadBlocks = splitTopLevelLayouts(

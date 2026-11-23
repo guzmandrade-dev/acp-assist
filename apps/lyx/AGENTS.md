@@ -615,6 +615,19 @@ intent; the agent must end its reply with a trailing action tag:
   landed on the Title. The serial walk (`buffer-begin` + N-1 ×
   `paragraph-down`) DOES match the file outline 1:1 (verified row-by-row;
   inset-inner Note/Box layouts are NOT walk rows). Also that day:
+  **Live-verified 2026-11-23 (PLEE article run): `paragraph-down` does NOT
+  stop on a TRULY EMPTY paragraph** (no text, no inset — probe doc
+  Alpha/EMPTY/Beta/Gamma walks as 3 rows), while the file outline counted
+  every `\begin_layout`. `delete-at` leaves exactly such an empty shell in
+  the saved file when the merge-away is tracked/not applied, so every [pN]
+  past a shell was off by one between outline and walk ("[p62] should start
+  with X but the cursor landed on the NEXT paragraph" — p61/p139/p142 in
+  that run; the p61 shell predated the run, left by an earlier session).
+  Fix: the outline (`buildDocumentContext`) and `splitTopLevelParagraphs`
+  now SKIP truly empty paragraphs (inset-only paragraphs like Newpage/
+  Separator stay — they ARE walk rows), so [pN] matches the live walk 1:1
+  and a lingering shell is harmless. `verifyParagraphSelection` filters the
+  disk blocks the same way. Also that day:
   `gotoParagraph` failed with `landed on ""` on a correctly targeted
   paragraph — the empty signature means the CLIPBOARD READ after `copy`
   came back empty (contention/clobber; the multi-instance setup and
