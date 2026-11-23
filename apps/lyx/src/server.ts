@@ -597,33 +597,56 @@ function createLyxBackend(
     // SAVED file: copy the selection and compare its raw .lyx markup with
     // the file's paragraph (see verifyParagraphSelection — a mis-targeted
     // paste never happens).
+    // One retry when the clipboard read comes back EMPTY (no x-lyx
+    // payload, no text): that signature means the clipboard was contended
+    // or clobbered between LyX's `copy` and our read (live-found
+    // 2026-11-22: "landed on \"\"" on a correctly targeted paragraph;
+    // errors.log also shows "PowerShell clipboard host is busy"), NOT a
+    // wrong landing — a real mis-landing always copies *some* text. A busy
+    // clipboard host surfaces as a THROWN read; treat that as empty too.
     const selectAndVerify = async (): Promise<{
       ok: boolean;
       payload: string | null;
       reason: 'select' | 'copy' | 'mismatch' | null;
       actual: string;
     }> => {
-      const selected = await session.state.lyx.paragraphSelect();
-      if (!selected) return { ok: false, payload: null, reason: 'select', actual: '' };
-      // Write-only (deaf pipe): skip the clipboard copy-verify — it is slow
-      // and contended there — paste actions are verified post-paste from
-      // the saved file instead (see verifyPasteLanded).
-      if (opts.skipCopyVerify) return { ok: true, payload: null, reason: null, actual: '' };
-      const copied = await session.state.lyx.copySelection();
-      if (!copied) return { ok: false, payload: null, reason: 'copy', actual: '' };
-      const payload = await pollUntil(() => session.state.clipboard.readLyxDocument(), {
-        timeoutMs: TIMINGS.clipboardPayloadPollMs,
-        intervalMs: TIMINGS.pollIntervalMs,
-      });
-      const clipboardText = payload === null ? await session.state.clipboard.readText() : null;
-      const verify = verifyParagraphSelection({
-        payload,
-        clipboardText,
-        diskRaw: raw,
-        index: target - 1,
-        expectedPreview: entry.preview,
-      });
-      return { ok: verify.ok, payload, reason: verify.ok ? null : 'mismatch', actual: verify.actual };
+      for (let attemptNo = 1; attemptNo <= 2; attemptNo++) {
+        const selected = await session.state.lyx.paragraphSelect();
+        if (!selected) return { ok: false, payload: null, reason: 'select', actual: '' };
+        // Write-only (deaf pipe): skip the clipboard copy-verify — it is slow
+        // and contended there — paste actions are verified post-paste from
+        // the saved file instead (see verifyPasteLanded).
+        if (opts.skipCopyVerify) return { ok: true, payload: null, reason: null, actual: '' };
+        const copied = await session.state.lyx.copySelection();
+        if (!copied) return { ok: false, payload: null, reason: 'copy', actual: '' };
+        const timeoutMs =
+          attemptNo === 1 ? TIMINGS.clipboardPayloadPollMs : TIMINGS.clipboardPayloadPollMs * 6;
+        const payload = await pollUntil(
+          () => session.state.clipboard.readLyxDocument().catch(() => null),
+          { timeoutMs, intervalMs: TIMINGS.pollIntervalMs },
+        );
+        const clipboardText =
+          payload === null ? await session.state.clipboard.readText().catch(() => '') : null;
+        const verify = verifyParagraphSelection({
+          payload,
+          clipboardText,
+          diskRaw: raw,
+          index: target - 1,
+          expectedPreview: entry.preview,
+        });
+        if (verify.ok || verify.actual !== '' || attemptNo === 2) {
+          return {
+            ok: verify.ok,
+            payload,
+            reason: verify.ok ? null : 'mismatch',
+            actual: verify.actual,
+          };
+        }
+        // Empty read: clear the (possibly stale) selection and retry once
+        // with a longer poll window before declaring a mismatch.
+        await session.state.lyx.clearSelection();
+      }
+      return { ok: false, payload: null, reason: 'mismatch', actual: '' };
     };
 
     // Direct jump first; fall back to the serial walk when the jump is
@@ -651,13 +674,27 @@ function createLyxBackend(
           `lyxMode=${session.state.lyx.mode} failed at ${attempt.reason}`,
         new Error(
           attempt.reason === 'mismatch'
-            ? `landed on "${attempt.actual.slice(0, 120)}"`
+            ? attempt.actual === ''
+              ? 'clipboard read came back empty on both attempts (contention)'
+              : `landed on "${attempt.actual.slice(0, 120)}"`
             : (attempt.reason ?? 'unknown'),
         ),
       );
       if (attempt.reason === 'select') return fail('paragraph-select failed.');
       if (attempt.reason === 'copy') {
         return fail('Could not copy the selected paragraph for verification.');
+      }
+      if (attempt.actual === '') {
+        // The empty-read signature after the retry: the clipboard never
+        // delivered the copied selection (contention/clobber), so the
+        // landing spot could not be verified at all — say so, instead of
+        // implying the cursor landed on an empty paragraph.
+        return fail(
+          `Paragraph targeting could not be verified for [p${target}] (expected to start with ` +
+            `"${normalizeForCompare(entry.preview).slice(0, 60)}\u2026"): the clipboard read after ` +
+            `copy came back empty on both attempts — the clipboard was busy or taken by another ` +
+            `process between LyX's copy and the read. Nothing was pasted.`,
+        );
       }
       return fail(
         `Paragraph targeting failed: [p${target}] should start with ` +

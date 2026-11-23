@@ -117,7 +117,7 @@ class FailingAgent implements AgentRunner {
  */
 function fakeLyx(
   doc: FakeDoc,
-  hooks: { onPaste?: () => Promise<void>; failGoto?: boolean; writeOnly?: boolean; noPaste?: boolean; saveDelayMs?: number } = {},
+  hooks: { onPaste?: () => Promise<void>; failGoto?: boolean; writeOnly?: boolean; noPaste?: boolean; saveDelayMs?: number; emptyCopyTimes?: number } = {},
 ) {
   let cursor = 0;
   let selection: { p: number; start: number; end: number } | null = null;
@@ -155,6 +155,15 @@ function fakeLyx(
     async copySelection() {
       client.calls.copy += 1;
       if (!selection) return false;
+      // Test hook: simulate a contended/clobbered clipboard — the copy
+      // "succeeds" but the clipboard read comes back empty this many times
+      // (live-found 2026-11-22: "landed on \"\"" signature).
+      if (hooks.emptyCopyTimes && hooks.emptyCopyTimes > 0) {
+        hooks.emptyCopyTimes -= 1;
+        (globalThis as { __clipDoc?: string }).__clipDoc = '';
+        (globalThis as { __clipText?: string }).__clipText = '';
+        return true;
+      }
       const para = doc.paragraphs[selection.p];
       const copied = fakeDocText([
         { layout: para.layout, text: para.text.slice(selection.start, selection.end) },
@@ -284,7 +293,7 @@ interface Harness {
 
 async function startHarness(
   replies: string[],
-  lyxHooks: { onPaste?: () => Promise<void>; failGoto?: boolean; writeOnly?: boolean; noPaste?: boolean; saveDelayMs?: number } = {},
+  lyxHooks: { onPaste?: () => Promise<void>; failGoto?: boolean; writeOnly?: boolean; noPaste?: boolean; saveDelayMs?: number; emptyCopyTimes?: number } = {},
   agentOverride?: AgentRunner,
   extraOptions: { settingsDir?: string } = {},
 ): Promise<Harness> {
@@ -554,6 +563,58 @@ describe('multi-action runs over the message stream', () => {
     expect(frames.some((f) => f.action === 'none')).toBe(true);
     expect(frames.at(-1)).toEqual({ done: true });
   });
+
+  it('retries the copy-verify once when the clipboard read comes back empty', async () => {
+    // Live-found 2026-11-22: with a contended clipboard the copy "succeeds"
+    // but the read after it returns nothing (the "landed on \"\"" signature).
+    // The first read is empty here; the retry delivers the payload and the
+    // edit lands.
+    const harness = await startHarness(
+      ['Rewriting p2.\n```lyx\n\\begin_layout Standard\nsecond body rewritten\n\\end_layout\n```\n[ACTION: rewrite-at p2]',],
+      { emptyCopyTimes: 1 },
+    );
+    cleanups.push(async () => {
+      await new Promise<void>((resolve) => harness.server.close(() => resolve()));
+      await fs.rm(harness.doc.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
+    const res = await fetch(`${harness.base}/api/session/${harness.sessionId}/message/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${API_TOKEN}` },
+      body: JSON.stringify({ message: 'rewrite p2' }),
+    });
+    const frames = await readSse(res);
+    expect(harness.doc.paragraphs[1]!.text).toBe('second body rewritten');
+    expect(frames.some((f) => f.applied === 'rewrite-at')).toBe(true);
+    // The retry happened: copy ran more than once for the targeting.
+    expect(harness.lyx.client.calls.copy).toBeGreaterThanOrEqual(2);
+    expect(frames.at(-1)).toEqual({ done: true });
+  });
+
+  it('fails with the clipboard-contention message when the read stays empty', async () => {
+    const harness = await startHarness(
+      ['Rewriting p2.\n```lyx\n\\begin_layout Standard\nx\n\\end_layout\n```\n[ACTION: rewrite-at p2]',],
+      { emptyCopyTimes: 99 },
+    );
+    cleanups.push(async () => {
+      await new Promise<void>((resolve) => harness.server.close(() => resolve()));
+      await fs.rm(harness.doc.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
+    const res = await fetch(`${harness.base}/api/session/${harness.sessionId}/message/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${API_TOKEN}` },
+      body: JSON.stringify({ message: 'rewrite p2' }),
+    });
+    const frames = await readSse(res);
+    // Nothing was pasted (p2 is the second paragraph, 'first body').
+    expect(harness.doc.paragraphs[1]!.text).toBe('first body');
+    const err = frames.find((f) => typeof f.error === 'string');
+    expect(typeof err?.error).toBe('string');
+    expect(String(err?.error)).toContain('could not be verified');
+    expect(String(err?.error)).toContain('clipboard read after copy came back empty');
+    expect(String(err?.error)).toContain('Nothing was pasted');
+    expect(frames.at(-1)).toEqual({ done: true });
+    // Two targeting passes (jump + walk), each with its own retry poll.
+  }, 20_000);
 
   it('stops the run when an action fails (no automatic retry of the edit)', async () => {
     const harness = await startHarness([

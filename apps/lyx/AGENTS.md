@@ -608,6 +608,23 @@ intent; the agent must end its reply with a trailing action tag:
   of the generated TeX file, needs an export first). Pit ids need not line
   up with the file outline when insets own paragraphs — hence the
   verify-then-fallback, never trust the jump blindly.
+  **Live-verified 2026-11-22 (PLEE article, p50 failure):** `paragraph-goto
+  <n>` does NOT take a sequential pit index — LyX's LFUNs.lyx says the arg
+  is a paragraph *id*, "not the sequential number seen on the screen… unique
+  for all opened buffers"; probing `paragraph-goto 49 0` on a fresh instance
+  landed on the Title. The serial walk (`buffer-begin` + N-1 ×
+  `paragraph-down`) DOES match the file outline 1:1 (verified row-by-row;
+  inset-inner Note/Box layouts are NOT walk rows). Also that day:
+  `gotoParagraph` failed with `landed on ""` on a correctly targeted
+  paragraph — the empty signature means the CLIPBOARD READ after `copy`
+  came back empty (contention/clobber; the multi-instance setup and
+  "PowerShell clipboard host is busy" in errors.log), not a wrong landing.
+  `selectAndVerify` now retries once with a longer poll on an empty read
+  (a thrown/busy host read counts as empty) and reports a distinct
+  "could not be verified … clipboard read came back empty" message. A
+  paragraph STARTING with a Formula inset targets fine (walk row = outline
+  pN; markup verify passes) — the outline preview just drops the formula
+  text, so error messages show the preview without it.
 - Plain `[ACTION: insert]` merges the first pasted paragraph into the
   cursor's paragraph (it takes that paragraph's layout — live-verified
   when a pasted Subsubsection swallowed the document Title). The prompt
