@@ -75,7 +75,11 @@ function resolveImageSrcForUno(image: ImageBlock): { src: string; width?: number
     if (!parsed) throw new Error('[ACTION: insert-image] has a malformed data: URI.');
     bytes = parsed.bytes;
     const ext = parsed.mime === 'image/png' ? '.png' : parsed.mime === 'image/jpeg' ? '.jpg' : parsed.mime === 'image/gif' ? '.gif' : parsed.mime === 'image/svg+xml' ? '.svg' : '.img';
-    const file = path.join(os.tmpdir(), `acp-assist-img-${Date.now()}${ext}`);
+    // mkdtemp gives a fresh, unpredictable directory per image — a fixed
+    // name in the shared tmpdir is predictable and open to symlink attacks
+    // (js/insecure-temporary-file).
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-assist-img-'));
+    const file = path.join(dir, `image${ext}`);
     fs.writeFileSync(file, bytes);
     src = 'file:///' + file.split('\\').join('/');
   } else if (/^https?:\/\//i.test(image.src)) {

@@ -430,25 +430,34 @@ function createLyxBackend(
   async function readDocumentSnapshot(session: CompanionSession<LyxState>): Promise<DocumentSnapshot> {
     const filePath = session.state.documentPath;
     if (!filePath) throw new Error('Document is not saved on disk.');
-    let mtimeMs: number;
+    // One open handle for both the stat and the read: stat()ing first and
+    // reading after is a TOCTOU race (the file can change or vanish between
+    // the two — js/file-system-race); fstat on the open handle describes
+    // exactly the bytes read.
+    let handle: fs.FileHandle;
     try {
-      mtimeMs = (await fs.stat(filePath)).mtimeMs;
+      handle = await fs.open(filePath, 'r');
     } catch {
       throw new Error(`Cannot read ${filePath}`);
     }
-    const cached = session.state.docSnapshot;
-    if (cached && cached.path === filePath && cached.mtimeMs === mtimeMs) {
-      return cached;
+    try {
+      const mtimeMs = (await handle.stat()).mtimeMs;
+      const cached = session.state.docSnapshot;
+      if (cached && cached.path === filePath && cached.mtimeMs === mtimeMs) {
+        return cached;
+      }
+      const raw = await handle.readFile('utf8');
+      const snapshot: DocumentSnapshot = {
+        path: filePath,
+        mtimeMs,
+        raw,
+        ctx: buildDocumentContext(raw),
+      };
+      session.state.docSnapshot = snapshot;
+      return snapshot;
+    } finally {
+      await handle.close();
     }
-    const raw = await fs.readFile(filePath, 'utf8');
-    const snapshot: DocumentSnapshot = {
-      path: filePath,
-      mtimeMs,
-      raw,
-      ctx: buildDocumentContext(raw),
-    };
-    session.state.docSnapshot = snapshot;
-    return snapshot;
   }
 
   async function readDocumentContext(session: CompanionSession<LyxState>) {

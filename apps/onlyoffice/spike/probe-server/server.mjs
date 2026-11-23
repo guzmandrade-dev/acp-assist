@@ -9,14 +9,15 @@
  * Run: node server.mjs   (port 8791, spike log next to it)
  */
 import http from "node:http";
-import { appendFileSync, writeFileSync, existsSync } from "node:fs";
+import { appendFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const PORT = 8791;
 const HERE = dirname(fileURLToPath(import.meta.url));
 const LOG = join(HERE, "probe-server.log");
-if (!existsSync(LOG)) writeFileSync(LOG, "");
+// create-if-missing without an existsSync check-then-write race
+appendFileSync(LOG, "");
 
 const queue = [];
 const waiters = [];
