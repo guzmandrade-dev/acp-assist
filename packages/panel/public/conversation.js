@@ -29,7 +29,12 @@ import {
 } from './status.js';
 import { showTyping, hideTyping, scheduleTypingResume, pushThought, resetThoughts, setTypingHint } from './typing.js';
 import { scrollToBottomIfNear } from './messages.js';
-import { HAS_SAVE_CONSENT, ensureSaveConsent, requestSaveConsent, setDocInfo } from './save-consent.js';
+import {
+  HAS_SAVE_CONSENT,
+  maybeShowDocIntro,
+  requestSaveConsent,
+  setDocInfo,
+} from './save-consent.js';
 import { updateDocSelector, refreshDocuments, refreshSelection, switchDocument } from './documents.js';
 import { closeEventChannel, openEventChannel } from './events.js';
 import { renderChips } from './attachments.js';
@@ -455,17 +460,10 @@ export async function send() {
   if (state.busy || !state.sessionId || state.bridgeBusy || state.consentResolver) return;
   const message = input.value.trim();
   if (!message) return;
-  // Save-consent gate (LyX): warn before anything is sent when the
-  // active document is known to be outside version control. The server
-  // enforces the same gate (409 save-consent-required), which covers
-  // stale state.
-  if (!(await ensureSaveConsent())) {
-    addSystemMessage(
-      'Not sent: the document is not under version control. Accept saving to continue, or keep it in a Git repository.',
-      true,
-    );
-    return;
-  }
+  // The start-working modal (edit notice + conversation picker) runs at
+  // connect / document-select time, not here. Non-VCS documents still hit
+  // the server-side consent gate (409) on the first save — handled in the
+  // catch below.
   input.value = '';
   // Snapshot the pending attachments for this turn BEFORE the stream
   // consumes them — the user bubble shows what was attached.
@@ -554,6 +552,42 @@ async function doConnect() {
   }
   updateComposerState();
   openEventChannel();
+  // The start-working modal (edit notice + VCS status + previous-conversation
+  // picker) appears here — once the connection and document are selected,
+  // once per document per panel session. The choice is applied in place
+  // (no reconnect), so composer text and pending attachments survive.
+  const intro = await maybeShowDocIntro();
+  if (intro?.accepted) await applyDocIntroChoice(intro.choice);
+}
+
+/**
+ * Apply the conversation choice made in the start-working modal
+ * ('__new__' or an archived file name; '__current__' is a no-op). NO
+ * reconnect: at connect time the agent process is still fresh, and a
+ * document switch mid-session re-keys the conversation anyway — so pending
+ * attachments and the composer text survive untouched. The server archives
+ * the active conversation (nothing is deleted) and re-seeds the replay
+ * handoff for a switched-in history.
+ */
+export async function applyDocIntroChoice(choice) {
+  if (!choice || choice === '__current__' || !state.sessionId) return;
+  try {
+    if (choice === '__new__') {
+      await api(`/api/session/${state.sessionId}/conversation/reset`, { method: 'POST' });
+      chat.innerHTML = '';
+      showEmpty();
+    } else {
+      const r = await api(`/api/session/${state.sessionId}/conversation/switch`, {
+        method: 'POST',
+        body: JSON.stringify({ file: choice }),
+      });
+      renderConversation(r.conversation ?? []);
+      if ((r.conversation ?? []).length === 0) showEmpty();
+      else hideEmpty();
+    }
+  } catch (e) {
+    addSystemMessage(`error: ${e.message}`, true);
+  }
 }
 
 /** Tear down the current session (agent process included) and start a new one. */

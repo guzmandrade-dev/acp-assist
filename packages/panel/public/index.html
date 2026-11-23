@@ -100,18 +100,20 @@
 
   <div id="save-consent-backdrop" class="modal-backdrop" hidden>
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="save-consent-title" aria-describedby="save-consent-text">
-      <h2 id="save-consent-title">Document is not version-controlled</h2>
+      <h2 id="save-consent-title">Start working on this document</h2>
       <p id="save-consent-text">
-        <code id="save-consent-path"></code> is not in a version-controlled folder
-        (no Git). While the assistant works, it <strong>saves the document to disk
-        automatically</strong>, overwriting the file &mdash; a bad edit has no history
-        to recover from. Keeping the document in a Git repository (or making manual
-        backups) is strongly recommended.
+        The assistant is about to edit <code id="save-consent-path"></code> &mdash; while it
+        works, it <strong>saves the document to disk automatically</strong>.
       </p>
-      <p class="modal-hint">Do you accept that this session may save changes to the file? (Asked once per document.)</p>
+      <p id="save-consent-vcs" class="modal-hint"></p>
+      <div id="save-consent-sessions" hidden>
+        <p class="modal-hint">Conversations saved for this document:</p>
+        <div id="save-consent-session-list" class="session-list" role="radiogroup" aria-label="Previous conversations"></div>
+      </div>
+      <p class="modal-hint" id="save-consent-hint">Shown once per document and session.</p>
       <div class="modal-actions">
         <button id="save-consent-cancel">Cancel</button>
-        <button id="save-consent-accept" class="modal-primary">Accept and save</button>
+        <button id="save-consent-accept" class="modal-primary">Start</button>
       </div>
     </div>
   </div>

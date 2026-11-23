@@ -804,6 +804,21 @@ dynamically:
 - Chat history persists to `<userData>/history/<hash>.json` per document
   (Electron userData is `%APPDATA%/Electron` until we set an app id /
   package the app).
+- **Multiple conversations per document (2026-11-23):** besides the active
+  `<hash>.json`, "start a new conversation" archives it to
+  `<hash>.<timestamp>.json` (nothing is deleted). Core routes (shared with
+  the other apps): `GET /api/session/:id/conversations` (list with
+  turnCount/preview/lastTimestamp/active), `POST …/conversation/reset`
+  (archive active + clear in-memory/handoff), `POST …/conversation/switch`
+  `{file}` (archive active, promote the chosen file, return its turns).
+  The panel's start-working modal (the old save-consent modal, generalized
+  to "we are going to edit this document now" + VCS line + session picker)
+  shows at CONNECT time and whenever the active document changes — once per
+  document per panel session, not on send. The choice is applied in place
+  (no reconnect: the agent is still fresh at connect, and per-document
+  histories are keyed), so pending attachments and composer text survive;
+  the switch route re-seeds the replay handoff so a switched-in history is
+  replayed on the next message.
 - Chat streams via SSE (`POST /chat/stream`, `data: {"text": ...}` frames,
   ending `{"done": true}`); agent updates have a 240s timeout so a stuck
   agent surfaces an error instead of hanging silently.

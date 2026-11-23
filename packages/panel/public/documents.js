@@ -13,7 +13,8 @@ import {
 import { api } from './api.js';
 import { addSystemMessage, renderConversation } from './messages.js';
 import { maybeSetBusyFromError, withbridgeBusy, refreshStatus } from './status.js';
-import { setDocInfo } from './save-consent.js';
+import { maybeShowDocIntro, setDocInfo } from './save-consent.js';
+import { applyDocIntroChoice } from './conversation.js';
 
 export async function refreshSelection() {
   if (!state.sessionId || !selectionEl) return;
@@ -95,6 +96,11 @@ export async function refreshChatForDocument(active) {
   // caller's (possibly stale) snapshot.
   state.chatDocKey = info.documentPath ?? '(unsaved)';
   renderConversation(info.conversation ?? []);
+  // The active document changed: show the start-working modal for it (once
+  // per document per panel session) and apply the conversation choice in
+  // place — no reconnect, so pending attachments and composer text survive.
+  const intro = await maybeShowDocIntro();
+  if (intro?.accepted) await applyDocIntroChoice(intro.choice);
 }
 
 export async function refreshDocuments() {

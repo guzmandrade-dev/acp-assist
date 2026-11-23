@@ -115,6 +115,37 @@ describe('shared panel assets', () => {
     expect(appSrc).toContain('rerenderAssistantTexts');
   });
 
+  it('the start-working modal carries the previous-conversation picker end to end', async () => {
+    const dir = panelPublicDir();
+    const read = async (name: string) => fs.readFile(path.join(dir, name), 'utf8');
+    const html = await read('index.html');
+    // The consolidated modal keeps the save-consent backdrop id but now has
+    // the general edit notice, the VCS line, and the session list.
+    expect(html).toContain('id="save-consent-backdrop"');
+    expect(html).toContain('id="save-consent-vcs"');
+    expect(html).toContain('id="save-consent-sessions"');
+    expect(html).toContain('id="save-consent-session-list"');
+    const scSrc = await read('save-consent.js');
+    expect(scSrc).toContain('maybeShowDocIntro');
+    // The truncated session preview is readable in full via the row tooltip.
+    expect(scSrc).toContain('row.title');
+    expect(scSrc).toContain('/conversations');
+    expect(scSrc).toContain('state.docIntroDone');
+    const convSrc = await read('conversation.js');
+    expect(convSrc).toContain('applyDocIntroChoice');
+    expect(convSrc).toContain('/conversation/reset');
+    expect(convSrc).toContain('/conversation/switch');
+    expect(convSrc).toContain('maybeShowDocIntro');
+    const docSrc2 = await read('documents.js');
+    expect(docSrc2).toContain('maybeShowDocIntro');
+    expect(docSrc2).toContain('applyDocIntroChoice');
+    const stateSrc = await read('state.js');
+    expect(stateSrc).toContain('docIntroDone');
+    expect(stateSrc).toContain('save-consent-session-list');
+    const css = await read('style.css');
+    expect(css).toContain('.session-list');
+  });
+
   it('install.js wires both install flows (LO one-click + OO bridge download)', async () => {
     const js = await fs.readFile(path.join(panelPublicDir(), 'install.js'), 'utf8');
     expect(js).toContain('/api/bridge/install/preflight');

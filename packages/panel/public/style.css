@@ -1041,6 +1041,32 @@ button:focus-visible {
 }
 .modal-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 
+/* Previous-conversation picker inside the start-working modal. */
+.session-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  background: var(--surface-secondary);
+}
+.session-choice {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  cursor: pointer;
+}
+.session-choice small {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Review dialog + structured review card ── */
 /* The review dialog is left-aligned (form fields read better that way);
    the shared save-consent modal keeps its centered look. */

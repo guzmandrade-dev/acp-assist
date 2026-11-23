@@ -78,6 +78,10 @@ export const reviewCancel = document.getElementById('review-cancel');
 export const vcsWarnEl = document.getElementById('vcs-warn');
 export const consentBackdrop = document.getElementById('save-consent-backdrop');
 export const consentPathEl = document.getElementById('save-consent-path');
+export const consentVcsEl = document.getElementById('save-consent-vcs');
+export const consentSessionsEl = document.getElementById('save-consent-sessions');
+export const consentSessionListEl = document.getElementById('save-consent-session-list');
+export const consentHintEl = document.getElementById('save-consent-hint');
 export const consentAcceptBtn = document.getElementById('save-consent-accept');
 export const consentCancelBtn = document.getElementById('save-consent-cancel');
 export const scrollTicks = document.getElementById('scroll-ticks');
@@ -137,6 +141,11 @@ export const state = {
   saveConsentPaths: new Set(),
   /** Resolver of the open save-consent modal, null while closed. */
   consentResolver: null,
+  /**
+   * Document keys whose "start working" modal was already shown (and
+   * resolved) in this panel session — the modal appears once per document.
+   */
+  docIntroDone: new Set(),
   /** One-click bridge install in flight. */
   installBusy: false,
   /** Open "talking to the editor" requests (counter-based indicator). */
