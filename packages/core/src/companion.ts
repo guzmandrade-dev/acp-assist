@@ -23,7 +23,10 @@ import {
   createConversationStore,
   createLogError,
   createWrap,
+  listConversations,
   listKnownDocuments,
+  loadHistory,
+  promoteConversation,
   registerAttachmentRoutes,
   registerSessionRoutes,
   sseFail,
@@ -522,6 +525,73 @@ export function createCompanionServer<TState>(
         return;
       }
       res.json(await backend.switchDocument(session, target));
+    }),
+  );
+
+  // --- conversation history (per document key) ----------------------------------
+  //
+  // A document can have several persisted conversations: the active one
+  // (<hash>.json) plus archived ones (<hash>.<stamp>.json). The panel's
+  // start-working modal lists them and can start a new one or switch back.
+
+  /** List every persisted conversation of the session's current document key. */
+  app.get(
+    '/api/session/:id/conversations',
+    wrap(async (req, res) => {
+      const session = getSession(req.params['id']);
+      const key = backend.conversationKey(session);
+      const conversations = options.historyDir
+        ? await listConversations(options.historyDir, key)
+        : [];
+      res.json({ key, conversations });
+    }),
+  );
+
+  /**
+   * Start a NEW conversation for the current key: archive the active history
+   * file (nothing is deleted — it stays listed as a previous session) and
+   * drop the in-memory turns + replay handoff. The panel pairs this with a
+   * reconnect so the agent process also starts fresh.
+   */
+  app.post(
+    '/api/session/:id/conversation/reset',
+    wrap(async (req, res) => {
+      const session = getSession(req.params['id']);
+      const key = backend.conversationKey(session);
+      const archived = await storeFor(session).reset(key);
+      res.json({ ok: true, key, archived });
+    }),
+  );
+
+  /**
+   * Switch the current key to a previously archived conversation: the chosen
+   * file is promoted to the active name (the current active is archived)
+   * and the in-memory state is dropped, so the next ensure() reloads the
+   * chosen history. The panel pairs this with a reconnect.
+   */
+  app.post(
+    '/api/session/:id/conversation/switch',
+    wrap(async (req, res) => {
+      const session = getSession(req.params['id']);
+      if (!options.historyDir) throw new Error('History is not configured.');
+      const key = backend.conversationKey(session);
+      const file = (req.body?.file as string | undefined)?.trim();
+      if (!file) {
+        res.status(400).json({ error: 'file is required' });
+        return;
+      }
+      await promoteConversation(options.historyDir, key, file);
+      const store = storeFor(session);
+      await store.flush(key);
+      session.conversations.delete(key);
+      session.historyHandoff.delete(key);
+      const turns = await loadHistory(options.historyDir, key);
+      // Re-seed in-memory state + the replay handoff, so the next message
+      // replays the switched-in history into the agent (same as a fresh
+      // session loading it at ensure()).
+      session.conversations.set(key, turns);
+      session.historyHandoff.set(key, turns.length);
+      res.json({ ok: true, key, conversation: turns });
     }),
   );
 

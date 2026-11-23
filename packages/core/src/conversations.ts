@@ -11,7 +11,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type express from 'express';
 import type { Turn, TurnMeta } from './types.js';
-import { formatHistoryReplay, type HistoryReplayOptions, loadHistory, removeHistory, saveHistory } from './history.js';
+import { archiveHistory, formatHistoryReplay, type HistoryReplayOptions, loadHistory, removeHistory, saveHistory } from './history.js';
 
 /** Max document edits one user message may apply (app-level safety stop). */
 export const MAX_ACTIONS_PER_MESSAGE = 10;
@@ -155,6 +155,14 @@ export interface ConversationStore {
    * lose the in-flight step, never a completed one.
    */
   flush: (key?: string) => Promise<void>;
+  /**
+   * Start a NEW conversation for a key: archive the persisted history file
+   * (it stays available as a "previous session" via listConversations and is
+   * not replayed into new sessions) and drop the in-memory turns plus the
+   * unseen-history counter. Returns the archive file name, or null when
+   * nothing was persisted for the key.
+   */
+  reset: (key?: string) => Promise<string | null>;
 }
 
 /**
@@ -273,9 +281,32 @@ export function createConversationStore(options: ConversationStoreOptions): Conv
     }
   }
 
+  async function reset(keyArg?: string): Promise<string | null> {
+    const key = keyArg ?? keyOf();
+    // Flush first so the archive captures every recorded turn.
+    await flush(key);
+    const archived = options.historyDir
+      ? await archiveHistory(options.historyDir, key).catch((e) => {
+          options.logError('[history] archive failed', e);
+          return null;
+        })
+      : null;
+    // A pending debounced write must not resurrect the archived file.
+    const timer = pendingTimers.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      pendingTimers.delete(key);
+    }
+    dirty.delete(key);
+    conversations.delete(key);
+    historyHandoff.delete(key);
+    return archived;
+  }
+
   return {
     ensure,
     migrate,
+    reset,
     key: keyOf,
     unseenCount: (key) => historyHandoff.get(key) ?? 0,
     buildHistoryPrefix: (key) =>

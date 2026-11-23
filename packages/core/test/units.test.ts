@@ -5,8 +5,11 @@ import path from 'node:path';
 import {
   readAgentSettingsBody,
   formatHistoryReplay,
+  archiveHistory,
+  listConversations,
   listKnownDocuments,
   loadHistory,
+  promoteConversation,
   saveHistory,
   historyFile,
   extractAttachmentText,
@@ -113,6 +116,79 @@ describe('history persistence', () => {
       exists: async (key) => key === existing,
     });
     expect(filtered).toEqual([existing]);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('lists each document once even with archived conversation files', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'core-hist-'));
+    await saveHistory(dir, 'doc-a', []);
+    await archiveHistory(dir, 'doc-a'); // now archived, no active file
+    await saveHistory(dir, 'doc-a', []); // active again
+    const all = await listKnownDocuments(dir);
+    expect(all.filter((k) => k === 'doc-a')).toHaveLength(1);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+});
+
+// --- multiple conversations per key ---------------------------------------------
+
+describe('conversation archive / list / promote', () => {
+  const turns = (tag: string): Turn[] => [
+    { role: 'user', content: `question ${tag}`, timestamp: `2026-11-2${tag}T10:00:00.000Z` },
+    { role: 'assistant', content: `answer ${tag}`, timestamp: `2026-11-2${tag}T10:01:00.000Z` },
+  ];
+
+  it('archives the active conversation and lists both with metadata', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'core-hist-'));
+    await saveHistory(dir, 'doc-a', turns('0'));
+    const archived = await archiveHistory(dir, 'doc-a');
+    expect(archived).toMatch(/^[0-9a-f]{16}\..+\.json$/);
+    // Nothing active anymore.
+    expect(await loadHistory(dir, 'doc-a')).toEqual([]);
+    await saveHistory(dir, 'doc-a', turns('2'));
+
+    const list = await listConversations(dir, 'doc-a');
+    expect(list).toHaveLength(2);
+    const active = list.find((c) => c.active);
+    const prev = list.find((c) => !c.active);
+    expect(active?.turnCount).toBe(2);
+    expect(active?.preview).toBe('question 2');
+    expect(prev?.file).toBe(archived);
+    expect(prev?.preview).toBe('question 0');
+    // Most recent first.
+    expect(list[0]?.active).toBe(true);
+    // Other keys' files are not listed.
+    await saveHistory(dir, 'doc-b', turns('1'));
+    expect(await listConversations(dir, 'doc-a')).toHaveLength(2);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('promotes an archived conversation back to active, archiving the current one', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'core-hist-'));
+    await saveHistory(dir, 'doc-a', turns('0'));
+    const archived = await archiveHistory(dir, 'doc-a');
+    await saveHistory(dir, 'doc-a', turns('2'));
+
+    await promoteConversation(dir, 'doc-a', archived!);
+    const active = await loadHistory(dir, 'doc-a');
+    expect(active[0]?.content).toBe('question 0');
+    // The previously active conversation is now archived, not deleted.
+    const list = await listConversations(dir, 'doc-a');
+    expect(list).toHaveLength(2);
+    expect(list.filter((c) => c.active)).toHaveLength(1);
+
+    // Promoting the active name is a no-op; foreign files are rejected.
+    await promoteConversation(dir, 'doc-a', list.find((c) => c.active)!.file);
+    expect((await loadHistory(dir, 'doc-a'))[0]?.content).toBe('question 0');
+    await expect(promoteConversation(dir, 'doc-a', 'nope.json')).rejects.toThrow(
+      'not a conversation file',
+    );
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('archiveHistory returns null when nothing is persisted', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'core-hist-'));
+    expect(await archiveHistory(dir, 'doc-a')).toBeNull();
     await fs.rm(dir, { recursive: true, force: true });
   });
 });
@@ -225,6 +301,28 @@ describe('createConversationStore', () => {
     });
     return { store, conversations, historyHandoff };
   }
+
+  it('reset() archives the persisted conversation and drops in-memory state', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'core-store-'));
+    const { store, conversations, historyHandoff } = makeStore(dir);
+    await store.recordTurn('hello', 'hi [ACTION: none]');
+    await store.flush();
+    expect((await loadHistory(dir, 'doc-a')).length).toBe(2);
+    await store.ensure('doc-a');
+    historyHandoff.set('doc-a', 2);
+
+    const archived = await store.reset('doc-a');
+    expect(archived).toMatch(/\.json$/);
+    // Active file gone, archive present, memory + handoff cleared.
+    expect(await loadHistory(dir, 'doc-a')).toEqual([]);
+    expect(conversations.has('doc-a')).toBe(false);
+    expect(historyHandoff.has('doc-a')).toBe(false);
+    expect((await listConversations(dir, 'doc-a'))).toHaveLength(1);
+    expect((await listConversations(dir, 'doc-a'))[0]?.active).toBe(false);
+    // Resetting again: nothing active to archive.
+    expect(await store.reset('doc-a')).toBeNull();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
 
   it('records turns and meta in the current conversation', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'core-store-'));
