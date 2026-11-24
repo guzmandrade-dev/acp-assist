@@ -75,19 +75,70 @@ def _desktop():
         "com.sun.star.frame.Desktop", ctx)
 
 
-def _bridges_dir():
+def _assist_dir():
+    """The per-user app directory (parent of bridges/, also holds
+    companion.json and bridge-settings.json)."""
     if sys.platform == "win32":
         base = os.environ.get("APPDATA", os.path.expanduser("~"))
-        return os.path.join(base, APP_NAME, "bridges")
-    if sys.platform == "darwin":
-        return os.path.join(os.path.expanduser("~"), "Library",
-                            "Application Support", APP_NAME, "bridges")
-    base = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
-    return os.path.join(base, APP_NAME, "bridges")
+    elif sys.platform == "darwin":
+        base = os.path.join(os.path.expanduser("~"), "Library",
+                            "Application Support")
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
+    return os.path.join(base, APP_NAME)
+
+
+def _bridges_dir():
+    return os.path.join(_assist_dir(), "bridges")
 
 
 def _discovery_path():
     return os.path.join(_bridges_dir(), f"{os.getpid()}.json")
+
+
+# ------------------------------------------------------- bridge settings
+# Per-user settings shared with the sidebar panel (acppanel.py reads and
+# writes the same file). `autoStart` (default TRUE) controls whether the
+# bridge starts when the office starts (OnStartApp binding in Events.xcu
+# dispatches service:org.libreofficeacp.bridge?autostart).
+
+DEFAULT_SETTINGS = {"autoStart": True}
+
+
+def _settings_path():
+    return os.path.join(_assist_dir(), "bridge-settings.json")
+
+
+def read_bridge_settings():
+    """Read the shared settings file; missing/corrupt -> defaults."""
+    try:
+        with open(_settings_path(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return {**DEFAULT_SETTINGS, **data}
+    except Exception:
+        pass
+    return dict(DEFAULT_SETTINGS)
+
+
+def write_bridge_settings(settings):
+    """Write the settings file atomically (tmp + rename)."""
+    os.makedirs(_assist_dir(), exist_ok=True)
+    tmp = _settings_path() + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=2)
+    os.replace(tmp, _settings_path())
+
+
+def autostart_enabled():
+    return bool(read_bridge_settings().get("autoStart", True))
+
+
+def set_autostart(enabled):
+    settings = read_bridge_settings()
+    settings["autoStart"] = bool(enabled)
+    write_bridge_settings(settings)
+    return settings["autoStart"]
 
 
 def _record_event(kind):
@@ -1613,7 +1664,15 @@ def _stop_server():
 # ------------------------------------------------------- UNO component entry
 
 class BridgeJob(unohelper.Base, XJobExecutor):
-    """Instantiated via menu URLs service:org.libreofficeacp.bridge?start."""
+    """Instantiated via menu URLs service:org.libreofficeacp.bridge?start.
+
+    Events:
+      start / stop            force-start / force-stop (menu items)
+      autostart               start only when the autoStart setting is on
+                              (bound to OnStartApp in Events.xcu)
+      toggle-autostart        flip the autoStart setting (menu item)
+      set-autostart-on/off    set the autoStart setting explicitly
+    """
 
     def __init__(self, ctx):
         self.ctx = ctx
@@ -1624,6 +1683,19 @@ class BridgeJob(unohelper.Base, XJobExecutor):
             return json.dumps(_start_server())
         if event == "stop":
             return json.dumps(_stop_server())
+        if event == "autostart":
+            if not autostart_enabled():
+                return json.dumps({"status": "autostart-disabled",
+                                   "autoStart": False})
+            out = _start_server()
+            out["autoStart"] = True
+            return json.dumps(out)
+        if event == "toggle-autostart":
+            return json.dumps({"autoStart": set_autostart(not autostart_enabled())})
+        if event == "set-autostart-on":
+            return json.dumps({"autoStart": set_autostart(True)})
+        if event == "set-autostart-off":
+            return json.dumps({"autoStart": set_autostart(False)})
         return json.dumps({"error": f"unknown event {event!r}"})
 
 

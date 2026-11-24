@@ -489,6 +489,70 @@ Phase 4's in-LibreOffice presence, complete and verified live in the UI
   regression guard, factory instantiation with interface queries) —
   bridge_e2e now **47/47**. Probes 12j–12l document the discovery.
 
+## Bridge auto-start on launch (oxt 0.1.5, built 2026-11-24 — LIVE-VERIFIED 2026-11-24)
+
+The bridge now starts by itself when the office starts (user request:
+"the bridge is not running" was confusing; LyX needs nothing because its
+pipe exists whenever LyX runs). Design:
+
+- `extension/Events.xcu` (registered in `META-INF/manifest.xml`) binds
+  `/org.openoffice.Office.Events/ApplicationEvents/Bindings/OnStartApp`
+  to `service:org.libreofficeacp.bridge?autostart`. Global event bindings
+  are dispatched through the framework's dispatcher, and `service:` URLs
+  are handled by `framework/source/dispatch/servicehandler.cxx`, which
+  instantiates the service and calls `XJobExecutor.trigger(arg)` — the
+  same path the menu items use (rule 1), so the binding works without a
+  script provider. The Python component loads lazily on first
+  instantiation, which happens at OnStartApp.
+- `BridgeJob.trigger` in `acpbridge.py` gained events: `autostart`
+  (starts only when the setting allows; returns
+  `{"status": "autostart-disabled"}` otherwise), `toggle-autostart`,
+  `set-autostart-on`, `set-autostart-off`. `start`/`stop` remain forced
+  (menu items unchanged).
+- The setting lives in a per-user JSON file
+  `%APPDATA%/LibreOffice ACP Assist/bridge-settings.json`
+  (`{"autoStart": true}` by default when absent/corrupt) —
+  `read_bridge_settings()`/`write_bridge_settings()` in acpbridge.py;
+  acppanel.py reads/writes the SAME file (duplicated helpers, do not
+  `import acpbridge` from acppanel — a second plain-module import would
+  re-run `g_ImplementationHelper.addImplementation`). The companion reads
+  it too (`readBridgeAutoStart()` in `src/bridge/client.ts`, surfaced as
+  `bridgeAutoStart` in `/api/status`).
+- Opt-out surfaces (both editor-side): menu **ACP Assist > Toggle
+  auto-start bridge on launch** (`?toggle-autostart` in Addons.xcu), and
+  a fourth sidebar button "Auto-start on launch: ON/OFF" in acppanel.py
+  (y=180, h=30; `getHeightForWidth` grew to `LayoutSize(218,218,218)`;
+  the 10s poll keeps the label in sync with menu-side toggles).
+- Tests: `test-bridge/autostart_unit.py` (7 checks, runs WITHOUT
+  LibreOffice by stubbing uno/unohelper/com.sun.star in sys.modules and
+  pointing APPDATA at a temp dir — `python3 test-bridge/autostart_unit.py`),
+  `test/extension.test.ts` (vitest static checks incl. a packaging guard
+  that every extension/*.xcu is in package-oxt.py's FILES and the
+  manifest — the first 0.1.5 build shipped without Events.xcu because
+  FILES was a hardcoded list), and live checks in
+  `test-bridge/bridge_e2e.py` (OnStartApp binding in the merged config,
+  menu M3, and side-effect-based autostart checks: the dispatch return
+  value is the JOB OBJECT, not the JSON — bridge_ctl prints res.State
+  only — so assert on bridge-settings.json + the bridges/ record).
+- **LIVE-VERIFIED 2026-11-24** (scratch profile + temp APPDATA, soffice
+  26.8 headless with `--accept=socket,...port=2002`): after
+  `unopkg add` of oxt 0.1.5 and a plain launch, the `<pid>.json`
+  discovery record appeared in `bridges/` with NO menu click and
+  `/status` answered 200 with the record's bearer token (401 without).
+  `OnStartApp` IS in the merged config
+  (`Office.Events/ApplicationEvents/Bindings/OnStartApp/BindingURL =
+  service:org.libreofficeacp.bridge?autostart`) and fires even in
+  `--headless --invisible` mode. Disable cycle: dispatch
+  `?set-autostart-off` → settings file `autoStart:false` → kill + relaunch
+  → NO record (refused); `?toggle-autostart` → `true` → relaunch →
+  record appears again. Sidebar factory instantiated over the socket:
+  `getHeightForWidth` = LayoutSize(218,218,218), minimal width 260.
+  NOTE for users: the RUNNING office keeps the old oxt until
+  remove+add AND a full restart (rule 50) — the companion's
+  "Install bridge…" button does the remove+add; an old install simply
+  has no Events.xcu, which is why the bridge didn't auto-start for the
+  user before reinstalling 0.1.5.
+
 - **Do not commit or open PRs without explicit approval.** Finish tasks with
   the changes ready to commit. (Standing exception, approved 2026-10-17:
   small structured commits as work progresses — but never commit

@@ -18,6 +18,7 @@ FILES = [
     "description.xml",
     "META-INF/manifest.xml",
     "Addons.xcu",
+    "Events.xcu",
     "Sidebar.xcu",
     "Factories.xcu",
     "acpbridge.py",

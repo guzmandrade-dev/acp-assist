@@ -7,7 +7,7 @@ export const PANEL_CONFIG: PanelConfig = {
   appTitle: 'LibreOffice ACP Assist',
   fenceRe: '(?:writer|calc|impress)',
   statusKey: 'bridgeAvailable',
-  statusMissing: 'Bridge not found — open LibreOffice and use menu ACP Assist > Start bridge',
+  statusMissing: 'Bridge not found — open LibreOffice (the bridge starts automatically on launch; menu ACP Assist > Start bridge forces it)',
   cursorTerm: 'style',
   hasSaveConsent: false,
   hasInstallFlow: true,

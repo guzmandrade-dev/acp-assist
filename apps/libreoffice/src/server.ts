@@ -21,6 +21,7 @@ import {
   BridgeClient,
   BridgeError,
   discoverBridges,
+  readBridgeAutoStart,
   type BridgeDocument,
 } from './bridge/client.js';
 import {
@@ -167,9 +168,12 @@ function createLoBackend(
   async function pickBridge(): Promise<BridgeClient> {
     const bridges = await discoverBridges();
     if (bridges.length === 0) {
+      const autoStart = await readBridgeAutoStart().catch(() => true);
       throw new BridgeError(
-        'No LibreOffice bridge found. Start LibreOffice (with the ACP Assist ' +
-          'extension installed) and use menu ACP Assist > Start bridge.',
+        'No LibreOffice bridge found. Start LibreOffice with the ACP Assist ' +
+          'extension installed — the bridge starts automatically on launch' +
+          (autoStart ? '' : ' (auto-start is disabled: use menu ACP Assist > Start bridge)') +
+          '.',
       );
     }
     return new BridgeClient(bridges[0]!);
@@ -266,10 +270,13 @@ function createLoBackend(
         return { bridgeAvailable: true };
       }
       try {
-        return { bridgeAvailable: (await discoverBridges()).length > 0 };
+        // bridgeAutoStart is informational (the panel's status line can
+        // explain a missing bridge when the user disabled auto-start).
+        const bridgeAutoStart = await readBridgeAutoStart().catch(() => true);
+        return { bridgeAvailable: (await discoverBridges()).length > 0, bridgeAutoStart };
       } catch (e) {
         logError('[api] status', e);
-        return { bridgeAvailable: false };
+        return { bridgeAvailable: false, bridgeAutoStart: true };
       }
     },
 

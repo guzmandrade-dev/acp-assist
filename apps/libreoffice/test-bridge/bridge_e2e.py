@@ -766,11 +766,99 @@ def main():
           element is not None and real is not None
           and xtp is not None and xtp.Window == fake_parent
           and xsp is not None and xsp.getMinimalWidth() > 0
-          and layout is not None and layout.Preferred > 0,
+          and layout is not None and layout.Preferred == 218,
           f"minimalWidth={xsp.getMinimalWidth() if xsp else None}, "
           f"layout={layout}")
     real.dispose()
     fake_parent.dispose()
+
+    # --- auto-start on launch: Events.xcu OnStartApp binding + menu item
+    bindings = _open("org.openoffice.Office.Events/ApplicationEvents/Bindings")
+    names = bindings.getElementNames()
+    onstart = bindings.getByName("OnStartApp") if "OnStartApp" in names else None
+    check("events: OnStartApp bound to the bridge autostart job",
+          onstart is not None
+          and onstart.getPropertyValue("BindingURL")
+          == "service:org.libreofficeacp.bridge?autostart",
+          f"bindings={names[:5]}…, url="
+          f"{onstart.getPropertyValue('BindingURL') if onstart else None!r}")
+    menubar = _open("org.openoffice.Office.Addons/AddonUI/OfficeMenuBar")
+    menu = menubar.getByName("org.libreofficeacp.bridge.menu") \
+        if "org.libreofficeacp.bridge.menu" in menubar.getElementNames() else None
+    sub = menu.getByName("Submenu") if menu is not None else None
+    m3 = sub.getByName("M3") if sub is not None and "M3" in sub.getElementNames() else None
+    check("menu: auto-start toggle item wired",
+          m3 is not None
+          and m3.getPropertyValue("URL")
+          == "service:org.libreofficeacp.bridge?toggle-autostart",
+          f"M3 url={m3.getPropertyValue('URL') if m3 else None!r}")
+
+    # --- auto-start job events, verified via SIDE EFFECTS: the dispatch
+    # return value is the job object, NOT the JSON (bridge_ctl prints only
+    # res.State), so assert on the settings file + the discovery record.
+    def dispatch(event):
+        dispatcher.executeDispatch(
+            desktop, f"service:org.libreofficeacp.bridge?{event}", "", 0, ())
+
+    def assist_dir():
+        if sys.platform == "win32":
+            base = os.environ.get("APPDATA", os.path.expanduser("~"))
+        else:
+            base = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
+        return os.path.join(base, "LibreOffice ACP Assist")
+
+    def settings_file():
+        try:
+            with open(os.path.join(assist_dir(), "bridge-settings.json"),
+                      "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            return {"error": repr(e)}
+
+    def live_bridge_record():
+        bridges = os.path.join(assist_dir(), "bridges")
+        if not os.path.isdir(bridges):
+            return None
+        for fn in os.listdir(bridges):
+            if not fn.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(bridges, fn), encoding="utf-8") as f:
+                    rec = json.load(f)
+            except Exception:
+                continue
+            if _pid_alive(rec.get("pid")):
+                return rec
+        return None
+
+    dispatch("stop")
+    time.sleep(1)
+    check("service:?stop shuts the server down (autostart precondition)",
+          live_bridge_record() is None)
+    dispatch("set-autostart-off")
+    check("service:?set-autostart-off writes autoStart=false",
+          settings_file().get("autoStart") is False, f"settings={settings_file()!r}")
+    dispatch("autostart")
+    time.sleep(1)
+    check("service:?autostart is refused while disabled (no bridge record)",
+          live_bridge_record() is None)
+    dispatch("set-autostart-on")
+    check("service:?set-autostart-on writes autoStart=true",
+          settings_file().get("autoStart") is True, f"settings={settings_file()!r}")
+    dispatch("autostart")
+    time.sleep(1)
+    check("service:?autostart starts the server when enabled",
+          live_bridge_record() is not None)
+    # The restarted bridge picked a new port/token — refresh the globals so
+    # the remaining checks talk to it.
+    PORT, TOKEN = load_bridge()
+    code, st = http("GET", "/status", token=TOKEN)
+    check("restarted bridge answers /status with the fresh token", code == 200,
+          f"code={code}")
+    dispatch("toggle-autostart")
+    check("service:?toggle-autostart flips the setting",
+          settings_file().get("autoStart") is False, f"settings={settings_file()!r}")
+    dispatch("set-autostart-on")  # leave the machine at the default (ON)
 
     # --- activate (second document)
     doc2 = desktop.loadComponentFromURL("private:factory/swriter", "_blank", 0, ())

@@ -72,8 +72,14 @@ npm start        # builds TypeScript and launches the companion
 The bridge extension is not installed automatically. If no bridge is
 found and LibreOffice is installed, the panel's status line shows an
 **Install bridge…** button: close LibreOffice first, click the button,
-restart LibreOffice, then start the bridge from the menu
-(**ACP Assist > Start bridge**).
+restart LibreOffice. From extension **v0.1.5** the bridge then **starts
+automatically on launch** (an `OnStartApp` binding dispatches the
+bridge's autostart job — verified live). To update an older install,
+click **Install bridge…** again (it replaces the extension in place) and
+restart LibreOffice. You can still start/stop the bridge by hand from the
+menu (**ACP Assist > Start bridge / Stop bridge**) and toggle the
+auto-start from **ACP Assist > Toggle auto-start bridge on launch** or
+the "Auto-start on launch" button in the sidebar status panel.
 
 Manual install also works — LibreOffice's Extension Manager, or
 `unopkg add` from LibreOffice's `program` directory. If the sidebar deck

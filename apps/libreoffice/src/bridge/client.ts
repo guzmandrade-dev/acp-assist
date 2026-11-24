@@ -80,6 +80,24 @@ export async function removeCompanionRecord(): Promise<void> {
   await fs.rm(path.join(assistDir(), 'companion.json'), { force: true }).catch(() => undefined);
 }
 
+/**
+ * The bridge's auto-start-on-launch setting (bridge-settings.json in the
+ * assist dir; written by the bridge's OnStartApp job / menu / sidebar).
+ * Default TRUE when the file is absent or unreadable — the bridge
+ * auto-starts with the office unless the user disabled it.
+ */
+export async function readBridgeAutoStart(dir: string = assistDir()): Promise<boolean> {
+  try {
+    const raw = JSON.parse(await fs.readFile(path.join(dir, 'bridge-settings.json'), 'utf8')) as Record<string, unknown>;
+    if (raw && typeof raw === 'object' && typeof raw['autoStart'] === 'boolean') {
+      return raw['autoStart'] as boolean;
+    }
+  } catch {
+    /* absent/corrupt -> default */
+  }
+  return true;
+}
+
 /** True when a process with this PID exists (best-effort liveness probe). */
 function pidAlive(pid: number): boolean {
   try {

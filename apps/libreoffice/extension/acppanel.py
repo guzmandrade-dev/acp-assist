@@ -100,6 +100,35 @@ def _read_json(path):
         return None
 
 
+# Shared per-user bridge settings (acpbridge.py reads/writes the same
+# file; `autoStart` defaults to TRUE when the file is absent).
+def _settings_path():
+    return os.path.join(_assist_dir(), "bridge-settings.json")
+
+
+def _read_settings():
+    data = _read_json(_settings_path())
+    if isinstance(data, dict) and isinstance(data.get("autoStart"), bool):
+        return data
+    return {"autoStart": True}
+
+
+def _write_settings(settings):
+    try:
+        os.makedirs(_assist_dir(), exist_ok=True)
+        tmp = _settings_path() + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=2)
+        os.replace(tmp, _settings_path())
+    except Exception:
+        traceback.print_exc()
+
+
+def _autostart_label():
+    return "Auto-start on launch: ON" if _read_settings().get("autoStart", True) \
+        else "Auto-start on launch: OFF"
+
+
 def _get_json(url, token, timeout=HTTP_TIMEOUT_S):
     req = urllib.request.Request(url)
     if token:
@@ -220,11 +249,14 @@ class AcpPanel(unohelper.Base, XUIElement, XToolPanel, XSidebarPanel, XComponent
         self.lbl_companion.setText("Companion: checking…")
 
         # 30px-tall buttons: 24px clips the label with the default UI
-        # font (live UI feedback 2026-10-21).
+        # font (live UI feedback 2026-10-21). The fourth button toggles
+        # the bridge's auto-start-on-launch setting (its label reflects
+        # the current state — see _autostart_label).
         buttons = (
             ("Refresh status", 78, "refresh"),
             ("Restart bridge", 112, "restart"),
             ("Open companion", 146, "open"),
+            (_autostart_label(), 180, "autostart"),
         )
         for label, y, name in buttons:
             # WindowServiceName "pushbutton", NOT "button": the raw VCL
@@ -232,6 +264,7 @@ class AcpPanel(unohelper.Base, XUIElement, XToolPanel, XSidebarPanel, XComponent
             b = make("pushbutton", 8, y, 244, 30)
             b.setLabel(label)
             b.addActionListener(PanelAction(self, name))
+        self.btn_autostart = self._children[-1]
 
         threading.Thread(target=self._poll_loop, daemon=True,
                          name="acp-panel-poll").start()
@@ -267,8 +300,9 @@ class AcpPanel(unohelper.Base, XUIElement, XToolPanel, XSidebarPanel, XComponent
     # ---- XSidebarPanel
     def getHeightForWidth(self, width):
         # LayoutSize struct, NOT a bare long (probe 12kb): preferred
-        # height matches the widget layout (buttons end at y=176).
-        return LayoutSize(184, 184, 184)
+        # height matches the widget layout (buttons end at y=210 with
+        # the auto-start toggle at y=180).
+        return LayoutSize(218, 218, 218)
 
     def getMinimalWidth(self):
         return 260
@@ -309,6 +343,14 @@ class AcpPanel(unohelper.Base, XUIElement, XToolPanel, XSidebarPanel, XComponent
             self.refresh_async()
         elif name == "open":
             self._open_companion()
+        elif name == "autostart":
+            # Flip the shared autoStart setting (same file acpbridge.py
+            # reads for the OnStartApp binding) and update the label.
+            settings = _read_settings()
+            settings["autoStart"] = not bool(settings.get("autoStart", True))
+            _write_settings(settings)
+            self.btn_autostart.setLabel(_autostart_label())
+            self.refresh_async()
 
     def _open_companion(self):
         comp = _read_json(os.path.join(_assist_dir(), "companion.json"))
@@ -342,6 +384,12 @@ class AcpPanel(unohelper.Base, XUIElement, XToolPanel, XSidebarPanel, XComponent
                     return
                 self.lbl_bridge.setText(status["bridge"])
                 self.lbl_companion.setText(status["companion"])
+                # Keep the auto-start toggle label in sync (it may have
+                # been flipped from the ACP Assist menu meanwhile).
+                try:
+                    self.btn_autostart.setLabel(_autostart_label())
+                except Exception:
+                    pass
             try:
                 if self._async_cb is None:
                     self._async_cb = self.ctx.ServiceManager.createInstanceWithContext(
