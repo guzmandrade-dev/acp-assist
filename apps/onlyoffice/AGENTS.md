@@ -625,3 +625,40 @@ untouched. Rules:
     returned no data with v0.7.3 -- harness shows the wrapper works, so if
     it recurs the scope-size diagnostic will tell us). 20 call sites use
     cmd(opFn(...)); detectEditor/context keep plain literals (reads only).
+
+69. **v0.8.0: the bridge auto-starts when the editor opens (built 2026-11-24 — live verification PENDING).**
+    sdkjs (10.x) plugin model: a variation with `"type": "background"` plus
+    `"autostart": true` is started by `CPluginsManager.register()` at editor
+    start UNLESS its GUID is in the editor's localStorage
+    `asc_plugins_background_stopped` (that list is what the editor's
+    "Background Plugins" toolbar button toggles; `getUsedBackgroundPlugins`
+    also auto-includes BUNDLED background plugins — Plugin-Manager installs
+    land in `%LOCALAPPDATA%\ONLYOFFICE\DesktopEditors\data\sdkjs-plugins\{GUID}`,
+    i.e. bundled). `config.json` now ships TWO variations of the same
+    `index.html`: variations[0] = `{"type":"background","autostart":true}`
+    (sdkjs only honors `autostart` on variations[0]), variations[1] =
+    `{"type":"panel"}` so the plugin still appears in the Plugins tab and
+    opens the side panel (status / port / Reconnect / auto-start checkbox).
+    Because both variations load the same page, `code.js` keeps ONE polling
+    instance: a localStorage claim (`acp-bridge-claim` = {id, ts}) is taken
+    at init (`claimPollLoop`), refreshed on every poll + a 2s heartbeat,
+    and a passive instance backs off when it sees a fresh foreign claim
+    ("bridge handed over"). The checkbox (`#autostart`, default ON) writes
+    the plugin's own `acp-bridge-autostart` flag AND the editor's
+    `asc_plugins_background_stopped` list via `window.parent.localStorage`
+    (Desktop Editors serves editor + plugin iframes from file://, same
+    origin — wrapped in try/catch; if the parent write fails, the own flag
+    still gates `startBridge(false)` so a disabled bridge stays down, and a
+    manual Reconnect calls `startBridge(true)` and overrides for the run).
+    Companion texts updated (`notConnectedError`, `statusMissing`).
+    Tests: `test/plugin.test.ts` (config shape, version sync with
+    PLUGIN_VERSION, code.js wiring + `node --check`, checkbox in
+    index.html). STILL TO VERIFY LIVE on Desktop Editors 10.0: (a) the
+    background variation's iframe really loads at editor start without
+    opening the Plugins tab, (b) the plugin still lists in the Plugins tab
+    via the panel variation, (c) opening the panel while the background
+    instance runs does not double-poll (claim), (d) unchecking the box
+    stops the auto-start from the next editor start, (e) reinstall of the
+    same-GUID 0.8.0 .plugin via Plugin Manager replaces 0.7.5 in place.
+    Reinstall path: `npm run package:plugin`, Plugin Manager → Install
+    plugin manually → pick `acp-bridge.plugin`.

@@ -1,9 +1,17 @@
 /*
- * ACP Assist Bridge v0.7.5 (apps/onlyoffice/bridge-plugin).
+ * ACP Assist Bridge v0.8.0 (apps/onlyoffice/bridge-plugin).
  * Dumb transport, same contract as the LibreOffice .oxt bridge: the
  * plugin carries JSON between the editor and the companion; ALL
  * intelligence lives in the companion. The companion owns the port —
  * this side only connects OUT (long-poll), so no discovery is needed.
+ *
+ * v0.8.0: auto-start. config.json variation 0 is type "background" with
+ * autostart:true, so the editor loads this iframe when it opens and the
+ * bridge runs without opening the Plugins tab (unless the user disabled
+ * it — the side-panel checkbox, or the editor's Background Plugins
+ * button, writes the GUID into asc_plugins_background_stopped). The
+ * panel variation (index 1) opens this same page from the Plugins tab;
+ * a localStorage claim keeps ONE instance owning the poll loop.
  *
  * Wire surface (companion side):
  *   POST /bridge/hello   {plugin, version, editor}
@@ -54,7 +62,7 @@
     var companion = null;
     // Bump with every release (config.json carries the same version);
     // reported in /bridge/hello so the companion can flag stale plugins.
-    var PLUGIN_VERSION = "0.7.5";
+    var PLUGIN_VERSION = "0.8.0";
 
     function ui(msg, cls) {
         try {
@@ -1229,6 +1237,14 @@
                 return r.json();
             })
             .then(function (job) {
+                // Still the owner? Refresh the claim; if a panel instance
+                // took over (our heartbeat went stale), stop looping.
+                var claim = claimOwner();
+                if (claim && claim.id !== INSTANCE_ID) {
+                    status("bridge handed over to the panel instance", "");
+                    return;
+                }
+                refreshClaim();
                 status("connected (" + editorType + ")", "ok");
                 if (job && job.op) {
                     var p;
@@ -1276,6 +1292,81 @@
 
     /* ---- wiring ---- */
 
+    var PLUGIN_GUID = "asc.{7E2F9A41-6B3C-4D58-9E7A-1F4B8C6D2E39}";
+    var AUTOSTART_KEY = "acp-bridge-autostart";            // own flag, default ON
+    var CLAIM_KEY = "acp-bridge-claim";                    // which instance owns the poll loop
+    var STOPPED_KEY = "asc_plugins_background_stopped";    // editor-side disable list
+    var INSTANCE_ID = "i" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    var heartbeatTimer = null;
+
+    function lsGet(k) {
+        try { return window.localStorage.getItem(k); } catch (e) { return null; }
+    }
+    function lsSet(k, v) {
+        try { window.localStorage.setItem(k, v); } catch (e) {}
+    }
+
+    /* The editor window's localStorage (Desktop Editors serves both the
+     * editor and the plugin iframes from file://, same origin): it holds
+     * the editor's plugin state, including asc_plugins_background_stopped
+     * (the GUIDs the Background Plugins button disabled). */
+    function editorStorage() {
+        try {
+            if (window.parent && window.parent !== window && window.parent.localStorage) {
+                return window.parent.localStorage;
+            }
+        } catch (e) {}
+        return null;
+    }
+
+    /* Auto-start = our own flag is not "0" AND the editor has not
+     * explicitly stopped this background plugin. Default: ON. */
+    function autostartEnabled() {
+        if (lsGet(AUTOSTART_KEY) === "0") return false;
+        var ls = editorStorage();
+        if (ls) {
+            try {
+                var stopped = JSON.parse(ls.getItem(STOPPED_KEY) || "[]") || [];
+                if (stopped.indexOf(PLUGIN_GUID) >= 0) return false;
+            } catch (e) {}
+        }
+        return true;
+    }
+
+    function setAutostart(on) {
+        lsSet(AUTOSTART_KEY, on ? "1" : "0");
+        var ls = editorStorage();
+        if (ls) {
+            try {
+                var stopped = JSON.parse(ls.getItem(STOPPED_KEY) || "[]") || [];
+                var i = stopped.indexOf(PLUGIN_GUID);
+                if (!on && i < 0) stopped.push(PLUGIN_GUID);
+                if (on && i >= 0) stopped.splice(i, 1);
+                ls.setItem(STOPPED_KEY, JSON.stringify(stopped));
+            } catch (e) {}
+        }
+        ui("auto-start on editor open: " + (on ? "ON" : "OFF") +
+           " (applies from the next editor start)", "");
+    }
+
+    /* One polling instance per editor: the background (auto-started)
+     * variation owns the bridge; a panel instance opened later from the
+     * Plugins tab stays passive while the owner's claim is fresh (<8s). */
+    function claimPollLoop() {
+        var claim = null;
+        try { claim = JSON.parse(lsGet(CLAIM_KEY) || "null"); } catch (e) {}
+        var now = Date.now();
+        if (claim && claim.id !== INSTANCE_ID && now - claim.ts < 8000) return false;
+        lsSet(CLAIM_KEY, JSON.stringify({ id: INSTANCE_ID, ts: now }));
+        return true;
+    }
+    function refreshClaim() {
+        lsSet(CLAIM_KEY, JSON.stringify({ id: INSTANCE_ID, ts: Date.now() }));
+    }
+    function claimOwner() {
+        try { return JSON.parse(lsGet(CLAIM_KEY) || "null"); } catch (e) { return null; }
+    }
+
     function companionBase() {
         var portEl = document.getElementById("port");
         var port = DEFAULT_PORT;
@@ -1287,7 +1378,19 @@
         return "http://127.0.0.1:" + port;
     }
 
-    window.Asc.plugin.init = function () {
+    function startBridge(manual) {
+        // Auto-start disabled? Only a manual Reconnect starts the bridge
+        // in this run (the checkbox applies from the next editor start).
+        if (!manual && !autostartEnabled()) {
+            status("auto-start disabled — press Reconnect to start now", "err");
+            ui("auto-start on editor open is disabled (checkbox above)", "err");
+            return;
+        }
+        if (!claimPollLoop()) {
+            status("bridge already running (auto-started)", "ok");
+            ui("another instance of this plugin owns the bridge (background auto-start)", "");
+            return;
+        }
         // The unreachable-retry timer and the Reconnect button can race
         // (init while an earlier init is mid-flight stacked extra poll/
         // selection loops and hung callCommands); one init at a time.
@@ -1310,6 +1413,7 @@
         }).then(function () {
             pollOnce();
             selectionTick();
+            heartbeatTimer = setInterval(refreshClaim, 2000);
         }).catch(function (e) {
             initializing = false;
             if (e && e.message && String(e.message).indexOf("editor detection failed") === 0) {
@@ -1317,22 +1421,29 @@
             } else {
                 status("companion unreachable", "err");
             }
-            setTimeout(function () { window.Asc.plugin.init(); }, 3000);
+            setTimeout(function () { startBridge(false); }, 3000);
         });
-    };
+    }
+
+    window.Asc.plugin.init = function () { startBridge(false); };
 
     document.addEventListener("DOMContentLoaded", function () {
         var portEl = document.getElementById("port");
         var btn = document.getElementById("b-reconnect");
+        var autoEl = document.getElementById("autostart");
         try {
             var stored = window.localStorage.getItem("acp-companion-port");
             if (stored && portEl) portEl.value = stored;
         } catch (e) {}
+        if (autoEl) {
+            autoEl.checked = autostartEnabled();
+            autoEl.addEventListener("change", function () { setAutostart(autoEl.checked); });
+        }
         if (btn) btn.addEventListener("click", function () {
             try {
                 window.localStorage.setItem("acp-companion-port", String(portEl.value || DEFAULT_PORT));
             } catch (e) {}
-            window.Asc.plugin.init();
+            startBridge(true); // manual: overrides the auto-start flag for this run
         });
     });
 

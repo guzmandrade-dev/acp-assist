@@ -451,8 +451,10 @@ function createOoBackend(
 
 export function notConnectedError() {
   return new BridgeError(
-    'ONLYOFFICE editor not connected. Open the ACP Assist Bridge plugin from ' +
-      'the editor\u2019s Plugins tab (it must stay open while you chat).',
+    'ONLYOFFICE editor not connected. The bridge starts automatically when the ' +
+      'editor opens — if it is not running, open the ACP Assist Bridge plugin from ' +
+      'the editor\u2019s Plugins tab (or re-enable auto-start in the plugin panel / ' +
+      'the editor\u2019s Background Plugins list).',
   );
 }
 

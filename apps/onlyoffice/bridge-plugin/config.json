@@ -1,22 +1,28 @@
 {
     "name": "ACP Assist Bridge",
     "guid": "asc.{7E2F9A41-6B3C-4D58-9E7A-1F4B8C6D2E39}",
-    "version": "0.7.5",
+    "version": "0.8.0",
     "variations": [
         {
-            "description": "ACP Assist bridge to the companion panel",
+            "description": "ACP Assist bridge to the companion panel (starts automatically when the editor opens)",
             "url": "index.html",
             "icons": ["resources/icon.png", "resources/icon@2x.png"],
             "isViewer": false,
             "EditorsSupport": ["word", "cell", "slide"],
-            "isVisual": true,
-            "isModal": false,
-            "isInsideMode": true,
-            "isSystem": false,
+            "type": "background",
+            "autostart": true,
             "initDataType": "none",
-            "initData": "",
-            "isUpdateOleOnResize": false,
-            "buttons": []
+            "initData": ""
+        },
+        {
+            "description": "ACP Assist Bridge panel (status, companion port, auto-start toggle)",
+            "url": "index.html",
+            "icons": ["resources/icon.png", "resources/icon@2x.png"],
+            "isViewer": false,
+            "EditorsSupport": ["word", "cell", "slide"],
+            "type": "panel",
+            "initDataType": "none",
+            "initData": ""
         }
     ]
 }

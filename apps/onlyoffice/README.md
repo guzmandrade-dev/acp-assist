@@ -104,10 +104,17 @@ a single `callCommand` — one undo step per edit.
    page instead. After reinstalling, reopen the bridge plugin tab (press
    **Reconnect** inside it if the panel doesn't flip green).
 
-3. **Connect**: open the **ACP Assist Bridge** plugin from the editor's
-   **Plugins** tab. It connects to the companion (port 8790 by default;
-   changeable in the plugin's port field) and the panel's status line
-   turns green. The plugin tab must stay open while you chat.
+3. **Connect**: since plugin v0.8.0 the bridge **starts automatically
+   when the editor opens** (the plugin's first variation is a
+   background+autostart plugin), connects to the companion (port 8790
+   by default; changeable in the plugin's port field) and the panel's
+   status line turns green — no Plugins-tab click needed. To disable the
+   auto-start, uncheck "Start bridge automatically when the editor
+   opens" in the bridge's side panel (Plugins tab → ACP Assist Bridge),
+   or disable the plugin from the editor's Background Plugins list; to
+   re-enable, re-check it. Opening the plugin from the Plugins tab shows
+   the same panel (status, port, Reconnect); only one instance polls the
+   companion at a time.
 
 ## One input box, agent-decided intent
 

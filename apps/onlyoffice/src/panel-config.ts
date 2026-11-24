@@ -8,7 +8,7 @@ export const PANEL_CONFIG: PanelConfig = {
   fenceRe: '(?:writer|calc|impress)',
   statusKey: 'bridgeAvailable',
   statusMissing:
-    'ONLYOFFICE editor not connected — open the ACP Assist Bridge plugin from the editor\u2019s Plugins tab',
+    'ONLYOFFICE editor not connected — the bridge auto-starts when the editor opens; if not, open the ACP Assist Bridge plugin from the Plugins tab',
   cursorTerm: 'style',
   hasSaveConsent: false,
   // The .plugin is installed via the editor's own Plugin Manager; there
