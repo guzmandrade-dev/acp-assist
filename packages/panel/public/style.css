@@ -157,9 +157,10 @@ body {
   border-radius: var(--radius-sm);
 }
 
-/* ACP (Agent Client Protocol) mark next to the app logo — follows the theme text color */
+/* ACP (Agent Client Protocol) mark in the brand row — kept small there;
+   the full-size mark lives in the agent settings panel */
 .acp-mark {
-  height: 15px;
+  height: 12px;
   width: auto;
   flex-shrink: 0;
   color: var(--text-tertiary);
@@ -170,17 +171,31 @@ body {
   margin-left: 2px;
 }
 
-/* ── Toolbar — clean white with green accent line ── */
+/* ── Toolbar — two rows: a slim brand row on top (app logo, ACP mark,
+   editor switcher) and a controls row below (file dropdown, agent
+   settings, pin, reconnect), so the file dropdown stays visible even in
+   a narrow panel ── */
 .toolbar {
   display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  height: 42px;
-  padding: 0 var(--space-5);
+  flex-direction: column;
   background: var(--surface);
   border-bottom: 2px solid var(--accent);
   flex-shrink: 0;
 }
+.toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-4);
+}
+.toolbar-brand {
+  height: 30px;
+  gap: var(--space-2);
+}
+.toolbar-brand .brand-mark { width: 18px; height: 18px; }
+/* The editor switcher sits with the brand marks on the left, not pushed
+   to the right edge. */
+.toolbar-controls { height: 38px; }
 
 .toolbar select {
   flex: 1;
@@ -196,6 +211,7 @@ body {
   cursor: pointer;
   transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
+.toolbar-brand select { height: 24px; }
 .toolbar select:hover { border-color: var(--border-strong); }
 .toolbar select:focus-visible {
   outline: none;

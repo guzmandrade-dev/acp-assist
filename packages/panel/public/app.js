@@ -15,6 +15,7 @@ import {
   undoBtn,
   pinBtn,
   reconnectBtn,
+  newSessionBtn,
   cmdEl,
   docSelect,
   fileInput,
@@ -33,7 +34,7 @@ import {
   updateComposerState,
   withbridgeBusy,
 } from './status.js';
-import { connect, reconnect, send } from './conversation.js';
+import { connect, reconnect, send, newSession } from './conversation.js';
 import { refreshDocuments, refreshSelection } from './documents.js';
 import './review.js';
 import './pdf.js';
@@ -103,6 +104,10 @@ undoBtn.addEventListener('click', async () => {
 });
 
 reconnectBtn.addEventListener('click', reconnect);
+
+// New session: archive this conversation and start a fresh agent session
+// in place — no app restart (see conversation.js newSession()).
+newSessionBtn.addEventListener('click', newSession);
 
 // Clicking the file dropdown means "show me the open documents", but the
 // list is only as fresh as the last connect — and the editor pipe (LyX/LO)

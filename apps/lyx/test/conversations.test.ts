@@ -175,6 +175,45 @@ describe('per-document conversation routes', () => {
     expect((await bad.json()).error).toContain('not a conversation file');
   });
 
+  it('a "new session" flow (reset + fresh POST /api/session) starts with an empty conversation', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lyx-conv-'));
+    cleanups.push(async () => {
+      await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
+    const docPath = path.join(dir, 'doc.lyx');
+    await fs.writeFile(docPath, '#LyX\n', 'utf8');
+    const historyDir = path.join(dir, 'history');
+    await saveHistory(historyDir, docPath, [
+      { role: 'user', content: 'previous question', timestamp: '2026-11-22T15:00:00.000Z' },
+      { role: 'assistant', content: 'previous answer', timestamp: '2026-11-22T15:01:00.000Z' },
+    ]);
+
+    const { base, headers, sessionId } = await startServer(docPath, historyDir);
+    // The first session loads the persisted conversation.
+    const info1 = await (await fetch(`${base}/api/session/${sessionId}`, { headers })).json();
+    expect(info1.conversation).toHaveLength(2);
+
+    // The panel's New session button: archive the active conversation on
+    // the current session, then DELETE it and POST a fresh session.
+    const reset = await (
+      await fetch(`${base}/api/session/${sessionId}/conversation/reset`, { method: 'POST', headers })
+    ).json();
+    expect(reset.ok).toBe(true);
+    expect(reset.archived).toMatch(/\.json$/);
+    await fetch(`${base}/api/session/${sessionId}`, { method: 'DELETE', headers });
+    const res2 = await fetch(`${base}/api/session`, { method: 'POST', headers });
+    expect(res2.status).toBe(200);
+    const info2 = (await res2.json()) as { sessionId: string; conversation?: unknown[] };
+    expect(info2.sessionId).not.toBe(sessionId);
+    // Nothing active remains for the document: the new session starts empty.
+    expect(info2.conversation ?? []).toEqual([]);
+    // The old conversation is still on disk as an archive (nothing deleted).
+    const { listConversations } = await import('@acp-assist/core');
+    const list = await listConversations(historyDir, docPath);
+    expect(list).toHaveLength(1);
+    expect(list.every((c: { active: boolean }) => !c.active)).toBe(true);
+  });
+
   it('listConversations dedupes documents in listKnownDocuments across archives', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lyx-conv-'));
     cleanups.push(async () => {

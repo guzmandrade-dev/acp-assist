@@ -15,6 +15,7 @@ import {
   stopBtn,
   undoBtn,
   attachBtn,
+  newSessionBtn,
   input,
 } from './state.js';
 import { api } from './api.js';
@@ -65,6 +66,7 @@ export function updateComposerState() {
   sendBtn.disabled = !canSend;
   undoBtn.disabled = !state.sessionId || state.busy;
   attachBtn.disabled = !state.sessionId || state.busy;
+  if (newSessionBtn) newSessionBtn.disabled = !state.sessionId || state.busy || state.connecting;
   stopBtn.hidden = !state.busy;
   // textarea stays enabled for typing per spec
   if (input) input.disabled = false;

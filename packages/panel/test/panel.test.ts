@@ -339,4 +339,68 @@ describe('shared panel assets', () => {
     const css = await fs.readFile(path.join(dir, 'style.css'), 'utf8');
     expect(css).toContain('.app-select');
   });
+
+  it('toolbar is two rows: brand row above, controls row (file dropdown + agent + pin + reconnect) below', async () => {
+    const dir = panelPublicDir();
+    const html = await fs.readFile(path.join(dir, 'index.html'), 'utf8');
+    // The toolbar splits into a slim brand row and a controls row so the
+    // file dropdown stays visible in a narrow panel.
+    expect(html).toContain('class="toolbar-row toolbar-brand"');
+    expect(html).toContain('class="toolbar-row toolbar-controls"');
+    const toolbar = html.slice(html.indexOf('<div class="toolbar">'), html.indexOf('<div class="context">'));
+    const split = toolbar.indexOf('toolbar-controls');
+    expect(split).toBeGreaterThan(0);
+    const brand = toolbar.slice(0, split);
+    const controls = toolbar.slice(split);
+    // Brand row: app logo, (smaller) ACP mark, editor switcher.
+    expect(brand).toContain('brand-mark');
+    expect(brand).toContain('acp-mark');
+    expect(brand).toContain('id="app-select"');
+    // Controls row: file dropdown, agent settings, pin, reconnect.
+    expect(controls).toContain('id="doc-select"');
+    expect(controls).toContain('agent-settings');
+    expect(controls).toContain('id="pin"');
+    expect(controls).toContain('id="reconnect"');
+    // The brand row must come first.
+    expect(toolbar.indexOf('toolbar-brand')).toBeLessThan(split);
+    // CSS: the toolbar stacks rows vertically; the ACP mark is small.
+    const css = await fs.readFile(path.join(dir, 'style.css'), 'utf8');
+    expect(css).toMatch(/\.toolbar\s*\{[^}]*flex-direction:\s*column/);
+    expect(css).toContain('.toolbar-row');
+    expect(css).toContain('.toolbar-brand');
+    expect(css).toContain('.toolbar-controls');
+    expect(css).toMatch(/\.acp-mark\s*\{[^}]*height:\s*12px/);
+    // The editor switcher stays on the LEFT with the brand marks (not
+    // right-aligned via margin-left:auto).
+    expect(css).not.toMatch(/\.toolbar-brand\s+\.app-select\s*\{[^}]*margin-left:\s*auto/);
+  });
+
+  it('composer row carries a New session button wired to a reset + reconnect flow', async () => {
+    const dir = panelPublicDir();
+    const read = (name: string) => fs.readFile(path.join(dir, name), 'utf8');
+    const html = await read('index.html');
+    // The button sits in the footer row between attach (+) and the rest.
+    expect(html).toContain('id="new-session"');
+    const row = html.slice(html.indexOf('<div class="row">'), html.indexOf('</div>', html.indexOf('<div class="row">')));
+    expect(row.indexOf('id="attach"')).toBeGreaterThanOrEqual(0);
+    expect(row.indexOf('id="new-session"')).toBeGreaterThan(row.indexOf('id="attach"'));
+    expect(row.indexOf('id="new-session"')).toBeLessThan(row.indexOf('id="undo"'));
+    // state.js carries the element ref.
+    const stateSrc = await read('state.js');
+    expect(stateSrc).toContain("getElementById('new-session')");
+    expect(stateSrc).toContain('newSessionBtn');
+    // app.js wires the click handler.
+    const appSrc = await read('app.js');
+    expect(appSrc).toContain('newSessionBtn');
+    expect(appSrc).toMatch(/newSessionBtn\.addEventListener\('click',\s*newSession\)/);
+    // conversation.js implements it: archive the active conversation on
+    // the current session, then reconnect (fresh agent + empty chat).
+    const convSrc = await read('conversation.js');
+    expect(convSrc).toContain('export async function newSession()');
+    expect(convSrc).toContain('/conversation/reset');
+    expect(convSrc).toMatch(/export async function newSession\(\)[\s\S]*?await reconnect\(\)/);
+    // status.js disables the button while busy / connecting / no session.
+    const statusSrc = await read('status.js');
+    expect(statusSrc).toMatch(/newSessionBtn\.disabled\s*=/);
+  });
 });

@@ -14,6 +14,7 @@ import {
   docEl,
   input,
   reconnectBtn,
+  newSessionBtn,
   statusEl,
 } from './state.js';
 import { api, parseAgentCommand, saveSettings } from './api.js';
@@ -587,6 +588,35 @@ export async function applyDocIntroChoice(choice) {
     }
   } catch (e) {
     addSystemMessage(`error: ${e.message}`, true);
+  }
+}
+
+/**
+ * Start a NEW session without restarting the app: archive the active
+ * conversation on the current session (nothing is deleted — it stays
+ * listed among the document's previous conversations), then reconnect so
+ * a fresh agent process starts and the chat begins empty. The new session
+ * finds no active history file for the document, so nothing old is
+ * replayed into the agent. Composer text survives; pending attachments
+ * do not (they lived on the old session) — reconnect() clears them.
+ */
+export async function newSession() {
+  if (state.busy || state.connecting) return;
+  if (!state.sessionId) {
+    await connect();
+    return;
+  }
+  if (newSessionBtn) newSessionBtn.disabled = true;
+  try {
+    try {
+      await api(`/api/session/${state.sessionId}/conversation/reset`, { method: 'POST' });
+    } catch {
+      /* history not configured or the session already gone — reconnect anyway */
+    }
+    await reconnect();
+  } finally {
+    // Re-derive the disabled state from the (possibly failed) connect.
+    updateComposerState();
   }
 }
 
