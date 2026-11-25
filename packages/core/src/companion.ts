@@ -23,6 +23,7 @@ import {
   createConversationStore,
   createLogError,
   createWrap,
+  hashContextBlock,
   listConversations,
   listKnownDocuments,
   loadHistory,
@@ -82,6 +83,18 @@ export interface CompanionSession<TState = unknown> {
   /** Last request/SSE-frame time; drives the idle-session GC. */
   lastActive: number;
   /**
+   * Hash of the context block (see CompanionBackend.contextBlock) last sent
+   * to the agent in this session. When a step-1 prompt's block hashes to
+   * the same value, the block is omitted (BuildPromptOptions.contextOmitted)
+   * and the agent is told to refer to the earlier copy — the ACP session
+   * retains it, so re-sending identical bytes every message only inflates
+   * context and latency. Cleared when the agent compacts its context (a
+   * sharp drop in usage `used`) and on new sessions, forcing a re-send.
+   */
+  sentContextHash?: string;
+  /** Last usage_update `used` value; watches for agent-side compaction. */
+  lastUsageUsed?: number;
+  /**
    * Ensure (eagerly load persisted history for) a conversation key. The
    * backends call this from their active-document refresh bookkeeping —
    * the conversation map must hold the loaded turns BEFORE sessionInfo
@@ -128,6 +141,17 @@ export type ReadStepResult<TApp = unknown> =
   | { blocked?: undefined } & StepData<TApp>;
 
 export type FrameKind = 'afterParse' | 'none' | 'applied' | 'appliedStep';
+
+/** Extra step-1 prompt inputs from the core message loop. */
+export interface BuildPromptOptions {
+  /**
+   * True when the step's big context block (CompanionBackend.contextBlock)
+   * is byte-identical to the one sent earlier in this session: embed a
+   * short "unchanged — refer to it above" note (contextOmittedNote)
+   * instead of the full block.
+   */
+  contextOmitted?: boolean;
+}
 
 export interface FrameContext<TOutcome extends ParsedActionBase = ParsedActionBase> {
   kind: FrameKind;
@@ -195,6 +219,16 @@ export interface CompanionBackend<
    * Called once per step; the returned data is opaque to the core.
    */
   readStep(session: CompanionSession<TState>, step: number): Promise<ReadStepResult>;
+  /**
+   * The big re-sendable context block of a step (editors: the outline
+   * `contextText`; PDF mode: the page-marked full text), or null when the
+   * backend has nothing worth deduplicating. The core loop hashes it per
+   * step; when a step-1 block matches the hash last sent in this session
+   * (and the agent has not compacted since), the block is omitted from the
+   * prompt via BuildPromptOptions.contextOmitted. Continuation steps
+   * (step > 1) always get the fresh block — addresses shift after edits.
+   */
+  contextBlock?(stepData: unknown): string | null;
   /** The step-1 prompt. `maxActions` = the effective edits-per-message limit. */
   buildAutoPrompt(
     session: CompanionSession<TState>,
@@ -203,6 +237,7 @@ export interface CompanionBackend<
     attachments: Attachment[],
     historyPrefix: string,
     maxActions: number,
+    opts?: BuildPromptOptions,
   ): Promise<string>;
   /** Continuation prompts for steps > 1 (fresh context after each edit). */
   buildContinuationPrompt(
@@ -701,6 +736,14 @@ export function createCompanionServer<TState>(
       const maxActions =
         normalizeMaxActionsPerMessage((await agentSettings.read()).maxActionsPerMessage) ??
         MAX_ACTIONS_PER_MESSAGE;
+      // Once-per-version context dedup: when this step's big context block
+      // is byte-identical to the one last sent in this session (and no
+      // history replay needs a fresh agent to see it), omit it — the ACP
+      // session already carries it, and re-sending identical bytes every
+      // message only inflates context and latency.
+      const block1 = backend.contextBlock?.(stepData1) ?? null;
+      const hash1 = block1 === null ? null : hashContextBlock(block1);
+      const omitContext = hash1 !== null && session.sentContextHash === hash1 && !historyPrefix;
       const initialPrompt = await backend.buildAutoPrompt(
         session,
         stepData1,
@@ -708,7 +751,9 @@ export function createCompanionServer<TState>(
         attachments,
         historyPrefix,
         maxActions,
+        { contextOmitted: omitContext },
       );
+      if (hash1 !== null) session.sentContextHash = hash1;
       // The replayed (pre-restart) turns are in this prompt now, so the
       // agent knows them; only turns recorded from here on are new to it.
       if (historyPrefix) {
@@ -736,6 +781,11 @@ export function createCompanionServer<TState>(
             throw new Error('Message refused mid-run.');
           }
           stepData = fresh.data;
+          // Continuation prompts always carry the FRESH block (addresses
+          // shift after each applied edit), but remember its hash so the
+          // NEXT message can omit the block when nothing changed since.
+          const blockN = backend.contextBlock?.(stepData) ?? null;
+          if (blockN !== null) session.sentContextHash = hashContextBlock(blockN);
           prompt = await backend.buildContinuationPrompt(session, stepData, message, completed, maxActions);
         }
 
@@ -746,7 +796,17 @@ export function createCompanionServer<TState>(
           onToolCall: (tool) => send({ tool }),
           // usage_update: context fill (used/size) + optional cost, only
           // when the agent reports it — the panel hides the line otherwise.
-          onUsage: (usage) => send({ usage }),
+          onUsage: (usage) => {
+            send({ usage });
+            // Compaction backstop for the once-per-version dedup: a sharp
+            // drop in context fill means the agent compacted its session
+            // and may have dropped the outline/full text we now omit —
+            // force a re-send on the next message.
+            if (session.lastUsageUsed !== undefined && usage.used < session.lastUsageUsed * 0.7) {
+              session.sentContextHash = undefined;
+            }
+            session.lastUsageUsed = usage.used;
+          },
           timeoutMs: backend.promptTimeoutMs,
         });
         let outcome = backend.parseAction(session, reply, stepData);

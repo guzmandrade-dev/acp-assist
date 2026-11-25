@@ -45,6 +45,7 @@ import { verifyParagraphSelection, normalizeForCompare, isLikelyMatch } from './
 import { findClassLayouts } from './lyx/layouts.js';
 import {
   UNSAVED_KEY,
+  contextOmittedNote,
   createCompanionServer,
   createLogError,
   createWrap,
@@ -1119,9 +1120,18 @@ function createLyxBackend(
       return { data: { contextText, selection } };
     },
 
-    async buildAutoPrompt(_session, stepData, message, attachments, historyPrefix) {
+    // The outline context block is the big re-sendable part of the prompt;
+    // the core loop hashes it and omits it while the document is unchanged.
+    contextBlock(stepData) {
+      return (stepData as LyxStepData).contextText ?? null;
+    },
+
+    async buildAutoPrompt(session, stepData, message, attachments, historyPrefix, _maxActions, opts) {
       const s = stepData as LyxStepData;
-      return buildAutoPrompt(s.contextText, s.selection, message, attachments, historyPrefix);
+      const contextText = opts?.contextOmitted
+        ? contextOmittedNote(session.state.documentPath ?? UNSAVED_KEY)
+        : s.contextText;
+      return buildAutoPrompt(contextText, s.selection, message, attachments, historyPrefix);
     },
 
     async buildContinuationPrompt(_session, stepData, originalMessage, completed, maxActions) {

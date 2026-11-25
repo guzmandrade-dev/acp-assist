@@ -136,6 +136,34 @@ export async function loadPdfDocument(pdfPath: string): Promise<PdfDocumentInfo>
   }
 }
 
+/** A cached PDF document plus the file version it was parsed from. */
+export interface VersionedPdfDocument {
+  doc: PdfDocumentInfo;
+  mtimeMs: number;
+  size: number;
+}
+
+/**
+ * Load a PDF through a version-checked cache: the file is stat'ed on every
+ * access and re-parsed when mtime/size changed (e.g. the user re-exported
+ * the PDF from their editor mid-session), so callers never reason about
+ * stale text. (mtime+size is the version signal; a same-second re-export
+ * with a byte-identical size is the accepted miss — the next save changes
+ * the mtime.)
+ */
+export async function loadPdfDocumentVersioned(
+  cache: Map<string, VersionedPdfDocument>,
+  pdfPath: string,
+): Promise<PdfDocumentInfo> {
+  const resolved = path.resolve(pdfPath);
+  const st = await fs.stat(resolved);
+  const cached = cache.get(resolved);
+  if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) return cached.doc;
+  const doc = await loadPdfDocument(resolved);
+  cache.set(resolved, { doc, mtimeMs: st.mtimeMs, size: st.size });
+  return doc;
+}
+
 /** The `--- Page N ---`-marked text of the given pages (a subset of the doc). */
 export function getPagesText(doc: PdfDocumentInfo, pages: number[]): string {
   const wanted = new Set(pages);

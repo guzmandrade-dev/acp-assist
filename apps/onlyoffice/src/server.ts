@@ -25,6 +25,7 @@ import path from 'node:path';
 import {
   actionTagNote,
   buildAttachmentBlock,
+  contextOmittedNote,
   createAttachmentExtractor,
   createLogError,
   createParseActionTag,
@@ -358,9 +359,19 @@ function createOoBackend(
       return { data: { doc, module, contextText, selection } };
     },
 
-    async buildAutoPrompt(_session, stepData, message, attachments, historyPrefix) {
+    // The context block (outline or full body) is the big re-sendable part
+    // of the prompt; the core loop hashes it and omits it while the
+    // document is unchanged.
+    contextBlock(stepData) {
+      return (stepData as OoStepData).contextText ?? null;
+    },
+
+    async buildAutoPrompt(_session, stepData, message, attachments, historyPrefix, _maxActions, opts) {
       const s = stepData as OoStepData;
-      return buildAutoPrompt(s.contextText, s.selection, message, attachments, historyPrefix, s.module);
+      const contextText = opts?.contextOmitted
+        ? contextOmittedNote(`the active ONLYOFFICE ${s.module} document`)
+        : s.contextText;
+      return buildAutoPrompt(contextText, s.selection, message, attachments, historyPrefix, s.module);
     },
 
     async buildContinuationPrompt(_session, stepData, originalMessage, completed, maxActions) {

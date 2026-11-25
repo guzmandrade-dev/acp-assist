@@ -42,6 +42,7 @@ import { extractContentBlock, parseContentBlock, parseTableBlock, parseImageBloc
 import {
   actionTagNote,
   buildAttachmentBlock,
+  contextOmittedNote,
   createAgentSettings,
   createAttachmentExtractor,
   createLogError,
@@ -353,9 +354,19 @@ function createLoBackend(
       };
     },
 
-    async buildAutoPrompt(_session, stepData, message, attachments, historyPrefix) {
+    // The context block (outline or full body) is the big re-sendable part
+    // of the prompt; the core loop hashes it and omits it while the
+    // document is unchanged.
+    contextBlock(stepData) {
+      return (stepData as LoStepData).contextText ?? null;
+    },
+
+    async buildAutoPrompt(_session, stepData, message, attachments, historyPrefix, _maxActions, opts) {
       const s = stepData as LoStepData;
-      return buildAutoPrompt(s.contextText, s.adapter, s.selection, message, attachments, historyPrefix);
+      const contextText = opts?.contextOmitted
+        ? contextOmittedNote(s.doc?.url || s.doc?.title || 'the active document')
+        : s.contextText;
+      return buildAutoPrompt(contextText, s.adapter, s.selection, message, attachments, historyPrefix);
     },
 
     async buildContinuationPrompt(_session, stepData, originalMessage, completed, maxActions) {

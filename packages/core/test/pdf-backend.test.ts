@@ -20,10 +20,12 @@ import {
   detectExternalViewer,
   describeViewer,
   findSumatraPdf,
+  loadPdfDocumentVersioned,
   openPdfExternally,
   type AgentRunner,
   type AgentSettings,
   type Review,
+  type VersionedPdfDocument,
 } from '../src/index.js';
 import { makePdf } from './pdf-fixture.js';
 
@@ -401,4 +403,152 @@ describe('pdf backend (prose-only chat + pdf routes + /review default)', () => {
     });
     expect(res.status).toBe(400);
   });
+});
+
+// --- version-checked PDF cache ------------------------------------------------------
+
+describe('loadPdfDocumentVersioned', () => {
+  it('reuses the cache while the file is unchanged and re-parses after a re-export', async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'core-pdf-version-'));
+    try {
+      const p = path.join(tmp, 'doc.pdf');
+      await fs.writeFile(p, makePdf(['one page only']));
+      const cache = new Map<string, VersionedPdfDocument>();
+      const d1 = await loadPdfDocumentVersioned(cache, p);
+      expect(d1.totalPages).toBe(1);
+      expect(await loadPdfDocumentVersioned(cache, p)).toBe(d1); // cache hit, same object
+
+      // Re-export: new content (different size) + bumped mtime.
+      await fs.writeFile(p, makePdf(['one page', 'two pages', 'three pages']));
+      const future = new Date(Date.now() + 10_000);
+      await fs.utimes(p, future, future);
+      const d2 = await loadPdfDocumentVersioned(cache, p);
+      expect(d2.totalPages).toBe(3);
+      expect(d2).not.toBe(d1);
+      expect(d2.text).toContain('three pages');
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+// --- context once-per-version in the message loop + batched /review route ---------
+
+describe('message-loop context dedup + batched review route', () => {
+  let server: Server;
+  let base: string;
+  let tmp: string;
+  let pdfPath: string;
+  let agentCalls: ContentBlock[][];
+  let agentReplies: string[];
+  let usageScript: number[];
+
+  const viewerDeps = {
+    platform: 'linux' as const,
+    env: {} as Record<string, string | undefined>,
+    spawnFn: (() => ({ unref: () => undefined })) as never,
+  };
+
+  const fakeAgent = (): AgentRunner => ({
+    start: async () => undefined,
+    stop: () => undefined,
+    createSession: async () => undefined,
+    cancel: () => undefined,
+    prompt: async (_id, content, options) => {
+      agentCalls.push(content);
+      const used = usageScript.shift();
+      if (used !== undefined) options?.onUsage?.({ used, size: 200_000, cost: null });
+      const reply = agentReplies.shift();
+      if (reply === undefined) throw new Error('fake agent out of scripted replies');
+      return reply;
+    },
+  });
+
+  beforeAll(async () => {
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'core-pdf-dedup-'));
+    pdfPath = path.join(tmp, 'paper.pdf');
+    await fs.writeFile(pdfPath, makePdf(['Alpha intro text', 'Beta methods text']));
+    agentCalls = [];
+    agentReplies = [];
+    usageScript = [];
+    const app = createCompanionServer({
+      panelConfig,
+      historyDir: path.join(tmp, 'history'),
+      attachmentsDir: path.join(tmp, 'attachments'),
+      logDir: path.join(tmp, 'logs'),
+      settingsDir: tmp,
+      apiToken: 'pdf-token',
+      extractText: async () => 'extracted',
+      agentFactory: (_s: AgentSettings) => fakeAgent(),
+      backend: createPdfBackend({ viewerDeps }),
+      extraRoutes: createPdfExtraRoutes(viewerDeps),
+    });
+    await new Promise<void>((resolve) => {
+      server = app.listen(0, '127.0.0.1', () => resolve());
+    });
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await fs.rm(tmp, { recursive: true, force: true });
+  });
+
+  const auth = { authorization: 'Bearer pdf-token', 'content-type': 'application/json' };
+
+  async function newSession(): Promise<string> {
+    const res = await fetch(`${base}/api/session`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ agent: { command: 'fake', args: [] } }),
+    });
+    const body = (await res.json()) as { sessionId?: string };
+    if (!body.sessionId) throw new Error('no sessionId');
+    return body.sessionId;
+  }
+
+  async function sendMessage(sessionId: string, message: string): Promise<void> {
+    const res = await fetch(`${base}/api/session/${sessionId}/message/stream`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ message }),
+    });
+    const frames = sseFrames(await res.text());
+    expect(frames.some((f) => f['done'] === true)).toBe(true);
+  }
+
+  const promptText = (i: number) => (agentCalls[i]?.[0] as { text: string }).text;
+
+  it('omits the full PDF text on repeat messages, re-sends after compaction and after a re-export', async () => {
+    const sessionId = await newSession();
+    await fetch(`${base}/api/session/${sessionId}/pdf/open`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ path: pdfPath }),
+    });
+
+    agentReplies = ['r1', 'r2', 'r3', 'r4'];
+    // m2's prompt reports a compaction (used drops >30%) → next message re-sends.
+    usageScript = [100_000, 40_000, 100_000, 100_000];
+
+    await sendMessage(sessionId, 'm1');
+    expect(promptText(0)).toContain('Full text of the PDF (page-marked)');
+    expect(promptText(0)).toContain('Alpha intro text');
+
+    await sendMessage(sessionId, 'm2');
+    expect(promptText(1)).toContain('UNCHANGED since the outline/full text');
+    expect(promptText(1)).not.toContain('Alpha intro text');
+
+    await sendMessage(sessionId, 'm3'); // hash was cleared by the compaction signal
+    expect(promptText(2)).toContain('Full text of the PDF (page-marked)');
+
+    // Re-export the PDF (new page + new mtime): the version check must reload.
+    await fs.writeFile(pdfPath, makePdf(['Alpha intro text', 'Beta methods text', 'Gamma conclusions']));
+    const future = new Date(Date.now() + 20_000);
+    await fs.utimes(pdfPath, future, future);
+    await sendMessage(sessionId, 'm4');
+    expect(promptText(3)).toContain('Full text of the PDF (page-marked)');
+    expect(promptText(3)).toContain('Gamma conclusions');
+  });
+
 });

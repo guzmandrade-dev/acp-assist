@@ -23,12 +23,15 @@ import {
   UNSAVED_KEY,
   REVIEW_TEXT_LIMIT,
   buildAttachmentBlock,
+  contextOmittedNote,
   describeViewer,
   detectExternalViewer,
-  loadPdfDocument,
+  loadPdfDocumentVersioned,
   openPdfExternally,
+  type BuildPromptOptions,
   type CompanionBackend,
   type PdfDocumentInfo,
+  type VersionedPdfDocument,
 } from './index.js';
 
 export interface PdfBackendState {
@@ -36,8 +39,8 @@ export interface PdfBackendState {
   pdfs: string[];
   /** The active PDF (conversation key), null until one is opened. */
   activePdf: string | null;
-  /** Per-session page-aware text cache, keyed by absolute path. */
-  docCache: Map<string, PdfDocumentInfo>;
+  /** Per-session PDF cache keyed by absolute path, version-checked on every access. */
+  docCache: Map<string, VersionedPdfDocument>;
 }
 
 export interface PdfBackendOptions {
@@ -90,11 +93,9 @@ export function createPdfBackend(options: PdfBackendOptions = {}): CompanionBack
     session: { state: PdfBackendState },
     pdfPath: string,
   ): Promise<PdfDocumentInfo> {
-    const cached = session.state.docCache.get(pdfPath);
-    if (cached) return cached;
-    const doc = await loadPdfDocument(pdfPath);
-    session.state.docCache.set(pdfPath, doc);
-    return doc;
+    // Version-checked: a re-exported PDF (new mtime/size) is re-parsed here,
+    // so chat and review never reason about stale text.
+    return loadPdfDocumentVersioned(session.state.docCache, pdfPath);
   }
 
   return {
@@ -186,7 +187,14 @@ export function createPdfBackend(options: PdfBackendOptions = {}): CompanionBack
       return { data: { doc } };
     },
 
-    async buildAutoPrompt(session, stepData, message, attachments, historyPrefix) {
+    // The page-marked full text is the big re-sendable block; the core loop
+    // hashes it and omits it on later messages while the file is unchanged.
+    contextBlock(stepData) {
+      const { doc } = stepData as { doc: PdfDocumentInfo | null };
+      return doc ? doc.text : null;
+    },
+
+    async buildAutoPrompt(session, stepData, message, attachments, historyPrefix, _maxActions, opts) {
       const { doc } = stepData as { doc: PdfDocumentInfo | null };
       const parts: string[] = [];
       if (doc) {
@@ -198,11 +206,17 @@ export function createPdfBackend(options: PdfBackendOptions = {}): CompanionBack
             'never emit an action tag; the user applies any changes in their own editor.',
         );
         if (historyPrefix) parts.push(historyPrefix);
-        let text = doc.text;
-        if (text.length > REVIEW_TEXT_LIMIT) {
-          text = `${text.slice(0, REVIEW_TEXT_LIMIT)}\n\n[TRUNCATED]`;
+        if (opts?.contextOmitted) {
+          // The full text was sent earlier in this session and the file is
+          // verified unchanged (version-checked cache) — refer to it above.
+          parts.push(contextOmittedNote(doc.path, { readFileHint: false }));
+        } else {
+          let text = doc.text;
+          if (text.length > REVIEW_TEXT_LIMIT) {
+            text = `${text.slice(0, REVIEW_TEXT_LIMIT)}\n\n[TRUNCATED]`;
+          }
+          parts.push(`Full text of the PDF (page-marked):\n${text}`);
         }
-        parts.push(`Full text of the PDF (page-marked):\n${text}`);
       } else {
         parts.push(
           'No PDF is open in this session yet. Open one with the + button (attach a PDF) ' +
