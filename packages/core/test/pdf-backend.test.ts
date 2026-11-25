@@ -551,4 +551,56 @@ describe('message-loop context dedup + batched review route', () => {
     expect(promptText(3)).toContain('Gamma conclusions');
   });
 
+  it('batches a large review internally and merges the batches (route level)', async () => {
+    const sessionId = await newSession();
+    // 30 pages × 40 lines × ~55 chars ≈ 67k chars > the 60k default batch
+    // budget → 2 batches. (Single-Tj pages would clip at the page edge, so
+    // the fixture splits on \n into one Tj per line.)
+    const line = 'lorem ipsum dolor sit amet lorem ipsum dolor sit amet!'; // 55 chars
+    const page = Array.from({ length: 40 }, () => line).join('\n');
+    const bigPdf = path.join(tmp, 'thesis.pdf');
+    await fs.writeFile(bigPdf, makePdf(Array.from({ length: 30 }, () => page)));
+    await fetch(`${base}/api/session/${sessionId}/pdf/open`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ path: bigPdf }),
+    });
+
+    const suggestion = (id: string, page: number) => ({
+      id,
+      page,
+      locationHint: 'para',
+      targetType: 'paragraph',
+      severity: 'low',
+      confidence: 0.5,
+      rationale: 'r',
+      action: 'a',
+      rebuttalQuestion: 'q',
+    });
+    agentReplies = [
+      JSON.stringify({ title: 'b1', summary: 's', suggestions: [suggestion('b1-S1', 1)] }),
+      JSON.stringify({ title: 'b2', summary: 's', suggestions: [suggestion('b2-S1', 3)] }),
+      JSON.stringify({ title: 'final', summary: 'merged', suggestions: [suggestion('s1', 1), suggestion('s2', 3)] }),
+    ];
+    const callsBefore = agentCalls.length;
+    const res = await fetch(`${base}/api/session/${sessionId}/review`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({}),
+    });
+    const frames = sseFrames(await res.text());
+    const logs = frames.filter((f) => typeof f['log'] === 'string').map((f) => f['log'] as string);
+    expect(logs.some((l) => l.includes('Batch 1/2'))).toBe(true);
+    expect(logs.some((l) => l.includes('Batch 2/2'))).toBe(true);
+    expect(logs.some((l) => l.includes('Merging'))).toBe(true);
+    const reviewFrame = frames.find((f) => f['review']) as { review: Review } | undefined;
+    expect(reviewFrame?.review.title).toBe('final');
+    expect(reviewFrame?.review.suggestions.map((s) => s.id)).toEqual(['s1', 's2']);
+
+    const newCalls = agentCalls.slice(callsBefore);
+    expect(newCalls).toHaveLength(3); // two batch prompts + one consolidation
+    expect((newCalls[0]?.[0] as { text: string }).text).toContain('batch 1 of 2');
+    expect((newCalls[1]?.[0] as { text: string }).text).toContain('batch 2 of 2');
+    expect((newCalls[2]?.[0] as { text: string }).text).toContain('b1-S1');
+  });
 });

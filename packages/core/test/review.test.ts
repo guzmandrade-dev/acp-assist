@@ -14,11 +14,14 @@ import type { ContentBlock } from '@agentclientprotocol/sdk';
 import JSZip from 'jszip';
 import {
   buildConversionPrompt,
+  buildBatchPrompt,
+  buildConsolidationPrompt,
   buildReviewPrompt,
   buildReviewZip,
   extractFirstJsonValue,
   formatPageList,
   formatReviewForHistory,
+  generateBatchedReview,
   generateReview,
   getPagesText,
   loadPdfDocument,
@@ -26,6 +29,7 @@ import {
   renderPdfPageImages,
   renderReportHtml,
   reviewSchema,
+  splitPagesIntoBatches,
   writeReports,
   createCompanionServer,
   type AgentRunner,
@@ -593,5 +597,157 @@ describe('POST /api/session/:id/review', () => {
       body: JSON.stringify({}),
     });
     expect(missing.status).toBe(404);
+  });
+});
+
+// --- batched review (internal page batching + consolidation) ----------------------
+
+describe('splitPagesIntoBatches', () => {
+  it('splits by char budget, not by page count', () => {
+    // Each page's marked text is 115 chars; a budget of 250 fits two per batch.
+    const batches = splitPagesIntoBatches([1, 2, 3, 4], () => 115, 250);
+    expect(batches).toEqual([[1, 2], [3, 4]]);
+  });
+
+  it('gives a page larger than the budget its own batch', () => {
+    const batches = splitPagesIntoBatches([1, 2, 3], (p) => (p === 2 ? 10_000 : 10), 100);
+    expect(batches).toEqual([[1], [2], [3]]);
+  });
+
+  it('returns no batches for empty input and one batch when everything fits', () => {
+    expect(splitPagesIntoBatches([], () => 10, 100)).toEqual([]);
+    expect(splitPagesIntoBatches([1, 2], () => 10, 1000)).toEqual([[1, 2]]);
+  });
+});
+
+describe('batch + consolidation prompts', () => {
+  it('buildBatchPrompt marks the batch position and forbids repeating earlier batches', () => {
+    const p = buildBatchPrompt({
+      sourceName: 'paper.pdf',
+      totalPages: 10,
+      pages: [3, 4],
+      pageText: '--- Page 3 ---\ntext',
+      history: 'User: focus on methods',
+      batchIndex: 2,
+      batchCount: 5,
+      donePages: '1-2',
+    });
+    expect(p).toContain('batch 2 of 5');
+    expect(p).toContain('pages 3-4');
+    expect(p).toContain('pages 1-2 were already reviewed');
+    expect(p).toContain('"b2-"');
+    expect(p).toContain('User: focus on methods');
+    expect(p).toContain('"targetType"');
+  });
+
+  it('omits the donePages instruction on the first batch', () => {
+    const p = buildBatchPrompt({
+      sourceName: 'paper.pdf',
+      totalPages: 10,
+      pages: [1],
+      pageText: 'x',
+      batchIndex: 1,
+      batchCount: 3,
+      donePages: '',
+    });
+    expect(p).toContain('batch 1 of 3');
+    expect(p).not.toContain('already reviewed');
+  });
+
+  it('buildConsolidationPrompt embeds the schema and all batch findings', () => {
+    const batchReviews: Review[] = [
+      reviewSchema.parse({ title: 'b1', summary: 's1', suggestions: [{ ...validSuggestion, id: 'b1-S1' }] }),
+      reviewSchema.parse({ title: 'b2', summary: 's2', suggestions: [{ ...validSuggestion, id: 'b2-S1' }] }),
+    ];
+    const p = buildConsolidationPrompt('paper.pdf', 10, '1-10', batchReviews);
+    expect(p).toContain('2 batches');
+    expect(p).toContain('b1-S1');
+    expect(p).toContain('b2-S1');
+    expect(p).toContain('"rebuttalQuestion"');
+    expect(p).toContain('s1..sN');
+  });
+});
+
+describe('generateBatchedReview', () => {
+  // 115 chars per page-marked page; budget fits two pages per batch.
+  const pageText = (p: number) => `--- Page ${p} ---\n${'x'.repeat(100)}`;
+  const batchJson = (id: string, page: number) =>
+    JSON.stringify({
+      title: `batch ${id}`,
+      summary: 's',
+      suggestions: [{ ...validSuggestion, id, page }],
+    });
+
+  it('runs batches sequentially in one session, then merges them', async () => {
+    const capture = { contents: [] as ContentBlock[][] };
+    const agent = fakeAgent(
+      [batchJson('b1-S1', 1), batchJson('b2-S1', 3), JSON.stringify({ title: 'merged', summary: 'm', suggestions: [validSuggestion] })],
+      capture,
+    )({} as AgentSettings);
+    const logs: string[] = [];
+    const { review, batches } = await generateBatchedReview(
+      agent,
+      's1',
+      { sourceName: 'paper.pdf', totalPages: 4, pages: [1, 2, 3, 4], pageText, history: 'User: hi', batchTextLimit: 250 },
+      { onLog: (m) => logs.push(m) },
+    );
+    expect(batches).toEqual([[1, 2], [3, 4]]);
+    expect(review.title).toBe('merged');
+    expect(capture.contents).toHaveLength(3);
+    const texts = capture.contents.map((c) => (c[0] as { text: string }).text);
+    expect(texts[0]).toContain('batch 1 of 2');
+    expect(texts[0]).toContain('User: hi'); // history rides in batch 1 only
+    expect(texts[0]).toContain('--- Page 1 ---');
+    expect(texts[1]).toContain('batch 2 of 2');
+    expect(texts[1]).toContain('pages 1-2 were already reviewed');
+    expect(texts[1]).toContain('"b2-"');
+    expect(texts[1]).not.toContain('User: hi');
+    expect(texts[1]).toContain('--- Page 3 ---');
+    expect(texts[2]).toContain('b1-S1'); // consolidation embeds both batch findings
+    expect(texts[2]).toContain('b2-S1');
+    expect(texts[2]).toContain('Schema:');
+    expect(logs.some((l) => l.includes('Batch 1/2'))).toBe(true);
+    expect(logs.some((l) => l.includes('Batch 2/2'))).toBe(true);
+    expect(logs.some((l) => l.includes('Merging'))).toBe(true);
+  });
+
+  it('takes the one-shot path (no batch framing, history included) for a single batch', async () => {
+    const capture = { contents: [] as ContentBlock[][] };
+    const agent = fakeAgent([reviewJson], capture)({} as AgentSettings);
+    const { review, batches } = await generateBatchedReview(
+      agent,
+      's1',
+      { sourceName: 'paper.pdf', totalPages: 2, pages: [1, 2], pageText, history: 'User: hi', batchTextLimit: 10_000 },
+    );
+    expect(batches).toEqual([[1, 2]]);
+    expect(review.title).toBe('Paper review');
+    expect(capture.contents).toHaveLength(1);
+    const text = (capture.contents[0]?.[0] as { text: string }).text;
+    expect(text).toContain('Pages to review: 1-2');
+    expect(text).not.toContain('batch 1 of');
+    expect(text).toContain('User: hi');
+  });
+
+  it('applies the conversion retry per batch', async () => {
+    const capture = { contents: [] as ContentBlock[][] };
+    const agent = fakeAgent(
+      ['prose first', batchJson('b1-S1', 1), batchJson('b2-S1', 3), JSON.stringify({ title: 'm', summary: '', suggestions: [] })],
+      capture,
+    )({} as AgentSettings);
+    const { batches } = await generateBatchedReview(
+      agent,
+      's1',
+      { sourceName: 'paper.pdf', totalPages: 4, pages: [1, 2, 3, 4], pageText, batchTextLimit: 250 },
+    );
+    expect(batches).toEqual([[1, 2], [3, 4]]);
+    expect(capture.contents).toHaveLength(4); // batch1, batch1-retry, batch2, consolidation
+    expect((capture.contents[1]?.[0] as { text: string }).text).toContain('convert it into valid JSON');
+  });
+
+  it('throws when there are no pages to review', async () => {
+    const agent = fakeAgent([])({} as AgentSettings);
+    await expect(
+      generateBatchedReview(agent, 's1', { sourceName: 'p.pdf', totalPages: 0, pages: [], pageText }),
+    ).rejects.toThrow(/no pages/i);
   });
 });

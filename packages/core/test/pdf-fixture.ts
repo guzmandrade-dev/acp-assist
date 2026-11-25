@@ -1,4 +1,9 @@
-/** Test helper: build a small valid PDF whose pages carry the given text lines. */
+/**
+ * Test helper: build a small valid PDF whose pages carry the given text.
+ * A page string may contain `\n` — each line becomes its own text line on
+ * the page (one Tj at a decreasing y), so multi-line pages extract fully
+ * instead of being clipped at the page's right edge.
+ */
 export function makePdf(pages: string[]): Buffer {
   const objects: string[] = [];
   const add = (body: string) => {
@@ -7,7 +12,10 @@ export function makePdf(pages: string[]): Buffer {
   };
   const fontId = add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
   const contentIds = pages.map((text) => {
-    const stream = `BT /F1 18 Tf 72 720 Td (${text.replace(/[()\\]/g, '\\$&')}) Tj ET`;
+    const lines = text.split('\n');
+    const stream = lines
+      .map((line, i) => `BT /F1 18 Tf 72 ${720 - 18 * i} Td (${line.replace(/[()\\]/g, '\\$&')}) Tj ET`)
+      .join('\n');
     return add(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
   });
   const pageIds = contentIds.map((cid) =>

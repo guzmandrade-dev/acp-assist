@@ -39,13 +39,12 @@ import {
   buildReviewZip,
   formatPageList,
   formatReviewForHistory,
-  generateReview,
-  getPagesText,
-  loadPdfDocument,
+  generateBatchedReview,
+  getPageText,
+  loadPdfDocumentVersioned,
   parsePageRange,
   renderPdfPageImages,
   REVIEW_IMAGE_RENDER,
-  REVIEW_TEXT_LIMIT,
   REVIEW_TIMEOUT_MS,
   MAX_REVIEW_IMAGE_PAGES,
   type AgentRunner,
@@ -53,10 +52,10 @@ import {
   type Attachment,
   type ConversationStore,
   type HistoryReplayOptions,
-  type PdfDocumentInfo,
   type Review,
   type Turn,
   type TurnMeta,
+  type VersionedPdfDocument,
   type WrapFn,
 } from './index.js';
 import { createPanelBootScript, createPanelIndexHandler, panelPublicDir, type PanelConfig } from '@acp-assist/panel';
@@ -950,8 +949,8 @@ export function createCompanionServer<TState>(
 
   // --- structured review (the Visual Research Pal report loop) ----------------
 
-  /** Per-session PDF text cache, keyed by absolute path. */
-  const pdfCache = new WeakMap<CompanionSession<TState>, Map<string, PdfDocumentInfo>>();
+  /** Per-session PDF cache, keyed by absolute path, version-checked (mtime/size) on every access. */
+  const pdfCache = new WeakMap<CompanionSession<TState>, Map<string, VersionedPdfDocument>>();
   /** Last review per session — served as a ZIP by the download route. */
   const lastReview = new WeakMap<
     CompanionSession<TState>,
@@ -1029,22 +1028,16 @@ export function createCompanionServer<TState>(
         }
       }
 
-      // --- page-aware text (cached per session + file) --------------------------
+      // --- page-aware text (cached per session + file, version-checked) ----------
       let cache = pdfCache.get(session);
       if (!cache) {
         cache = new Map();
         pdfCache.set(session, cache);
       }
-      let doc = cache.get(pdfPath);
-      if (!doc) {
-        doc = await loadPdfDocument(pdfPath);
-        cache.set(pdfPath, doc);
-      }
+      // Version-checked load: a re-exported PDF (new mtime/size) is re-parsed,
+      // so the review never reasons about stale text.
+      const doc = await loadPdfDocumentVersioned(cache, pdfPath);
       const pages = parsePageRange(doc.totalPages, typeof body.pages === 'string' ? body.pages : undefined);
-      let pageText = getPagesText(doc, pages);
-      if (pageText.length > REVIEW_TEXT_LIMIT) {
-        pageText = `${pageText.slice(0, REVIEW_TEXT_LIMIT)}\n\n[TRUNCATED]`;
-      }
 
       // --- conversation history (the critical loop) -----------------------------
       let history = '';
@@ -1056,14 +1049,15 @@ export function createCompanionServer<TState>(
           .join('\n\n');
       }
 
-      // --- optional page images for visual grounding ----------------------------
-      const images: { data: string; mimeType: string }[] = [];
-      if (body.includeImages === true) {
-        const rendered = await renderPdfPageImages(pdfPath, pages.slice(0, MAX_REVIEW_IMAGE_PAGES), {
+      // --- optional page images for visual grounding (rendered per batch) --------
+      const includeImages = body.includeImages === true;
+      const imagesForBatch = async (batchPages: number[]): Promise<{ data: string; mimeType: string }[]> => {
+        if (!includeImages) return [];
+        const rendered = await renderPdfPageImages(pdfPath, batchPages.slice(0, MAX_REVIEW_IMAGE_PAGES), {
           ...REVIEW_IMAGE_RENDER,
         });
-        for (const img of rendered) images.push({ data: img.base64, mimeType: img.mimeType });
-      }
+        return rendered.map((img) => ({ data: img.base64, mimeType: img.mimeType }));
+      };
 
       const rawSend = startSse(res);
       send = (obj: unknown) => {
@@ -1081,17 +1075,21 @@ export function createCompanionServer<TState>(
         return;
       }
 
-      const review = await generateReview(
+      // Large reviews are batched internally (char budget per batch, run
+      // sequentially in this same ACP session so cross-batch findings stay
+      // visible to the agent), then merged in one consolidation pass — the
+      // user never picks ranges and no single prompt hits the text cap.
+      const { review } = await generateBatchedReview(
         session.agent,
         session.id,
         {
           sourceName,
           totalPages: doc.totalPages,
           pages,
-          pageText,
+          pageText: (p) => `--- Page ${p} ---\n${getPageText(doc, p)}`,
           history,
           prompt: typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt : undefined,
-          images,
+          batchImages: imagesForBatch,
         },
         {
           onChunk: (chunk) => send?.({ text: chunk }),

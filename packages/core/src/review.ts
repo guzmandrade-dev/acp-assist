@@ -270,14 +270,15 @@ function parseReview(text: string): { review: Review | null; issues: string[] } 
 }
 
 /**
- * Run the review loop against the session's agent: prompt once with the
- * report prompt (+ page images), and — when the reply is not schema-valid
- * JSON — once more with the conversion prompt. Throws when both fail.
+ * One review prompt → tolerant JSON extraction → schema validation, with a
+ * single conversion retry when the reply is prose. Shared by the
+ * single-shot and the batched review loops. Throws when both attempts fail.
  */
-export async function generateReview(
+async function runReviewPrompt(
   agent: AgentRunner,
   sessionId: string,
-  req: ReviewRequest,
+  promptText: string,
+  images: { data: string; mimeType: string }[] = [],
   hooks: ReviewRunHooks = {},
 ): Promise<Review> {
   const promptOptions = {
@@ -286,14 +287,13 @@ export async function generateReview(
     onToolCall: hooks.onToolCall,
     timeoutMs: hooks.timeoutMs,
   };
-  const images: ContentBlock[] = (req.images ?? []).map((im) => ({
+  const imageBlocks: ContentBlock[] = images.map((im) => ({
     type: 'image' as const,
     data: im.data,
     mimeType: im.mimeType,
   }));
-  const content: ContentBlock[] = [{ type: 'text', text: buildReviewPrompt(req) }, ...images];
+  const content: ContentBlock[] = [{ type: 'text', text: promptText }, ...imageBlocks];
 
-  hooks.onLog?.(`Asking the agent for a structured review of ${req.sourceName} (pages ${formatPageList(req.pages)})…`);
   const reply = await agent.prompt(sessionId, content, promptOptions);
   let { review, issues } = parseReview(reply);
   if (!review) {
@@ -315,8 +315,231 @@ export async function generateReview(
       );
     }
   }
+  return review;
+}
+
+/**
+ * Run the review loop against the session's agent: prompt once with the
+ * report prompt (+ page images), and — when the reply is not schema-valid
+ * JSON — once more with the conversion prompt. Throws when both fail.
+ */
+export async function generateReview(
+  agent: AgentRunner,
+  sessionId: string,
+  req: ReviewRequest,
+  hooks: ReviewRunHooks = {},
+): Promise<Review> {
+  hooks.onLog?.(`Asking the agent for a structured review of ${req.sourceName} (pages ${formatPageList(req.pages)})…`);
+  const review = await runReviewPrompt(agent, sessionId, buildReviewPrompt(req), req.images ?? [], hooks);
   hooks.onLog?.(`Review ready: ${review.suggestions.length} suggestion(s).`);
   return review;
+}
+
+/** Char budget for one review batch's page-marked text (default). */
+export const REVIEW_BATCH_TEXT_LIMIT = 60_000;
+
+/**
+ * Split the pages to review into batches whose page-marked text stays under
+ * `budget` chars (page sizes vary wildly, so batch by chars, not by count).
+ * `markedPageLength(p)` is the length of page p's `--- Page N ---`-marked
+ * text — exactly what the batch prompt will carry. A single page larger
+ * than the budget gets its own batch (the prompt caps it at
+ * REVIEW_TEXT_LIMIT). Empty input → no batches.
+ */
+export function splitPagesIntoBatches(
+  pages: number[],
+  markedPageLength: (page: number) => number,
+  budget: number = REVIEW_BATCH_TEXT_LIMIT,
+): number[][] {
+  const batches: number[][] = [];
+  let current: number[] = [];
+  let currentSize = 0;
+  for (const p of pages) {
+    const len = Math.max(0, markedPageLength(p) ?? 0);
+    if (current.length > 0 && currentSize + len > budget) {
+      batches.push(current);
+      current = [];
+      currentSize = 0;
+    }
+    current.push(p);
+    currentSize += len;
+  }
+  if (current.length > 0) batches.push(current);
+  return batches;
+}
+
+export interface BatchPromptRequest extends ReviewRequest {
+  /** 1-based batch number and total batch count. */
+  batchIndex: number;
+  batchCount: number;
+  /** Human-readable list of pages already reviewed in earlier batches ('' for the first). */
+  donePages: string;
+}
+
+/**
+ * One batch's review prompt: the base report prompt plus the batch's place
+ * in the whole document. Batches run sequentially in ONE ACP session, so
+ * the agent sees earlier batches' findings above and is told not to repeat
+ * them — cross-range concepts stay coherent without one giant prompt.
+ */
+export function buildBatchPrompt(req: BatchPromptRequest): string {
+  const base = req.prompt?.trim() ? req.prompt : DEFAULT_REVIEW_PROMPT;
+  return (
+    `${base}\n\n` +
+    `Document under review: ${req.sourceName} (${req.totalPages} pages)\n` +
+    `This is batch ${req.batchIndex} of ${req.batchCount}: you are reviewing pages ${formatPageList(req.pages)}` +
+    (req.donePages
+      ? ` (pages ${req.donePages} were already reviewed in earlier batches of this same conversation — your findings for them are above; do NOT repeat them, and prefix your suggestion ids with "b${req.batchIndex}-" to keep them unique)`
+      : '') +
+    `\n\n` +
+    (req.history ? `Conversation history:\n${req.history}\n\n` : '') +
+    'IMPORTANT: Your response must be a single valid JSON object matching this schema. ' +
+    'Do not wrap it in Markdown code fences and do not add any prose before or after the JSON. ' +
+    'If this batch has no relevant issues, return an empty suggestions array and a brief summary.\n\n' +
+    `Schema:\n${JSON.stringify(reviewJsonSchema, null, 2)}\n\n` +
+    `Text of the reviewed pages:\n${req.pageText}`
+  );
+}
+
+/**
+ * The consolidation prompt: merge all per-batch reviews into ONE review
+ * object (dedupe, resolve contradictions preferring later batches, renumber
+ * ids, one title/summary for the whole document).
+ */
+export function buildConsolidationPrompt(
+  sourceName: string,
+  totalPages: number,
+  pages: string,
+  batchReviews: Review[],
+): string {
+  return (
+    `You reviewed "${sourceName}" (${totalPages} pages; pages ${pages}) in ${batchReviews.length} batches ` +
+    'earlier in this conversation; your per-batch findings are included below.\n\n' +
+    'Merge them into ONE review object matching this exact schema: combine duplicate or overlapping ' +
+    'suggestions (keep the higher-confidence one, merge the rationale), resolve contradictions (later ' +
+    'batches saw more of the document — prefer them), keep each suggestion\'s page and locationHint, ' +
+    'assign the final severity/confidence, renumber the ids sequentially as s1..sN, and write one title ' +
+    'and summary covering the whole document. Do not wrap the JSON in Markdown fences and do not add ' +
+    'any prose — respond ONLY with the JSON object.\n\n' +
+    `Schema:\n${JSON.stringify(reviewJsonSchema, null, 2)}\n\n` +
+    `Per-batch findings to merge:\n${JSON.stringify(batchReviews, null, 2)}`
+  );
+}
+
+export interface BatchReviewInput {
+  sourceName: string;
+  totalPages: number;
+  /** All pages being reviewed, in order. */
+  pages: number[];
+  /** The `--- Page N ---`-marked text of ONE page (drives batch sizing + prompts). */
+  pageText: (page: number) => string;
+  /** Rendered conversation history (only sent with the first batch). */
+  history?: string;
+  /** Override for DEFAULT_REVIEW_PROMPT. */
+  prompt?: string;
+  /** Optional page images for a batch (visual grounding). */
+  batchImages?: (pages: number[]) => Promise<{ data: string; mimeType: string }[]>;
+  /** Char budget per batch; default REVIEW_BATCH_TEXT_LIMIT. */
+  batchTextLimit?: number;
+}
+
+/**
+ * Batched structured review: split `pages` into char-budget batches, review
+ * each batch sequentially in the SAME ACP session (so later batches see
+ * earlier findings — cross-range coherence), then merge all batch reviews
+ * in one consolidation pass. A single batch takes the original one-shot
+ * path (buildReviewPrompt, history included). Returns the merged review
+ * plus the batch layout (for logging/tests).
+ */
+export async function generateBatchedReview(
+  agent: AgentRunner,
+  sessionId: string,
+  input: BatchReviewInput,
+  hooks: ReviewRunHooks = {},
+): Promise<{ review: Review; batches: number[][] }> {
+  const batches = splitPagesIntoBatches(input.pages, (p) => input.pageText(p).length, input.batchTextLimit);
+  // (pageText(p) is the page-marked text, so its length is the batch cost.)
+  if (batches.length === 0) {
+    throw new Error('No pages to review.');
+  }
+  hooks.onLog?.(
+    batches.length === 1
+      ? `Reviewing pages ${formatPageList(input.pages)} in a single pass.`
+      : `Reviewing ${input.pages.length} pages in ${batches.length} batches ` +
+          `(${batches.map((b) => formatPageList(b)).join(', ')}), then merging.`,
+  );
+
+  if (batches.length === 1) {
+    // Original one-shot path: same prompt shape as generateReview.
+    const batch = batches[0]!;
+    let pageText = input.pageText(batch[0]!);
+    for (const p of batch.slice(1)) pageText += `\n\n${input.pageText(p)}`;
+    if (pageText.length > REVIEW_TEXT_LIMIT) {
+      pageText = `${pageText.slice(0, REVIEW_TEXT_LIMIT)}\n\n[TRUNCATED]`;
+    }
+    hooks.onLog?.(`Asking the agent for a structured review of ${input.sourceName} (pages ${formatPageList(batch)})…`);
+    const review = await runReviewPrompt(
+      agent,
+      sessionId,
+      buildReviewPrompt({
+        sourceName: input.sourceName,
+        totalPages: input.totalPages,
+        pages: batch,
+        pageText,
+        history: input.history,
+        prompt: input.prompt,
+      }),
+      (await input.batchImages?.(batch)) ?? [],
+      hooks,
+    );
+    hooks.onLog?.(`Review ready: ${review.suggestions.length} suggestion(s).`);
+    return { review, batches };
+  }
+
+  const batchReviews: Review[] = [];
+  const doneSoFar: number[] = [];
+  for (let i = 0; i < batches.length; i += 1) {
+    const batch = batches[i]!;
+    let pageText = input.pageText(batch[0]!);
+    for (const p of batch.slice(1)) pageText += `\n\n${input.pageText(p)}`;
+    if (pageText.length > REVIEW_TEXT_LIMIT) {
+      pageText = `${pageText.slice(0, REVIEW_TEXT_LIMIT)}\n\n[TRUNCATED]`;
+    }
+    hooks.onLog?.(`Batch ${i + 1}/${batches.length} — pages ${formatPageList(batch)}…`);
+    const review = await runReviewPrompt(
+      agent,
+      sessionId,
+      buildBatchPrompt({
+        sourceName: input.sourceName,
+        totalPages: input.totalPages,
+        pages: batch,
+        pageText,
+        // The session already carries the history after batch 1; only the
+        // first batch needs it in the prompt.
+        history: i === 0 ? input.history : undefined,
+        prompt: input.prompt,
+        batchIndex: i + 1,
+        batchCount: batches.length,
+        donePages: doneSoFar.length > 0 ? formatPageList(doneSoFar) : '',
+      }),
+      (await input.batchImages?.(batch)) ?? [],
+      hooks,
+    );
+    hooks.onLog?.(`Batch ${i + 1}/${batches.length} done: ${review.suggestions.length} suggestion(s).`);
+    batchReviews.push(review);
+    doneSoFar.push(...batch);
+  }
+
+  hooks.onLog?.('Merging batch findings into the final review…');
+  const merged = await runReviewPrompt(
+    agent,
+    sessionId,
+    buildConsolidationPrompt(input.sourceName, input.totalPages, formatPageList(input.pages), batchReviews),
+    [],
+    hooks,
+  );
+  hooks.onLog?.(`Review ready: ${merged.suggestions.length} suggestion(s) after merging ${batchReviews.length} batches.`);
+  return { review: merged, batches };
 }
 
 /** Compact one-line-per-suggestion rendering, recorded as the assistant turn. */
