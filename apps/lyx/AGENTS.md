@@ -488,6 +488,18 @@ prompt tells the agent to use only those names or ones in the outline
 (never invent layouts) — that covers Beamer posters and ported journal
 templates without any per-class work.
 
+## CI worker aborts/hangs: DOUBLE fd CLOSE was the root cause (2026-11-26)
+
+The ubuntu CI failure showed the true native crash: `Assertion failed:
+(0) == (uv_fs_close(nullptr, &close_req, file, nullptr))` -> SIGABRT (exit 134);
+the same race on Windows surfaced as 0xC0000409 / a wedged worker that looked
+like a hang. Cause: `fs.closeSync(fd)` followed by `stream.destroy()` (which
+closes the same fd again via the threadpool), and `closeSync(fd)` +
+`handle.close()` on a FileHandle-owned fd. Fix: after closeSync, set
+`stream.fd = null` before destroy; close FileHandle-owned fds ONLY via the
+handle. Rule for this repo: an fd has exactly one owner; never closeSync a
+stream's fd and then destroy the stream, never closeSync + handle.close.
+
 ## CI hang on windows-latest: sync pipe opens can block the loop forever (2026-11-26)
 
 Symptom: `test (lyx, windows-latest)` sat in "Run tests" for hours (runs

@@ -304,7 +304,10 @@ export class LyxServerClient extends EventEmitter {
             clearTimeout(timer);
             try {
               const fd = (stream as { fd?: number }).fd;
-              if (typeof fd === 'number') fs.closeSync(fd);
+              if (typeof fd === 'number') {
+                fs.closeSync(fd);
+                (stream as { fd?: number | null }).fd = null; // no double close
+              }
             } catch {
               /* already closed */
             }
@@ -344,17 +347,13 @@ export class LyxServerClient extends EventEmitter {
         /* pipe gone — nothing to deregister from */
       }
     }
-    if (this.inFd !== null) {
-      try {
-        fs.closeSync(this.inFd);
-      } catch {
-        /* already closed */
-      }
-      this.inFd = null;
-    }
+    // The fd is owned by inHandle: close through the handle only — a
+    // closeSync(inFd) followed by handle.close() is a double close (aborts
+    // Node via uv_fs_close, CI 2026-11-26).
     if (this.inHandle !== null) {
       this.inHandle.close().catch(() => undefined);
       this.inHandle = null;
+      this.inFd = null;
     }
     for (const w of this.waiters) w.resolve(undefined);
     this.waiters.clear();
@@ -471,7 +470,13 @@ export class LyxServerClient extends EventEmitter {
       // be discarded when the fd finally closes.
       try {
         const fd = (stream as { fd?: number }).fd;
-        if (typeof fd === 'number') fs.closeSync(fd);
+        if (typeof fd === 'number') {
+          fs.closeSync(fd);
+          // Detach: stream.destroy() would close the same fd again via the
+          // threadpool — a double close aborts Node (uv_fs_close assertion,
+          // CI 2026-11-26) or corrupts a reused fd.
+          (stream as { fd?: number | null }).fd = null;
+        }
       } catch {
         /* already closed */
       }

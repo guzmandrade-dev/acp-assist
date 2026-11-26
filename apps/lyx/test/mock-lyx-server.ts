@@ -161,22 +161,17 @@ export class MockLyxServer {
   async stop(): Promise<void> {
     const child = this.transport;
     this.transport = null;
-    if (this.ctlFd !== null) {
+    if (this.ctlHandle !== null) {
       try {
-        fs.writeSync(this.ctlFd, 'BYE\n');
+        fs.writeSync(this.ctlHandle.fd, 'BYE\n');
       } catch {
         /* already gone */
       }
-      try {
-        fs.closeSync(this.ctlFd);
-      } catch {
-        /* already closed */
-      }
-      this.ctlFd = null;
-    }
-    if (this.ctlHandle !== null) {
+      // Close through the owning handle only — closeSync(fd) + handle.close()
+      // is a double close (aborts Node via uv_fs_close, CI 2026-11-26).
       this.ctlHandle.close().catch(() => undefined);
       this.ctlHandle = null;
+      this.ctlFd = null;
     }
     child?.kill();
     // Named pipes vanish with the transport process; FIFOs are files and
