@@ -93,8 +93,13 @@ describe('LyXServerClient against mock LyX', () => {
     expect(mock.clipboardText).toBe('Para 11');
     // count 0 is a no-op success.
     expect(await client.paragraphDownBulk(0)).toBe(true);
+    // Walking back up with paragraph-up in one write lands two rows up.
+    expect(await client.walkBulk('paragraph-up', 2)).toBe(true);
+    expect(await client.paragraphSelect()).toBe(true);
+    expect(await client.copySelection()).toBe(true);
+    expect(mock.clipboardText).toBe('Para 9');
     // Overshooting the last row gets an ERROR reply -> false.
-    expect(await client.paragraphDownBulk(5)).toBe(false);
+    expect(await client.paragraphDownBulk(20)).toBe(false);
   });
 
   it('executes the insert-after pN choreography', async () => {

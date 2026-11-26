@@ -125,7 +125,7 @@ function fakeLyx(
   let fileOverride: string | null = null;
   const clip = { text: '' };
   const client = {
-    calls: { save: 0, paste: 0, copy: 0, undo: 0, goto: 0 },
+    calls: { save: 0, paste: 0, copy: 0, undo: 0, goto: 0, begin: 0 },
     mode: hooks.writeOnly ? 'write-only' : 'pipe',
     /** Test hook: simulate the user focusing another LyX window mid-run. */
     setFile(f: string | null) {
@@ -176,6 +176,7 @@ function fakeLyx(
       return true;
     },
     async beginOfDocument() {
+      client.calls.begin += 1;
       cursor = 0;
       selection = null;
       return true;
@@ -205,12 +206,24 @@ function fakeLyx(
       selection = null;
       return true;
     },
-    async paragraphDownBulk(count: number) {
+    async paragraphUp() {
+      let prev = cursor - 1;
+      while (prev > 0 && doc.paragraphs[prev].text === '') prev -= 1;
+      if (prev < 0) return false;
+      cursor = prev;
+      selection = null;
+      return true;
+    },
+    async walkBulk(func: 'paragraph-down' | 'paragraph-up', count: number) {
       // In-memory equivalent of the one-write bulk walk.
       for (let i = 0; i < count; i++) {
-        if (!(await client.paragraphDown())) return false;
+        const step = func === 'paragraph-down' ? client.paragraphDown : client.paragraphUp;
+        if (!(await step())) return false;
       }
       return true;
+    },
+    async paragraphDownBulk(count: number) {
+      return client.walkBulk('paragraph-down', count);
     },
     async paragraphSelect() {
       selection = { p: cursor, start: 0, end: doc.paragraphs[cursor].text.length };
@@ -560,6 +573,8 @@ describe('multi-action runs over the message stream', () => {
     expect(harness.doc.paragraphs[0].text).toBe('placeholder title');
     expect(harness.doc.paragraphs[1].text).toBe('first body rewritten');
     expect(frames.filter((f) => typeof f.applied === 'string').map((f) => f.applied)).toEqual(['rewrite-at']);
+    // A rejected jump gives no landing info, so the walk re-anchors at the top.
+    expect(harness.lyx.client.calls.begin).toBeGreaterThan(0);
     expect(frames.at(-1)).toEqual({ done: true });
   });
 
@@ -576,9 +591,12 @@ describe('multi-action runs over the message stream', () => {
     const harness = await startHarness(
       [
         'Rewriting p6.\n```lyx\n\\begin_layout Standard\npara 6 rewritten\n\\end_layout\n```\n[ACTION: rewrite-at p6]',
-        'Rewriting p6 again.\n```lyx\n\\begin_layout Standard\npara 6 rewritten twice\n\\end_layout\n```\n[ACTION: rewrite-at p6]',
-        'Done.\n[ACTION: none]',
-      ],
+
+        'Rewriting p6 again.\n```lyx\n\\begin_layout Standard\npara 6 rewritten twice\n\\end_layout\n```\n[ACTION: rewrite-at p6]',
+
+        'Done.\n[ACTION: none]',
+
+      ],
       { misalignGoto: 2 },
       undefined,
       { paragraphs },
@@ -600,6 +618,11 @@ describe('multi-action runs over the message stream', () => {
     expect(frames.filter((f) => typeof f.applied === 'string').length).toBe(2);
     // The jump was attempted exactly once (step 1); step 2 skipped it.
     expect(harness.lyx.client.calls.goto).toBe(1);
+    // Step 1's mis-landing was identifiable (p8), so the delta walk
+    // (paragraph-up x2) recovered WITHOUT re-anchoring at the top; step 2
+    // (jump skipped by the probe, no landing info) used the from-top bulk
+    // walk — exactly one buffer-begin across the run.
+    expect(harness.lyx.client.calls.begin).toBe(1);
     expect(frames.at(-1)).toEqual({ done: true });
   });
 

@@ -247,6 +247,11 @@ export class MockLyxServer {
         this.moveCursor(cursor.p + 1, 0);
         return { data: '' };
       }
+      case 'paragraph-up': {
+        if (cursor.p <= 0) return { error: 'Command disabled' };
+        this.moveCursor(cursor.p - 1, 0);
+        return { data: '' };
+      }
       case 'paragraph-select': {
         if (!para) return { error: 'Command disabled' };
         this.selection = { p: cursor.p, start: 0, end: para.text.length };

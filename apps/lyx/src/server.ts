@@ -689,6 +689,23 @@ function createLyxBackend(
       if (viaJump && attempt.reason === 'mismatch' && attempt.actual !== '') {
         session.state.jumpProbe = { docPath: docKey, works: false };
       }
+      // If the jump landed on an identifiable paragraph, walk only the DELTA
+      // from that row (paragraph-up when it overshot) instead of re-walking
+      // the whole document from the top.
+      if (!attempt.ok && viaJump && attempt.reason === 'mismatch' && attempt.actual !== '') {
+        const actualNorm = normalizeForCompare(attempt.actual);
+        const landedIdx = actualNorm
+          ? ctx.outline.findIndex((e) => isLikelyMatch(normalizeForCompare(e.preview), actualNorm))
+          : -1;
+        if (landedIdx >= 0 && landedIdx + 1 !== target) {
+          const delta = target - (landedIdx + 1);
+          const func = delta > 0 ? ('paragraph-down' as const) : ('paragraph-up' as const);
+          if (await session.state.lyx.walkBulk(func, Math.abs(delta))) {
+            attempt = await selectAndVerify();
+          }
+        }
+      }
+      if (!attempt.ok) {
       // A wrong jump may have left a selection behind — selections persist
       // in LyX and would pollute the walk's paragraph-select.
       await session.state.lyx.clearSelection();
@@ -712,7 +729,8 @@ function createLyxBackend(
         }
         attempt = await selectAndVerify();
       }
-    }
+      } // from-the-top walk fallback
+    } // jump failed → walk branch
     if (!attempt.ok) {
       logError(
         `[lyx] gotoParagraph p${target} mode=${mode} via=${viaJump ? 'jump-then-walk' : 'walk'} ` +

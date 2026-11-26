@@ -116,9 +116,13 @@ function fakeLyx(initialFile: string, saveMode: 'deferred' | 'immediate', saveAs
     async paragraphDown() {
       return false;
     },
-    async paragraphDownBulk(count: number) {
+    async paragraphUp() {
+      return false;
+    },
+    async walkBulk(func: 'paragraph-down' | 'paragraph-up', count: number) {
       for (let i = 0; i < count; i++) {
-        if (!(await this.paragraphDown())) return false;
+        const step = func === 'paragraph-down' ? this.paragraphDown : this.paragraphUp;
+        if (!(await step())) return false;
       }
       return true;
     },

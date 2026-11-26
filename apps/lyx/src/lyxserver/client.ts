@@ -743,11 +743,23 @@ export class LyxServerClient extends EventEmitter {
     }
   }
 
+  /** Move the cursor to the beginning of the previous paragraph. */
+  async paragraphUp(): Promise<boolean> {
+    try {
+      await this.request('paragraph-up');
+      return true;
+    } catch (e) {
+      if (e instanceof LyxPipeError && e.message.includes('Command disabled')) return false;
+      throw e;
+    }
+  }
+
   /**
-   * Dispatch `count` paragraph-down commands in ONE pipe write, instead of
-   * one round-trip per row (the serial walk to a late paragraph costs N
-   * round-trips and LyX snaps its view to the cursor on every dispatched
-   * LFUN, so it visibly scrolls through the whole document).
+   * Dispatch `count` identical movement commands (`paragraph-down` /
+   * `paragraph-up`) in ONE pipe write, instead of one round-trip per row
+   * (the serial walk to a late paragraph costs N round-trips and LyX snaps
+   * its view to the cursor on every dispatched LFUN, so it visibly scrolls
+   * through the whole document).
    *
    * The wire protocol has no request id, so same-func replies can only be
    * COUNTED, not attributed — and Windows broadcasts duplicate replies —
@@ -755,9 +767,8 @@ export class LyxServerClient extends EventEmitter {
    * landing spot (gotoParagraph does) and be prepared to re-walk serially.
    * Returns false on timeout or when any reply is an ERROR.
    */
-  async paragraphDownBulk(count: number, timeoutMs?: number): Promise<boolean> {
+  async walkBulk(func: 'paragraph-down' | 'paragraph-up', count: number, timeoutMs?: number): Promise<boolean> {
     if (count <= 0) return true;
-    const func = 'paragraph-down';
     const lines = Array.from({ length: count }, () => `LYXCMD:${this.clientName}:${func}:\n`).join('');
     if (this.mode === 'write-only') {
       // Deaf pipe: no replies can arrive; fire the batch and give LyX's
@@ -795,6 +806,11 @@ export class LyxServerClient extends EventEmitter {
       waiters.add(waiter);
       this.send(lines);
     });
+  }
+
+  /** Bulk `paragraph-down` walk (see walkBulk). */
+  paragraphDownBulk(count: number, timeoutMs?: number): Promise<boolean> {
+    return this.walkBulk('paragraph-down', count, timeoutMs);
   }
 
   /** Select the entire paragraph the cursor is in. */
