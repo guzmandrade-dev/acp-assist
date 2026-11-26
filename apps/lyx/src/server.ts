@@ -28,6 +28,7 @@ import {
   assemblePasteDocument,
   extractBodyLayouts,
   findMarkupProblems,
+  extractFormulaContents,
   type DocumentContext,
 } from './lyx/context.js';
 import { NEWFILE_PLACEHOLDER_RE, discoverLyxEnvironment } from './lyxserver/pipe-config.js';
@@ -836,6 +837,37 @@ function createLyxBackend(
     });
     let actual = '';
     if (payload) {
+      // Formula content must survive the paste byte-for-byte. The preview
+      // comparison below cannot see math corruption (previews drop formula
+      // content): LyX reads a doubled backslash in math as a line break, so
+      // an agent writing `$\\rho$` mangles the equation into literal text
+      // ('rho') and the read-back still previews identically. Compare the
+      // raw Formula inset contents instead — the read-back paragraph's
+      // formulas must all come from the paste payload (sub-multiset, so a
+      // multi-paragraph paste verified on its first block still passes).
+      const wantFormulas = extractFormulaContents(outcome.body ?? '');
+      if (wantFormulas.length > 0) {
+        const gotFormulas = extractFormulaContents(payload);
+        const remaining = new Map<string, number>();
+        for (const f of wantFormulas) remaining.set(f, (remaining.get(f) ?? 0) + 1);
+        const allFromPaste = gotFormulas.every((g) => {
+          const c = remaining.get(g) ?? 0;
+          if (c <= 0) return false;
+          remaining.set(g, c - 1);
+          return true;
+        });
+        if (gotFormulas.length > 0 && !allFromPaste) {
+          logError(
+            `[lyx] paste verify: formula mangled action=${outcome.action} landIndex=${landIndex}`,
+            new Error(`want=${JSON.stringify(wantFormulas)} got=${JSON.stringify(gotFormulas)}`),
+          );
+          return (
+            'Paste verification failed: a Formula inset was altered by the paste, so the ' +
+              'equation would lose its format (the edit was undone). Re-issue the edit with ' +
+              'SINGLE backslashes inside Formula insets ($\\rho$, never $\\\\rho$).'
+          );
+        }
+      }
       try {
         actual = normalizeForCompare(buildDocumentContext(payload).outline[0]?.preview ?? '');
       } catch {

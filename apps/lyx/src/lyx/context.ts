@@ -276,10 +276,19 @@ export function normalizeMarkupBlock(block: string): string {
 }
 
 /**
- * Detect LaTeX-style constructs that LyX would mangle into literal text.
- * LyX uses its own token format: `\emph on` ... `\emph default` on their
- * own lines — not `\emph{...}`.
+ * Raw content of every Formula inset in a body (the text between
+ * `\begin_inset Formula` and its matching `\end_inset`), trimmed.
+ * Formula content never nests other insets, so the nearest `\end_inset`
+ * closes it. Handles inline (`$x$` on the begin line) and display
+ * (multi-line `$\n...\n$`) formulas.
  */
+export function extractFormulaContents(body: string): string[] {
+  const out: string[] = [];
+  const re = /\\begin_inset Formula\b([\s\S]*?)\\end_inset/g;
+  for (const m of body.matchAll(re)) out.push(m[1]!.trim());
+  return out;
+}
+
 /**
  * Detect markup the agent must fix before we paste it. LyX renders
  * malformed content as literal text or empty insets.
@@ -336,6 +345,27 @@ export function findMarkupProblems(body: string): string[] {
           'not an equation (this is how formulas inside notes lose their format). ' +
           'Wrap math in a Formula inset: \\begin_inset Formula $x^2$\\n\\end_inset ' +
           "— also when it sits inside a Note's inner Plain Layout.",
+      );
+      break;
+    }
+  }
+
+  // Doubled backslashes inside a Formula inset: in math `\\` is a LaTeX
+  // line break, so `$\\mapsto$` renders the command name as literal
+  // letters ("mapsto") and the equation loses its format — live-reported
+  // in the thesis main body: `$P:Fm\\mapsto\\mathbb{R}$` pasted as
+  // the text "Fmmapstomathbb{R}". Formula content uses SINGLE backslashes.
+  // A `\\` followed by a newline/space/`$`/`&` is a legitimate row
+  // break in display math, so only `\\` directly followed by a letter
+  // (or another backslash) is flagged.
+  for (const formula of extractFormulaContents(body)) {
+    const doubled = /\\\\[\\A-Za-z]/.exec(formula);
+    if (doubled) {
+      problems.push(
+        `Doubled backslash "${doubled[0]}…" inside a Formula inset. Formula content is ` +
+          'LaTeX with SINGLE backslashes: write $\rho$, never $\\rho$ — LyX reads ' +
+          '\\ as a line break and the command name renders as literal text, so the ' +
+          'equation loses its format.',
       );
       break;
     }

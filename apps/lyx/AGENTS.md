@@ -397,6 +397,27 @@ LLMs know LaTeX but not `.lyx` markup. Specialization is done with:
   empty yellow Note insets, malformed URL insets, words glued to
   formulas/references (missing spaces — invisible in the raw markup).
 - **Validation + retry** (`findMarkupProblems`): LaTeX-style inline
+
+## Doubled backslashes inside Formula insets (live-reported 2026-11-26, thesis main body)
+
+The TODO-note equation loss was literal `$...$` text; the MAIN-BODY losses were a
+different pattern: the agent inconsistently emitted formulas with DOUBLED
+backslashes inside the Formula inset (`$P:Fm\\mapsto\\mathbb{R}$`). In math,
+\\ is a LaTeX line break, so LyX parses the command name as literal letters and the
+saved file keeps the inset but with the backslashes eaten: `$P:Fmmapstomathbb{R}$`
+(verified byte-exact in `tesis-unam/Preliminal.lyx` HEAD; the agent's raw reply in the
+conversation history provably had the doubled form — our paste pipeline preserves
+backslashes verbatim, only LyX eats them). Fixes shipped:
+- `findMarkupProblems` flags `\\\\` directly followed by a letter/backslash inside any
+  Formula inset (a `\\\\` row break in display math is followed by newline/`$`/`&` and
+  stays legal) → one corrective retry; `extractFormulaContents` (exported) is the extractor.
+- `knowledge.ts` MATH section now says: single backslashes in formulas, never doubled.
+- Defense in depth: `verifyPasteInBuffer` (write-only post-paste verify) now compares the
+  raw Formula contents of the paste payload vs the read-back clipboard payload
+  (sub-multiset) — the preview comparison cannot see math corruption because previews
+  drop formula content. On mismatch the edit is undone and the run errors.
+Note: pipe mode has no post-paste content verify (only the pre-paste target verify), so
+the lint + knowledge entries are the primary guard there.
   commands, empty insets, insets missing their inner layout, words glued
   to inline insets (missing spaces) trigger one corrective retry.
 - ACP has no `systemPrompt` field in this SDK version, so prompt-level

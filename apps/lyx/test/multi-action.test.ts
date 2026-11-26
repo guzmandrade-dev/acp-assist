@@ -118,7 +118,7 @@ class FailingAgent implements AgentRunner {
  */
 function fakeLyx(
   doc: FakeDoc,
-  hooks: { onPaste?: () => Promise<void>; failGoto?: boolean; writeOnly?: boolean; noPaste?: boolean; saveDelayMs?: number; emptyCopyTimes?: number; misalignGoto?: number } = {},
+  hooks: { onPaste?: () => Promise<void>; failGoto?: boolean; writeOnly?: boolean; noPaste?: boolean; saveDelayMs?: number; emptyCopyTimes?: number; misalignGoto?: number; mangleDoubledBackslashes?: boolean } = {},
 ) {
   let cursor = 0;
   let selection: { p: number; start: number; end: number } | null = null;
@@ -251,7 +251,11 @@ function fakeLyx(
       const payload = (globalThis as { __clipDoc?: string }).__clipDoc ?? clip.text;
       const match = /\\begin_layout ([^\n]+)\n([\s\S]*?)\n\\end_layout/.exec(payload);
       const layout = match?.[1] ?? 'Standard';
-      const text = match?.[2] ?? '';
+      let text = match?.[2] ?? '';
+      // Test hook: simulate LyX eating a doubled backslash inside a
+      // Formula inset on paste (\\ is a line break in math, so the
+      // command name lands as literal letters).
+      if (hooks.mangleDoubledBackslashes) text = text.replace(/\\\\/g, '');
       if (selection) {
         doc.paragraphs[selection.p] = { layout, text };
         selection = null;
@@ -324,7 +328,7 @@ interface Harness {
 
 async function startHarness(
   replies: string[],
-  lyxHooks: { onPaste?: () => Promise<void>; failGoto?: boolean; writeOnly?: boolean; noPaste?: boolean; saveDelayMs?: number; emptyCopyTimes?: number; misalignGoto?: number } = {},
+  lyxHooks: { onPaste?: () => Promise<void>; failGoto?: boolean; writeOnly?: boolean; noPaste?: boolean; saveDelayMs?: number; emptyCopyTimes?: number; misalignGoto?: number; mangleDoubledBackslashes?: boolean } = {},
   agentOverride?: AgentRunner,
   extraOptions: { settingsDir?: string; paragraphs?: Array<{ layout: string; text: string }> } = {},
 ): Promise<Harness> {
@@ -543,6 +547,44 @@ describe('multi-action runs over the message stream', () => {
     expect(frames.some((f) => typeof f.error === 'string' && f.error.includes('Paste verification failed'))).toBe(true);
     expect(harness.lyx.client.calls.undo).toBe(1);
     expect(harness.doc.paragraphs[1].text).toBe('first body');
+    expect(frames.some((f) => typeof f.applied === 'string')).toBe(false);
+    expect(frames.at(-1)).toEqual({ done: true });
+  });
+
+  it('write-only mode: a Formula mangled by the paste (doubled backslashes) is detected and undone', async () => {
+    // The agent emitted a formula with doubled backslashes; the fake LyX
+    // eats them on paste (as real LyX does). The post-paste buffer verify
+    // must catch the formula-content change, undo, and report — the preview
+    // comparison alone cannot see this (previews drop formula content).
+    const harness = await startHarness(
+      [
+        'Rewriting p2.\n```lyx\n\\begin_layout Standard\nLa funci\u00f3n \n\\begin_inset Formula $P:Fm\\\\mapsto\\\\mathbb{R}$\n\\end_inset\n.\n\\end_layout\n```\n[ACTION: rewrite-at p2]',
+        // The corrective retry re-emits the same mistake (the retry is
+        // advisory and runs once):
+        'Rewriting p2.\n```lyx\n\\begin_layout Standard\nLa funci\u00f3n \n\\begin_inset Formula $P:Fm\\\\mapsto\\\\mathbb{R}$\n\\end_inset\n.\n\\end_layout\n```\n[ACTION: rewrite-at p2]',
+        'Done.\n[ACTION: none]',
+      ],
+      { writeOnly: true, mangleDoubledBackslashes: true },
+    );
+    cleanups.push(async () => {
+      await new Promise<void>((resolve) => harness.server.close(() => resolve()));
+      await fs.rm(harness.doc.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
+
+    const res = await fetch(`${harness.base}/api/session/${harness.sessionId}/message/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${API_TOKEN}` },
+      body: JSON.stringify({ message: 'rewrite p2' }),
+    });
+    const frames = await readSse(res);
+
+    expect(
+      frames.some((f) => typeof f.error === 'string' && f.error.includes('Formula inset was altered')),
+    ).toBe(true);
+    expect(harness.lyx.client.calls.undo).toBe(1);
+    // The fake's undo is a no-op counter, so the mangled paste is still
+    // visible in the fake document — proof the mangle hook fired:
+    expect(harness.doc.paragraphs[1].text).toContain('Fmmapstomathbb{R}');
     expect(frames.some((f) => typeof f.applied === 'string')).toBe(false);
     expect(frames.at(-1)).toEqual({ done: true });
   });

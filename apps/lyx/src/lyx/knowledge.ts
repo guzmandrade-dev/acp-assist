@@ -30,6 +30,13 @@ Similarly: \\series bold on ... \\series default; \\shape italic on ... \\shape 
 MATH (inline)
   \\begin_inset Formula $x^2 + y^2$
   \\end_inset
+  Formula content is LaTeX with SINGLE backslashes:
+  \\begin_inset Formula $\\rho: \\wp(Fm) \\mapsto [0,1]$
+  \\end_inset
+  NEVER double the backslashes ($\\\\rho$): in math \\\\ is a line
+  break, so the command name renders as literal letters and the equation
+  loses its format (live bug: $P:Fm\\\\mapsto\\\\mathbb{R}$ pasted as
+  the plain text "Fmmapstomathbb{R}").
 
 FOOTNOTE
   \\begin_inset Foot

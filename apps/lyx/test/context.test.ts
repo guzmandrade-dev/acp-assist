@@ -10,6 +10,7 @@ import {
   isEmptyParagraphBlock,
   normalizeMarkupBlock,
   stripTrackedDeletions,
+  extractFormulaContents,
 } from '../src/lyx/context.js';
 import { parse } from '../src/lyx/parser.js';
 import { LYX_MARKUP_KNOWLEDGE } from '../src/lyx/knowledge.js';
@@ -733,5 +734,38 @@ describe('splitTopLevelParagraphs / isEmptyParagraphBlock', () => {
     expect(
       isEmptyParagraphBlock('\\begin_layout Standard\n\\change_deleted 1 2\nGone.\n\\change_unchanged\n\\end_layout'),
     ).toBe(true);
+  });
+});
+
+describe('findMarkupProblems — doubled backslashes in Formula insets', () => {
+  it('rejects a doubled backslash inside an inline Formula (renders as letters)', () => {
+    // Agent emitted a formula with doubled backslashes; LyX reads a doubled
+    // backslash in math as a line break, so the command name renders as literal
+    // letters — live-reported in the thesis main body: 'Fmmapstomathbb{R}'.
+    const body =
+      '\\begin_layout Standard\nLa función \n\\begin_inset Formula $P:Fm\\\\mapsto\\\\mathbb{R}$\n\\end_inset\n.\n\\end_layout';
+    const problems = findMarkupProblems(body);
+    expect(problems.some((p) => p.includes('Doubled backslash'))).toBe(true);
+  });
+
+  it('accepts single backslashes in a Formula inset', () => {
+    const body =
+      '\\begin_layout Standard\nLa función \n\\begin_inset Formula $\\rho: \\wp(Fm) \\mapsto [0,1]$\n\\end_inset\n.\n\\end_layout';
+    expect(findMarkupProblems(body)).toEqual([]);
+  });
+
+  it('accepts a legit display-math row break (doubled backslash before end-of-row $)', () => {
+    const body =
+      '\\begin_layout Plain Layout\n\\begin_inset Formula $\n\\[\n\\begin{alignedat}{1}a &= b\\\\$\n= & c$\n\\end{alignedat}$\n$\n\\end_inset\n\\end_layout';
+    expect(findMarkupProblems(body)).toEqual([]);
+  });
+
+  it('extractFormulaContents reads inline and display formulas', () => {
+    const body =
+      '\\begin_layout Standard\n\\begin_inset Formula $x^2$\n\\end_inset\n\\end_layout\n\\begin_layout Plain Layout\n\\begin_inset Formula $\n$\n\\begin{alignedat}{1}a &= b$\n\\end{alignedat}$\n$\n\\end_inset\n\\end_layout';
+    const formulas = extractFormulaContents(body);
+    expect(formulas).toHaveLength(2);
+    expect(formulas[0]).toBe('$x^2$');
+    expect(formulas[1]).toContain('alignedat');
   });
 });
