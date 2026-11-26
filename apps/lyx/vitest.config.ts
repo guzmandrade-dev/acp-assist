@@ -2,14 +2,12 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    // Threads pool everywhere for this app: the forks pool intermittently
-    // loses a worker to a native abort at startup — 0xC0000409
-    // (STATUS_STACK_BUFFER_OVERRUN) on Windows, SIGABRT on Linux — while a
-    // pipe-mock file is starting (seen on CI 2026-11-26; on Windows the
-    // wedged worker looked like a multi-hour hang). Threads ran clean in
-    // repeated local loops (10/10 single-file, 5/5 full suite). No fork
-    // isolation is lost: the mock LyX servers are real spawned processes
-    // (PowerShell named pipes on Windows, FIFOs elsewhere).
-    pool: 'threads',
+    // Threads on Windows, forks elsewhere. The forks pool intermittently lost
+    // a worker to a native abort (0xC0000409 on Windows, SIGABRT on Linux) —
+    // root-caused to double fd closes (uv_fs_close), fixed 2026-11-26; but the
+    // threads pool on Linux hangs at worker teardown after the pipe-mock suite
+    // (transport child / FIFO handles keep the thread alive), so Linux keeps
+    // forks, which vitest can force-kill per file.
+    pool: process.platform === 'win32' ? 'threads' : 'forks',
   },
 });

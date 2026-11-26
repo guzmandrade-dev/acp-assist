@@ -539,9 +539,11 @@ indefinitely. Fixes shipped (commit after v1.16.0):
   (2026-11-26; an instrumented run showed the bulk-walk test never finishing).
   The same wire protocol stays covered on ubuntu CI (FIFO transport) and on
   local Windows runs.
-- `apps/lyx/vitest.config.ts` uses `pool: 'threads'` on all platforms: the forks
-  pool intermittently loses a worker to a native abort at file startup
-  (0xC0000409 on Windows, SIGABRT on Linux — both seen on CI 2026-11-26).
+- `apps/lyx/vitest.config.ts` pools per OS: threads on Windows, forks on Linux.
+  The native aborts (0xC0000409 Windows / SIGABRT Linux, CI 2026-11-26) were the
+  double-close bug above, not the pool; but the threads pool on Linux hangs at
+  worker teardown after the pipe-mock suite, so Linux keeps forks (force-killed
+  per file by vitest).
 
 ## Round-trip fixture battery (2026-11-26)
 
