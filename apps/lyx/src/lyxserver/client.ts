@@ -126,8 +126,6 @@ export class LyxServerClient extends EventEmitter {
   private requestQueue = new Map<string, Promise<unknown>>();
 
   private inFd: number | null = null;
-  /** Owning handle for inFd — dropping it would GC-close the fd. */
-  private inHandle: fs.promises.FileHandle | null = null;
   private helloPending = false;
   /**
    * Pending teardown of the .out reader that last delivered a reply, if
@@ -185,8 +183,7 @@ export class LyxServerClient extends EventEmitter {
     // load), that block has no timeout and wedges the whole process (observed
     // as a multi-hour CI hang in the pipe-mock suite, 2026-11-26). The async
     // open pends in the kernel and can be raced against a timer.
-    this.inHandle = await this.openPipeWriteBounded(this.inPath, 10_000);
-    this.inFd = this.inHandle.fd;
+    this.inFd = await this.openPipeWriteBounded(this.inPath, 10_000);
     const probe = await this.probeOut();
     if (probe.deaf) {
       // Deaf pipe: hello still went out via .in (commands dispatch; LyX
@@ -214,17 +211,22 @@ export class LyxServerClient extends EventEmitter {
    * 2026-11-26). If the open completes after the timeout, the fd is closed
    * immediately.
    */
-  private async openPipeWriteBounded(pipePath: string, timeoutMs: number): Promise<fs.promises.FileHandle> {
+  private async openPipeWriteBounded(pipePath: string, timeoutMs: number): Promise<number> {
+    // Callback-style fs.open returns a RAW fd (no FileHandle): the fd then has
+    // exactly one owner (closeSync in stop()) — a FileHandle GC-closing it later
+    // would double-close (uv_fs_close abort, CI 2026-11-26).
     let timer: NodeJS.Timeout | undefined;
-    const opened = fs.promises.open(pipePath, 'w');
+    const opened = new Promise<number>((resolve, reject) => {
+      fs.open(pipePath, 'w', (err, fd) => (err ? reject(err) : resolve(fd)));
+    });
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new LyxPipeError(`Timed out opening ${pipePath} for writing`)), timeoutMs);
     });
     try {
       return await Promise.race([opened, timeout]);
     } catch (e) {
-      // Late-completing open: close the handle as soon as it arrives.
-      opened.then((h) => h.close()).catch(() => undefined);
+      // Late-completing open: close the raw fd as soon as it arrives.
+      opened.then((fd) => { try { fs.closeSync(fd); } catch { /* gone */ } }).catch(() => undefined);
       throw e;
     } finally {
       if (timer) clearTimeout(timer);
@@ -347,12 +349,12 @@ export class LyxServerClient extends EventEmitter {
         /* pipe gone — nothing to deregister from */
       }
     }
-    // The fd is owned by inHandle: close through the handle only — a
-    // closeSync(inFd) followed by handle.close() is a double close (aborts
-    // Node via uv_fs_close, CI 2026-11-26).
-    if (this.inHandle !== null) {
-      this.inHandle.close().catch(() => undefined);
-      this.inHandle = null;
+    if (this.inFd !== null) {
+      try {
+        fs.closeSync(this.inFd);
+      } catch {
+        /* already closed */
+      }
       this.inFd = null;
     }
     for (const w of this.waiters) w.resolve(undefined);

@@ -499,6 +499,12 @@ closes the same fd again via the threadpool), and `closeSync(fd)` +
 `stream.fd = null` before destroy; close FileHandle-owned fds ONLY via the
 handle. Rule for this repo: an fd has exactly one owner; never closeSync a
 stream's fd and then destroy the stream, never closeSync + handle.close.
+  Follow-up: the remaining teardown hang (all tests green, then vitest stuck
+  terminating the worker) was the transport child keeping the worker's stdio
+  open — `MockLyxServer.stop()` now awaits the child's exit (SIGKILL after 2s).
+  Pipe fds are opened via callback-style `fs.open` (raw fd, single owner,
+  closeSync only) — never `fs.promises.open` (the FileHandle GC-closes the fd
+  later = double close).
 
 ## CI hang on windows-latest: sync pipe opens can block the loop forever (2026-11-26)
 

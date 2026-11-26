@@ -28,16 +28,18 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 /** Bounded open of a named pipe for writing (see mock start; CI hang 2026-11-26). */
-async function openPipeWriteBounded(pipePath: string, timeoutMs: number): Promise<fs.promises.FileHandle> {
+async function openPipeWriteBounded(pipePath: string, timeoutMs: number): Promise<number> {
   let timer: NodeJS.Timeout | undefined;
-  const opened = fs.promises.open(pipePath, 'w');
+  const opened = new Promise<number>((resolve, reject) => {
+    fs.open(pipePath, 'w', (err, fd) => (err ? reject(err) : resolve(fd)));
+  });
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error(`timed out opening ${pipePath}`)), timeoutMs);
   });
   try {
     return await Promise.race([opened, timeout]);
   } catch (e) {
-    opened.then((h) => h.close()).catch(() => undefined);
+    opened.then((fd) => { try { fs.closeSync(fd); } catch { /* gone */ } }).catch(() => undefined);
     throw e;
   } finally {
     if (timer) clearTimeout(timer);
@@ -91,8 +93,6 @@ export class MockLyxServer {
   private transport: ChildProcess | null = null;
   /** Writable fd of the transport's control pipe (reply channel). */
   private ctlFd: number | null = null;
-  /** Owning handle for ctlFd — dropping it would GC-close the fd. */
-  private ctlHandle: fs.promises.FileHandle | null = null;
 
   constructor(options: MockLyxOptions = {}) {
     instanceCounter++;
@@ -153,27 +153,42 @@ export class MockLyxServer {
     // the same pattern the LyxServerClient uses for .in. Bounded async open:
     // a sync open of a pipe with no listening instance blocks the event loop
     // with no timeout (the 2026-11-26 CI hang), so race it against a timer.
-    this.ctlHandle = await openPipeWriteBounded(`${this.pipeBase}.ctl`, 10_000);
-    this.ctlFd = this.ctlHandle.fd;
+    this.ctlFd = await openPipeWriteBounded(`${this.pipeBase}.ctl`, 10_000);
     debug(`transport ready at ${this.pipeBase}`);
   }
 
   async stop(): Promise<void> {
     const child = this.transport;
     this.transport = null;
-    if (this.ctlHandle !== null) {
+    if (this.ctlFd !== null) {
       try {
-        fs.writeSync(this.ctlHandle.fd, 'BYE\n');
+        fs.writeSync(this.ctlFd, 'BYE\n');
       } catch {
         /* already gone */
       }
-      // Close through the owning handle only — closeSync(fd) + handle.close()
-      // is a double close (aborts Node via uv_fs_close, CI 2026-11-26).
-      this.ctlHandle.close().catch(() => undefined);
-      this.ctlHandle = null;
+      try {
+        fs.closeSync(this.ctlFd);
+      } catch {
+        /* already closed */
+      }
       this.ctlFd = null;
     }
-    child?.kill();
+    if (child) {
+      // Wait for the transport to actually exit (SIGKILL fallback): its stdio
+      // pipes keep the test worker's event loop alive otherwise, and vitest
+      // hangs at worker teardown (CI 2026-11-26).
+      child.kill();
+      await new Promise<void>((resolve) => {
+        const killTimer = setTimeout(() => {
+          try { child.kill('SIGKILL'); } catch { /* gone */ }
+          resolve();
+        }, 2_000);
+        child.once('exit', () => {
+          clearTimeout(killTimer);
+          resolve();
+        });
+      });
+    }
     // Named pipes vanish with the transport process; FIFOs are files and
     // need an explicit cleanup (the transport unlinks too, but it may be
     // killed before it gets the chance).
