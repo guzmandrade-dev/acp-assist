@@ -78,6 +78,13 @@ export interface PanelConfig {
    * target picker (the active PDF is the only target).
    */
   pdfMode?: boolean;
+  /**
+   * The companion APP's own version (e.g. '1.16.0'), shown in the
+   * settings popover next to the update check. Set by the packaged
+   * unified app from its package.json; absent in the standalone dev
+   * hosts (the row stays hidden).
+   */
+  version?: string;
 }
 
 /** The panel package's public/ directory (shared assets). */

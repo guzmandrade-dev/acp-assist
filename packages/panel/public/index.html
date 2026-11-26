@@ -50,6 +50,12 @@
             <input id="max-actions" type="number" min="1" max="50" step="1" value="10" /></label>
           <label class="settings-check" for="auto-continue"><input id="auto-continue" type="checkbox" /> <small>Auto-continue up to the hard cap of 50 edits without asking (token-heavy on long documents)</small></label>
         </div>
+        <div class="settings-row" id="app-version-row" hidden>
+          <small id="app-version"></small>
+          <button id="check-update" class="link-btn" type="button" hidden>Check for updates</button>
+          <small id="update-status" class="update-status"></small>
+          <button id="update-action" class="link-btn" type="button" hidden></button>
+        </div>
       </div>
     </details>
     <button id="pin" class="pin" aria-pressed="false" title="Floating disabled (click to enable)">

@@ -21,6 +21,14 @@ in `resources/`.
 
 - One Electron window + one Express host (`src/server.ts`) running the
   three companion backends side by side.
+- The app's version (from `package.json`) is injected into the panel's
+  boot config and shown in the settings popover next to **Check for
+  updates**. On startup (and on demand) the main process asks the GitHub
+  releases API for the latest *published* release; when it is newer,
+  Windows/macOS offer to download the installer asset (nsis `.exe` /
+  `.dmg`) into the Downloads folder and hand it to the OS, while Linux
+  just opens the releases page (no safe auto-install there). See
+  `src/electron/updater.ts` + `updater-core.ts`.
 - The panel loads as `/?app=<id>`; the boot script carries an
   app-scoped bearer token (`<app>:<raw>`), so every `/api/*` request is
   dispatched to the selected app's sub-server (which re-validates the

@@ -42,6 +42,8 @@ import { refreshDocuments, refreshSelection } from './documents.js';
 import './review.js';
 import './pdf.js';
 
+import { setupUpdateRow } from './update.js';
+
 // Refresh the editor context (active document tab + selection indicator) only
 // when the user interacts with the composer — never on a timer. Every pipe
 // command dispatched into the editor makes it snap its view back to the cursor, so
@@ -157,6 +159,7 @@ function setupAppSwitcher() {
 
 function start() {
   setupAppSwitcher();
+  setupUpdateRow();
   input.placeholder = 'Ask the agent. It reads the document and your selection, then decides: reply here, insert at the cursor, or rewrite what you selected.';
   // PDF-review mode: the "document" is a read-only PDF, so the composer
   // swaps Undo for Review… and gains Open-in-viewer; the agent only ever

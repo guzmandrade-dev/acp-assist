@@ -5,6 +5,7 @@
  * the float-on-top follow, and the server is the multi-app dispatcher.
  */
 
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app } from 'electron';
@@ -14,8 +15,17 @@ import {
   removeCompanionRecord,
 } from 'libreoffice-acp-assist/dist/bridge/client.js';
 import { createServer } from '../server.js';
+import { initUpdater } from './updater.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// The app's own package.json (present in dev next to dist/ and inside the
+// packaged asar): source of the version shown in the panel and compared
+// against the latest GitHub release by the updater.
+const pkg = JSON.parse(
+  fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8'),
+) as { version: string };
+const appVersion = pkg.version;
 
 createElectronMain({
   windowTitle: 'ACP Assist',
@@ -41,6 +51,7 @@ createElectronMain({
       historyDir: paths.historyDir,
       attachmentsDir: paths.attachmentsDir,
       logDir: paths.logDir,
+      version: appVersion,
       // Packaged app: the oxt rides in extraResources; dev: the
       // libreoffice app's repo dir.
       oxtPath: oxtPath(),
@@ -61,6 +72,10 @@ createElectronMain({
     }),
   removeRecord: () => removeCompanionRecord(),
 });
+
+// Release-update check + asset download (GitHub releases; Linux links
+// to the releases page instead of downloading). Packaged builds only.
+initUpdater(appVersion);
 
 function oxtPath(): string {
   return app.isPackaged

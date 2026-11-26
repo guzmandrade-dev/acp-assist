@@ -90,6 +90,16 @@ export const consentAcceptBtn = document.getElementById('save-consent-accept');
 export const consentCancelBtn = document.getElementById('save-consent-cancel');
 export const scrollTicks = document.getElementById('scroll-ticks');
 
+export const appVersionRow = document.getElementById('app-version-row');
+
+export const appVersionEl = document.getElementById('app-version');
+
+export const checkUpdateBtn = document.getElementById('check-update');
+
+export const updateStatusEl = document.getElementById('update-status');
+
+export const updateActionBtn = document.getElementById('update-action');
+
 // The "talking to the editor" label is per-app (panel config): the
 // shared HTML ships a placeholder, the boot config overrides it.
 if (bridgeBusyText && CONFIG.busyText) bridgeBusyText.textContent = CONFIG.busyText;
