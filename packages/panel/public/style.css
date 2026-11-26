@@ -609,6 +609,21 @@ main::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius:
 }
 .feedback.error { color: var(--error); }
 .feedback.stopped, .feedback.none { color: var(--text-tertiary); }
+
+/* Continue button inside the safety-limit stop note */
+.continue-btn {
+  margin-left: var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  padding: 2px 10px;
+  border: 1px solid var(--accent-strong);
+  border-radius: var(--radius-pill);
+  background: var(--accent-strong);
+  color: var(--text-on-accent);
+  cursor: pointer;
+  vertical-align: baseline;
+}
+.continue-btn:hover { opacity: 0.9; }
 .feedback.refused { color: var(--status-warn); }
 .feedback .link {
   display: inline; padding: 0; margin: 0;

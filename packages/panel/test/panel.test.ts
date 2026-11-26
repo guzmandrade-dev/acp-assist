@@ -115,6 +115,35 @@ describe('shared panel assets', () => {
     expect(appSrc).toContain('rerenderAssistantTexts');
   });
 
+  it('wires the keep-awake setting and the Continue button end to end', async () => {
+    const dir = panelPublicDir();
+    const read = async (name: string) => fs.readFile(path.join(dir, name), 'utf8');
+    // settings modal row + element refs
+    const html = await read('index.html');
+    expect(html).toContain('id="keep-awake"');
+    const stateSrc = await read('state.js');
+    expect(stateSrc).toContain('keepAwakeWhileBusy');
+    expect(stateSrc).toContain('setKeepAwake');
+    expect(stateSrc).toContain("window.electron?.keepAwake");
+    // persisted through /api/settings/agent
+    const apiSrc = await read('api.js');
+    expect(apiSrc).toContain('keepAwakeWhileBusy');
+    // shell only: the row is unhidden when the preload exposes keepAwake
+    const appSrc = await read('app.js');
+    expect(appSrc).toContain('keepAwakeRow');
+    // runs wrap themselves in setKeepAwake(true/false)
+    const convSrc = await read('conversation.js');
+    expect(convSrc).toContain('setKeepAwake(true)');
+    expect(convSrc).toContain('setKeepAwake(false)');
+    const reviewSrc = await read('review.js');
+    expect(reviewSrc).toContain('setKeepAwake(true)');
+    // the safety-limit stop note carries a Continue button that sends "continue"
+    expect(convSrc).toContain("stopReason === 'limit'");
+    expect(convSrc).toContain('continue-btn');
+    expect(convSrc).toContain("sendText('continue')");
+    expect(convSrc).toContain('export async function sendText');
+  });
+
   it('the start-working modal carries the previous-conversation picker end to end', async () => {
     const dir = panelPublicDir();
     const read = async (name: string) => fs.readFile(path.join(dir, name), 'utf8');

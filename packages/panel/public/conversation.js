@@ -16,6 +16,7 @@ import {
   reconnectBtn,
   newSessionBtn,
   statusEl,
+  setKeepAwake,
 } from './state.js';
 import { api, parseAgentCommand, saveSettings } from './api.js';
 import { addMessage, addSystemMessage, renderConversation, showEmpty, hideEmpty } from './messages.js';
@@ -150,6 +151,17 @@ export function renderFeedback(msgDiv, { applied, target, target2, address, modu
  * the reply live. Returns the turn outcome for the caller.
  */
 export async function streamMessage(message) {
+  // Hold a power-save blocker for the whole run when the user opted in
+  // (long multi-edit runs must not die to the OS sleep timer).
+  await setKeepAwake(true);
+  try {
+    return await streamMessageInner(message);
+  } finally {
+    await setKeepAwake(false);
+  }
+}
+
+async function streamMessageInner(message) {
   let { div, textDiv } = addMessage('assistant', '');
   const ctrl = new AbortController();
   state.currentAbort = ctrl;
@@ -445,6 +457,18 @@ export async function streamMessage(message) {
         : labels[stopReason] ?? `Stopped (${stopReason})`;
     if (text) {
       note.textContent = text;
+      if (stopReason === 'limit') {
+        // One-click "continue" after the edits-per-message safety limit,
+        // instead of typing the word into the composer.
+        const btn = document.createElement('button');
+        btn.className = 'continue-btn';
+        btn.textContent = 'Continue';
+        btn.title = 'Send "continue" so the agent applies more edits';
+        btn.addEventListener('click', () => {
+          void sendText('continue');
+        });
+        note.appendChild(btn);
+      }
       div.appendChild(note);
     }
   }
@@ -461,11 +485,18 @@ export async function send() {
   if (state.busy || !state.sessionId || state.bridgeBusy || state.consentResolver) return;
   const message = input.value.trim();
   if (!message) return;
+  input.value = '';
+  await sendText(message);
+}
+
+/** Send a fixed message (used by the composer's send() and the Continue button). */
+export async function sendText(message) {
+  if (state.busy || !state.sessionId || state.bridgeBusy || state.consentResolver) return;
+  if (!message.trim()) return;
   // The start-working modal (edit notice + conversation picker) runs at
   // connect / document-select time, not here. Non-VCS documents still hit
   // the server-side consent gate (409) on the first save — handled in the
   // catch below.
-  input.value = '';
   // Snapshot the pending attachments for this turn BEFORE the stream
   // consumes them — the user bubble shows what was attached.
   const attachmentNames = state.pendingAttachments.map((a) => a.name);
