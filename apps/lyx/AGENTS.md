@@ -527,15 +527,17 @@ indefinitely. Fixes shipped (commit after v1.16.0):
   handle GC-closes the fd (bit us once: "Closing file descriptor on garbage
   collection" + every write-only test failing).
 - mock `start()` opens `.ctl` with the same bounded async open.
-- `.github/workflows/test.yml` test job now has `timeout-minutes: 30` so a
-  wedged job fails fast instead of the 6h default.
+- `.github/workflows/test.yml` AND `.github/workflows/build.yml` test jobs now
+  have `timeout-minutes: 30` so a wedged job fails fast instead of the 6h
+  default (build.yml had its own unguarded matrix and hung the tag release the
+  same way — both files must stay in sync).
 - Do NOT enlarge the transport's `$PoolSize` past 4: with 16 armed `.out`
   instances the deaf-mode reset at connect never surfaced to the client probe
   (mode came back `pipe` instead of `write-only`) — pool size is load-bearing
   for the deaf detection timing.
 - The pipe-mock suites (`lyxserver-mock.test.ts`, `lyxserver-write-only.test.ts`)
   are skipped on the windows-latest CI job via `LYX_SKIP_PIPE_MOCK=1` (set in
-  test.yml): the PowerShell named-pipe transport wedged that job repeatedly
+  test.yml AND build.yml): the PowerShell named-pipe transport wedged that job repeatedly
   (2026-11-26; an instrumented run showed the bulk-walk test never finishing).
   The same wire protocol stays covered on ubuntu CI (FIFO transport) and on
   local Windows runs.
