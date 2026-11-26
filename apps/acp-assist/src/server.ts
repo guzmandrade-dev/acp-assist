@@ -96,6 +96,12 @@ export interface UnifiedServerOptions {
   bridgeFactory?: () => BridgeClient;
   /** Test hook: inject a fake ONLYOFFICE plugin bridge. */
   pluginBridge?: PluginBridge;
+  /**
+   * The unified app's own version (from its package.json), injected into
+   * every sub-app's panel config so the settings popover can show it and
+   * offer the update check. Overrides any per-app config version.
+   */
+  version?: string;
 }
 
 export function createServer(options: UnifiedServerOptions): express.Express {
@@ -111,6 +117,8 @@ export function createServer(options: UnifiedServerOptions): express.Express {
         ...config,
         appId: id,
         switcher: { current: id, apps: APP_DEFS },
+        // The release version is the UNIFIED app's, not a sub-app's.
+        ...(options.version ? { version: options.version } : {}),
       },
       server,
     });
@@ -220,10 +228,27 @@ export function createServer(options: UnifiedServerOptions): express.Express {
     }
     return DEFAULT_APP;
   };
+  /**
+   * Serialized, atomic writer for active-app.json. Concurrent page loads
+   * must not interleave writeFile calls on the same path — that race
+   * garbled the file into e.g. '{"app":"lyx"}ffice"}' (seen in tests) —
+   * and readers must never see a half-written file, so each write goes to
+   * a temp file that is then renamed over the target (atomic on Windows,
+   * macOS and Linux). The queue keeps one write in flight at a time.
+   */
+  let activeAppWrite: Promise<void> = Promise.resolve();
   const persistActiveApp = (id: UnifiedAppId): void => {
-    fsSync.promises
-      .mkdir(userDataDir, { recursive: true })
-      .then(() => fsSync.promises.writeFile(activeAppFile, JSON.stringify({ app: id }), 'utf8'))
+    activeAppWrite = activeAppWrite
+      .then(() =>
+        fsSync.promises
+          .mkdir(userDataDir, { recursive: true })
+          .then(() => {
+            const tmpFile = `${activeAppFile}.${process.pid}.tmp`;
+            return fsSync.promises
+              .writeFile(tmpFile, JSON.stringify({ app: id }), 'utf8')
+              .then(() => fsSync.promises.rename(tmpFile, activeAppFile));
+          }),
+      )
       .catch(() => undefined);
   };
 

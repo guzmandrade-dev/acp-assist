@@ -82,6 +82,30 @@ describe('unified ACP Assist server', () => {
     expect(await res.text()).toContain('/panel-boot.js?app=onlyoffice');
   });
 
+  it('never garbles active-app.json under concurrent page loads', async () => {
+    const apps = ['lyx', 'libreoffice', 'onlyoffice', 'pdf'] as const;
+    await Promise.all(
+      Array.from({ length: 30 }, (_, i) => fetch(`${base}/?app=${apps[i % apps.length]}`)),
+    );
+    // Writes are fire-and-forget and serialized server-side; poll until the
+    // content is stable. Every observed read must be valid JSON — the
+    // temp-file + rename write must never expose a half-written file.
+    let prev = '';
+    let cur = '';
+    for (let i = 0; i < 40; i++) {
+      cur = await fs.readFile(path.join(tmp, 'active-app.json'), 'utf8').catch(() => '');
+      if (cur) expect(() => JSON.parse(cur)).not.toThrow();
+      if (cur && cur === prev) break;
+      prev = cur;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    const final = JSON.parse(cur) as { app?: string };
+    expect(apps).toContain(final.app);
+    // No temp files left behind.
+    const leftovers = (await fs.readdir(tmp)).filter((f) => f.endsWith('.tmp'));
+    expect(leftovers).toEqual([]);
+  });
+
   it('rejects /panel-boot.js without a valid ?app=', async () => {
     expect((await fetch(`${base}/panel-boot.js`)).status).toBe(400);
     expect((await fetch(`${base}/panel-boot.js?app=nope`)).status).toBe(400);
@@ -175,5 +199,33 @@ describe('unified ACP Assist server', () => {
     // (a 401/404 from the dispatcher would mean misrouting).
     expect(res.status).not.toBe(401);
     expect(res.status).not.toBe(404);
+  });
+});
+
+describe('unified server app version in the panel boot config', () => {
+  it('injects options.version into every sub-app boot script', async () => {
+    const tmp2 = await fs.mkdtemp(path.join(os.tmpdir(), 'acp-assist-version-'));
+    const app2 = createServer({
+      userDataDir: tmp2,
+      historyDir: path.join(tmp2, 'history'),
+      attachmentsDir: path.join(tmp2, 'attachments'),
+      logDir: path.join(tmp2, 'logs'),
+      apiTokens: TOKENS,
+      version: '1.16.0',
+    });
+    const server2 = await new Promise<Server>((resolve) => {
+      const s = app2.listen(0, '127.0.0.1', () => resolve(s));
+    });
+    try {
+      const { port } = server2.address() as AddressInfo;
+      for (const id of ['libreoffice', 'lyx', 'onlyoffice', 'pdf'] as const) {
+        const boot = await fetch(`http://127.0.0.1:${port}/panel-boot.js?app=${id}`);
+        expect(boot.status).toBe(200);
+        expect(await boot.text()).toContain('"version":"1.16.0"');
+      }
+    } finally {
+      await new Promise<void>((resolve) => server2.close(() => resolve()));
+      await fs.rm(tmp2, { recursive: true, force: true });
+    }
   });
 });
