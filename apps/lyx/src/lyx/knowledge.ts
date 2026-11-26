@@ -51,6 +51,21 @@ NOTE (the yellow inset)
 
   \\end_inset
 
+NOTE WITH A FORMULA INSIDE (keep the Formula inset NESTED inside the
+note's Plain Layout — raw $...$ text inside a note renders literally and
+the equation loses its format)
+  \\begin_inset Note Note
+  status open
+
+  \\begin_layout Plain Layout
+  TODO: verify${' '}
+  \\begin_inset Formula $x^2$
+  \\end_inset
+  ${' '}here.
+  \\end_layout
+
+  \\end_inset
+
 URL / HYPERLINK
   \\begin_layout Standard
   See${' '}

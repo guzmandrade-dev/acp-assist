@@ -75,6 +75,25 @@ describe('findMarkupProblems', () => {
     );
   });
 
+  it('rejects literal $...$ math in text (lost equation format inside notes)', () => {
+    // Raw $x^2$ inside a Note's Plain Layout renders as plain characters.
+    const body =
+      '\\begin_layout Standard\n' +
+      '\\begin_inset Note Note\nstatus open\n\n\\begin_layout Plain Layout\n' +
+      'TODO: verify $x^2$ here.\n\\end_layout\n\n\\end_inset\n\\end_layout';
+    const problems = findMarkupProblems(body);
+    expect(problems.some((p) => p.includes('Literal $...$ math'))).toBe(true);
+  });
+
+  it('accepts a Formula inset nested inside a Note', () => {
+    const body =
+      '\\begin_layout Standard\n' +
+      '\\begin_inset Note Note\nstatus open\n\n\\begin_layout Plain Layout\n' +
+      'TODO: verify \n\\begin_inset Formula $x^2$\n\\end_inset\n here.\n' +
+      '\\end_layout\n\n\\end_inset\n\\end_layout';
+    expect(findMarkupProblems(body)).toEqual([]);
+  });
+
   it('rejects an inset missing its inner layout (renders empty)', () => {
     const body =
       '\\begin_layout Standard\n\\begin_inset Note Note\nstatus open\n\n\\end_inset\n\\end_layout';

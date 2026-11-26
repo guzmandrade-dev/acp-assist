@@ -316,6 +316,31 @@ export function findMarkupProblems(body: string): string[] {
     }
   }
 
+  // Literal $...$ math in text (NOT on a \begin_inset Formula line) renders
+  // as plain characters, not an equation — live-reported: equations inside
+  // TODO notes lost their format when rewritten as raw $...$ inside the
+  // note. Math must be a Formula inset, also inside a Note's Plain Layout.
+  let inFormula = false;
+  for (const line of body.split(/\r?\n/)) {
+    if (/^\\begin_inset Formula\b/.test(line)) {
+      inFormula = true;
+      continue;
+    }
+    if (/^\\end_inset\b/.test(line)) {
+      inFormula = false;
+      continue;
+    }
+    if (!inFormula && /\$[^$\n]+\$/.test(line)) {
+      problems.push(
+        'Literal $...$ math found in text — LyX renders it as plain characters, ' +
+          'not an equation (this is how formulas inside notes lose their format). ' +
+          'Wrap math in a Formula inset: \\begin_inset Formula $x^2$\\n\\end_inset ' +
+          "— also when it sits inside a Note's inner Plain Layout.",
+      );
+      break;
+    }
+  }
+
   // Words glued to inline insets: a bare newline (or blank line) around an
   // inset is a separator, NOT a space, so "word\n\begin_inset Formula
   // $x$\n\end_inset\n." renders as "wordx." — the missing space is
