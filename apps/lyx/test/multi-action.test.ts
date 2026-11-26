@@ -12,6 +12,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import type { Server } from 'node:http';
 import fs from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { ContentBlock } from '@agentclientprotocol/sdk';
@@ -24,6 +25,9 @@ import {
 } from '../src/server.js';
 import type { LyxServerClient } from '../src/lyxserver/client.js';
 import type { RawClipboard } from '../src/clipboard/lyx-clipboard.js';
+import { extractBodyLayouts, findMarkupProblems, normalizeMarkupBlock, splitTopLevelParagraphs } from '../src/lyx/context.js';
+import { parse } from '../src/lyx/parser.js';
+import { fileURLToPath } from 'node:url';
 import { PANEL_CONFIG } from '../src/panel-config.js';
 
 /** LyX panel config for the shared panel. */
@@ -249,9 +253,13 @@ function fakeLyx(
       // LyX reads the x-lyx payload through the OS clipboard (the raw stub
       // in this test), not through this closure: use the global payload.
       const payload = (globalThis as { __clipDoc?: string }).__clipDoc ?? clip.text;
-      const match = /\\begin_layout ([^\n]+)\n([\s\S]*?)\n\\end_layout/.exec(payload);
-      const layout = match?.[1] ?? 'Standard';
-      let text = match?.[2] ?? '';
+      // Extract the first TOP-LEVEL block (nested insets own inner
+      // \end_layout lines — a plain regex would truncate at those).
+      const pastedBody = extractBodyLayouts(payload);
+      const first = pastedBody ? splitTopLevelParagraphs(pastedBody)[0] : undefined;
+      const blockLines = first?.split('\n') ?? [];
+      const layout = /^\\begin_layout (\S+)/.exec(blockLines[0] ?? '')?.[1] ?? 'Standard';
+      let text = blockLines.length > 2 ? blockLines.slice(1, -1).join('\n') : '';
       // Test hook: simulate LyX eating a doubled backslash inside a
       // Formula inset on paste (\\ is a line break in math, so the
       // command name lands as literal letters).
@@ -925,5 +933,87 @@ describe('multi-action prompt helpers', () => {
     expect(describeAction({ action: 'insert-top', body: null, target: null, target2: null })).toBe(
       '[ACTION: insert-top]',
     );
+  });
+});
+
+describe('fixture round-trip battery (test/fixtures/roundtrip.lyx through the SSE loop)', () => {
+const fixturePath = fileURLToPath(new URL('./fixtures/roundtrip.lyx', import.meta.url));
+const fixtureText = readFileSync(fixturePath, 'utf8');
+const fixtureBody = extractBodyLayouts(fixtureText)!;
+const fixtureBlocks = splitTopLevelParagraphs(fixtureBody);
+const fixtureParagraphs = fixtureBlocks.map((block) => {
+  const lines = block.split('\n');
+  return {
+    layout: /^\\begin_layout (\S+)/.exec(lines[0]!)![1]!,
+    text: lines.slice(1, -1).join('\n'),
+  };
+});
+  const noteIdx = fixtureParagraphs.findIndex((p) => p.text.includes('Note Note'));
+  const noteBlock = fixtureBlocks[noteIdx]!;
+
+  it('the fixture itself lints clean (valid LyX must not be flagged)', () => {
+    expect(findMarkupProblems(fixtureBody)).toEqual([]);
+  });
+
+  it('idempotent rewrite-at of the TODO-note paragraph leaves the saved file identical', async () => {
+    // Copy/paste the note paragraph onto itself: the saved file must keep
+    // the nested Formula inset byte-identical (this is the case that lost
+    // equation format when rewritten as raw $...$).
+    const reply =
+      'Rewriting the note unchanged.\n```lyx\n' + noteBlock + '\n```\n[ACTION: rewrite-at p' + (noteIdx + 1) + ']';
+    const harness = await startHarness([reply, 'Done.\n[ACTION: none]'], {}, undefined, {
+      paragraphs: fixtureParagraphs,
+    });
+    cleanups.push(async () => {
+      await new Promise<void>((resolve) => harness.server.close(() => resolve()));
+      await fs.rm(harness.doc.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
+    const res = await fetch(`${harness.base}/api/session/${harness.sessionId}/message/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${API_TOKEN}` },
+      body: JSON.stringify({ message: 'rewrite the note' }),
+    });
+    const frames = await readSse(res);
+    expect(frames.filter((f) => typeof f.applied === 'string').map((f) => f.applied)).toEqual(['rewrite-at']);
+    const saved = await fs.readFile(harness.doc.file, 'utf8');
+    expect(() => parse(saved)).not.toThrow();
+    const savedBlocks = splitTopLevelParagraphs(extractBodyLayouts(saved)!);
+    expect(savedBlocks).toHaveLength(fixtureBlocks.length);
+    expect(normalizeMarkupBlock(savedBlocks[noteIdx]!)).toBe(normalizeMarkupBlock(noteBlock));
+    expect(frames.at(-1)).toEqual({ done: true });
+  });
+
+  it('integrating the TODO note into the body keeps the equation a real Formula inset', async () => {
+    // The exact scenario that lost format: the note is removed and its
+    // formula moves into the body — it must stay a \begin_inset Formula,
+    // never raw $...$ text.
+    const reply =
+      'Integrating the note.\n```lyx\n\\begin_layout Standard\nThe formula \n\\begin_inset Formula $x^2 + y^2$\n\\end_inset\n is now in the body.\n\\end_layout\n```\n[ACTION: rewrite-at p' + (noteIdx + 1) + ']';
+    const harness = await startHarness([reply, 'Done.\n[ACTION: none]'], {}, undefined, {
+      paragraphs: fixtureParagraphs,
+    });
+    cleanups.push(async () => {
+      await new Promise<void>((resolve) => harness.server.close(() => resolve()));
+      await fs.rm(harness.doc.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
+    const res = await fetch(`${harness.base}/api/session/${harness.sessionId}/message/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${API_TOKEN}` },
+      body: JSON.stringify({ message: 'integrate the note into the body' }),
+    });
+    const frames = await readSse(res);
+    expect(frames.filter((f) => typeof f.applied === 'string').map((f) => f.applied)).toEqual(['rewrite-at']);
+    const saved = await fs.readFile(harness.doc.file, 'utf8');
+    expect(() => parse(saved)).not.toThrow();
+    const savedBody = extractBodyLayouts(saved)!;
+    const savedBlocks = splitTopLevelParagraphs(savedBody);
+    expect(savedBlocks).toHaveLength(fixtureBlocks.length);
+    const replaced = savedBlocks[noteIdx]!;
+    expect(replaced).toContain('\\begin_inset Formula $x^2 + y^2$');
+    expect(replaced).not.toContain('Note Note');
+    // The whole saved body must still lint clean: no literal $...$ text,
+    // no doubled backslashes.
+    expect(findMarkupProblems(savedBody)).toEqual([]);
+    expect(frames.at(-1)).toEqual({ done: true });
   });
 });

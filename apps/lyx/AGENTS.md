@@ -488,6 +488,27 @@ prompt tells the agent to use only those names or ones in the outline
 (never invent layouts) — that covers Beamer posters and ported journal
 templates without any per-class work.
 
+## Round-trip fixture battery (2026-11-26)
+
+- `test/fixtures/roundtrip.lyx` — one small representative document (Section/Subsection,
+  emphasis tokens, inline + display Formula with a legit `\\` row break, a TODO/yellow
+  Note with a NESTED Formula, Flex URL, CommandInset ref, Foot). `test/roundtrip.test.ts`
+  drives it through every mangling layer: strict parse, outline/context (math markers, no
+  inset-syntax leakage), `findMarkupProblems` must return [] (valid doc = no false
+  positives, incl. the display `\\`), and a byte-exact clipboard payload round trip via
+  `writeLyxDocumentVerified` against a byte-faithful in-memory RawClipboard. An opt-in
+  LIVE OS clipboard round trip (real PowerShell host) runs with `LYX_LIVE_CLIPBOARD=1` on
+  Windows only — it would have caught the 2026-10-04 Electron custom-format bug; skip it
+  when another process persistently holds the clipboard (OpenClipboard fails 100%).
+- The choreography half lives in `test/multi-action.test.ts` ("fixture round-trip battery"):
+  the fixture is loaded into the fake LyX and rewritten over the real SSE endpoint —
+  idempotent rewrite-at of the note paragraph must leave the saved file byte-identical, and
+  integrating the note into the body must keep the equation a real Formula inset.
+- The multi-action fake's `paste()` now extracts the pasted block via
+  `splitTopLevelParagraphs` (nested insets own inner `\end_layout` lines — the old regex
+  truncated at them), and has a `mangleDoubledBackslashes` hook simulating LyX eating `\\`
+  inside formulas on paste (see "Doubled backslashes inside Formula insets" above).
+
 ## Fake-LyX test harness (2026-10-04)
 
 `test/mock-lyx-server.ts` (`MockLyxServer`) regression-tests the full LFUN
