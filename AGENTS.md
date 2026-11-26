@@ -53,7 +53,7 @@ Releases are tag-driven; CI does the building. Steps:
    per OS (nsis/portable/zip on Windows, dmg/zip on macOS, AppImage/deb/
    tar.gz on Linux; icons regenerated on the Windows runner), and a
    `release` job that publishes a DRAFT GitHub Release
-   (`softprops/action-gh-release`, `draft: true`, generated notes) with
+   (`softprops/action-gh-release`, `draft: false` (published directly so the in-app updater's `releases/latest` check can see them), generated notes) with
    all artifacts incl. the bridge .oxt/.plugin. Verify on GitHub after the
    tag push; the workflow run is the gate.
 
