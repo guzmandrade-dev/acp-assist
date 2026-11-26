@@ -11,6 +11,9 @@ env:
 
 jobs:
   test:
+    # A wedged worker (e.g. a blocked pipe open) must fail the job in minutes,
+    # not sit for the 6h default until the runner gives up (seen 2026-11-26).
+    timeout-minutes: 30
     # Tests are cross-platform: the LyX pipe-mock uses named pipes on
     # Windows and FIFOs on Linux/macOS, so both OSes exercise the real
     # choreography suites (not skips).

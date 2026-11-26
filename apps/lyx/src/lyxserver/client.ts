@@ -126,6 +126,8 @@ export class LyxServerClient extends EventEmitter {
   private requestQueue = new Map<string, Promise<unknown>>();
 
   private inFd: number | null = null;
+  /** Owning handle for inFd — dropping it would GC-close the fd. */
+  private inHandle: fs.promises.FileHandle | null = null;
   private helloPending = false;
   /**
    * Pending teardown of the .out reader that last delivered a reply, if
@@ -177,6 +179,14 @@ export class LyxServerClient extends EventEmitter {
       );
     }
     this.shuttingDown = false;
+    // Open .in up front with a BOUNDED async open. A synchronous open of a
+    // named pipe blocks the event loop until a server instance accepts; if
+    // the pool is momentarily exhausted (ghost probe connections under CI
+    // load), that block has no timeout and wedges the whole process (observed
+    // as a multi-hour CI hang in the pipe-mock suite, 2026-11-26). The async
+    // open pends in the kernel and can be raced against a timer.
+    this.inHandle = await this.openPipeWriteBounded(this.inPath, 10_000);
+    this.inFd = this.inHandle.fd;
     const probe = await this.probeOut();
     if (probe.deaf) {
       // Deaf pipe: hello still went out via .in (commands dispatch; LyX
@@ -195,6 +205,30 @@ export class LyxServerClient extends EventEmitter {
     // client that is about to close). It is null when data arrived but
     // the connection was already reset (reply-then-close).
     this.readLoop(probe.stream ?? undefined);
+  }
+
+  /**
+   * Open the .in pipe for writing with a hard timeout. A pipe open pends
+   * in the kernel when no server instance is listening; racing it keeps a
+   * pool exhaustion from blocking the event loop forever (CI hang,
+   * 2026-11-26). If the open completes after the timeout, the fd is closed
+   * immediately.
+   */
+  private async openPipeWriteBounded(pipePath: string, timeoutMs: number): Promise<fs.promises.FileHandle> {
+    let timer: NodeJS.Timeout | undefined;
+    const opened = fs.promises.open(pipePath, 'w');
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new LyxPipeError(`Timed out opening ${pipePath} for writing`)), timeoutMs);
+    });
+    try {
+      return await Promise.race([opened, timeout]);
+    } catch (e) {
+      // Late-completing open: close the handle as soon as it arrives.
+      opened.then((h) => h.close()).catch(() => undefined);
+      throw e;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   /**
@@ -317,6 +351,10 @@ export class LyxServerClient extends EventEmitter {
         /* already closed */
       }
       this.inFd = null;
+    }
+    if (this.inHandle !== null) {
+      this.inHandle.close().catch(() => undefined);
+      this.inHandle = null;
     }
     for (const w of this.waiters) w.resolve(undefined);
     this.waiters.clear();
@@ -493,7 +531,10 @@ export class LyxServerClient extends EventEmitter {
   }
 
   private send(line: string): void {
-    if (this.inFd === null) this.inFd = fs.openSync(this.inPath, 'w');
+    // The .in fd is opened (bounded) in start(); a sync open here could
+    // block the event loop forever when the pipe pool is exhausted (CI hang,
+    // 2026-11-26) — fail the command instead.
+    if (this.inFd === null) throw new LyxPipeError(`LyXServer .in pipe not open (${this.inPath})`);
     fs.writeSync(this.inFd, line);
     this.emit('sent', line.trim());
   }

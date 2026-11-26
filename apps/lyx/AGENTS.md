@@ -488,6 +488,34 @@ prompt tells the agent to use only those names or ones in the outline
 (never invent layouts) — that covers Beamer posters and ported journal
 templates without any per-class work.
 
+## CI hang on windows-latest: sync pipe opens can block the loop forever (2026-11-26)
+
+Symptom: `test (lyx, windows-latest)` sat in "Run tests" for hours (runs
+45824045623 / 45824048934, and already the cancelled v1.15.0 run) with zero
+output after `lyxserver-write-only.test.ts` — i.e. `lyxserver-mock.test.ts`
+never completed. Introduced by the v1.15.0-era bulk-walk work (809f192/62fd655):
+`walkBulk` fires N commands in one write, so N rapid reply/reset/reconnect
+cycles hit the mock's pipe pools under CI parallel load.
+
+Root-cause class: the only event-loop-blocking calls in the test workers were
+the SYNCHRONOUS pipe opens — `fs.openSync(inPath, 'w')` in
+`LyxServerClient.send()` and `fs.openSync(ctl, 'w')` in `MockLyxServer.start()`.
+A sync pipe open pends in the kernel when no server instance is listening; a
+blocked loop means NO timer fires (testTimeout included), so the worker wedges
+indefinitely. Fixes shipped (commit after v1.16.0):
+- client `start()` opens `.in` up front with a BOUNDED async open
+  (`openPipeWriteBounded`, 10s race); `send()` throws instead of ever doing a
+  sync open. Keep the FileHandle alive — extracting `.fd` and dropping the
+  handle GC-closes the fd (bit us once: "Closing file descriptor on garbage
+  collection" + every write-only test failing).
+- mock `start()` opens `.ctl` with the same bounded async open.
+- `.github/workflows/test.yml` test job now has `timeout-minutes: 30` so a
+  wedged job fails fast instead of the 6h default.
+- Do NOT enlarge the transport's `$PoolSize` past 4: with 16 armed `.out`
+  instances the deaf-mode reset at connect never surfaced to the client probe
+  (mode came back `pipe` instead of `write-only`) — pool size is load-bearing
+  for the deaf detection timing.
+
 ## Round-trip fixture battery (2026-11-26)
 
 - `test/fixtures/roundtrip.lyx` — one small representative document (Section/Subsection,

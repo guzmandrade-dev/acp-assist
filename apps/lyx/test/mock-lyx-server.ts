@@ -27,6 +27,23 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
+/** Bounded open of a named pipe for writing (see mock start; CI hang 2026-11-26). */
+async function openPipeWriteBounded(pipePath: string, timeoutMs: number): Promise<fs.promises.FileHandle> {
+  let timer: NodeJS.Timeout | undefined;
+  const opened = fs.promises.open(pipePath, 'w');
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`timed out opening ${pipePath}`)), timeoutMs);
+  });
+  try {
+    return await Promise.race([opened, timeout]);
+  } catch (e) {
+    opened.then((h) => h.close()).catch(() => undefined);
+    throw e;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 const DEBUG = Boolean(process.env.MOCK_DEBUG);
 const debug = (s: string) => {
   if (DEBUG) fs.appendFileSync('.tmp-mock.log', s + '\n');
@@ -74,6 +91,8 @@ export class MockLyxServer {
   private transport: ChildProcess | null = null;
   /** Writable fd of the transport's control pipe (reply channel). */
   private ctlFd: number | null = null;
+  /** Owning handle for ctlFd — dropping it would GC-close the fd. */
+  private ctlHandle: fs.promises.FileHandle | null = null;
 
   constructor(options: MockLyxOptions = {}) {
     instanceCounter++;
@@ -131,8 +150,11 @@ export class MockLyxServer {
     child.stdin?.on('error', () => undefined);
     await ready;
     // Connect the control channel (replies) and keep one persistent fd,
-    // the same pattern the LyxServerClient uses for .in.
-    this.ctlFd = fs.openSync(`${this.pipeBase}.ctl`, 'w');
+    // the same pattern the LyxServerClient uses for .in. Bounded async open:
+    // a sync open of a pipe with no listening instance blocks the event loop
+    // with no timeout (the 2026-11-26 CI hang), so race it against a timer.
+    this.ctlHandle = await openPipeWriteBounded(`${this.pipeBase}.ctl`, 10_000);
+    this.ctlFd = this.ctlHandle.fd;
     debug(`transport ready at ${this.pipeBase}`);
   }
 
@@ -151,6 +173,10 @@ export class MockLyxServer {
         /* already closed */
       }
       this.ctlFd = null;
+    }
+    if (this.ctlHandle !== null) {
+      this.ctlHandle.close().catch(() => undefined);
+      this.ctlHandle = null;
     }
     child?.kill();
     // Named pipes vanish with the transport process; FIFOs are files and
