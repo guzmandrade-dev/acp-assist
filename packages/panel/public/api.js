@@ -2,7 +2,7 @@
 
 // API client + agent settings persistence.
 
-import { cmdEl, keepAwakeEl, maxActionsEl, showFullHistoryEl, state } from './state.js';
+import { autoContinueEl, cmdEl, keepAwakeEl, maxActionsEl, showFullHistoryEl, state } from './state.js';
 
 /**
  * Fetch helper for the companion API: attaches the bearer token that the
@@ -57,6 +57,10 @@ export async function loadSettings() {
     if (typeof s.maxActionsPerMessage === 'number' && maxActionsEl) {
       maxActionsEl.value = String(s.maxActionsPerMessage);
     }
+    if (typeof s.autoContinueEdits === 'boolean') {
+      state.autoContinueEdits = s.autoContinueEdits;
+      if (autoContinueEl) autoContinueEl.checked = s.autoContinueEdits;
+    }
   } catch {
     /* keep the HTML defaults */
   }
@@ -72,6 +76,7 @@ export function saveSettings() {
     args,
     showFullHistory: showFullHistoryEl ? showFullHistoryEl.checked : state.showFullHistory,
     keepAwakeWhileBusy: keepAwakeEl ? keepAwakeEl.checked : state.keepAwakeWhileBusy,
+    autoContinueEdits: autoContinueEl ? autoContinueEl.checked : state.autoContinueEdits,
     ...(Number.isFinite(maxActions) && maxActions > 0
       ? { maxActionsPerMessage: maxActions }
       : {}),

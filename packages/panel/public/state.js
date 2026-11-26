@@ -60,6 +60,7 @@ export const installBtn = document.getElementById('install-btn');
 export const cmdEl = document.getElementById('agent-cmd');
 export const showFullHistoryEl = document.getElementById('show-full-history');
 export const maxActionsEl = document.getElementById('max-actions');
+export const autoContinueEl = document.getElementById('auto-continue');
 export const keepAwakeEl = document.getElementById('keep-awake');
 export const keepAwakeRow = document.getElementById('keep-awake-row');
 export const attachBtn = document.getElementById('attach');
@@ -175,6 +176,12 @@ export const state = {
    * default false.
    */
   keepAwakeWhileBusy: false,
+  /**
+   * Auto-continue past the edits-per-message limit up to the hard cap (50)
+   * instead of stopping to ask for "continue". Persisted server-side via
+   * /api/settings/agent (autoContinueEdits); default false.
+   */
+  autoContinueEdits: false,
 };
 
 /**

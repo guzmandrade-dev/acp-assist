@@ -38,6 +38,15 @@ export interface AgentSettings {
    */
   maxActionsPerMessage?: number;
   /**
+   * Panel preference: when true, the multi-action loop's edits-per-message
+   * limit is raised to the hard cap (MAX_ACTIONS_PER_MESSAGE_LIMIT = 50)
+   * instead of stopping at the configured limit to ask for "continue"
+   * — the agent keeps working unattended. Token-heavy on long documents
+   * (every extra step is a full agent turn over the whole context), so
+   * default false and the hard cap still applies.
+   */
+  autoContinueEdits?: boolean;
+  /**
    * Panel preference (Electron shell only): while a message/review run is
    * in flight, hold a power-save blocker so the computer does not sleep
    * mid-run (long documents, multi-edit batches). The panel calls

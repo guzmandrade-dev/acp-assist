@@ -4,6 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   readAgentSettingsBody,
+  effectiveMaxActionsPerMessage,
+  MAX_ACTIONS_PER_MESSAGE,
+  MAX_ACTIONS_PER_MESSAGE_LIMIT,
   formatHistoryReplay,
   archiveHistory,
   listConversations,
@@ -21,6 +24,23 @@ import {
 } from '../src/index.js';
 
 // --- settings body validation ---------------------------------------------------
+
+describe('effectiveMaxActionsPerMessage', () => {
+  it('defaults to MAX_ACTIONS_PER_MESSAGE without settings', () => {
+    expect(effectiveMaxActionsPerMessage({})).toBe(MAX_ACTIONS_PER_MESSAGE);
+  });
+
+  it('uses the clamped user setting when auto-continue is off', () => {
+    expect(effectiveMaxActionsPerMessage({ maxActionsPerMessage: 3 })).toBe(3);
+    expect(effectiveMaxActionsPerMessage({ maxActionsPerMessage: 3, autoContinueEdits: false })).toBe(3);
+    expect(effectiveMaxActionsPerMessage({ maxActionsPerMessage: 999 })).toBe(MAX_ACTIONS_PER_MESSAGE_LIMIT);
+  });
+
+  it('raises the limit to the hard cap when auto-continue is on', () => {
+    expect(effectiveMaxActionsPerMessage({ autoContinueEdits: true })).toBe(MAX_ACTIONS_PER_MESSAGE_LIMIT);
+    expect(effectiveMaxActionsPerMessage({ maxActionsPerMessage: 2, autoContinueEdits: true })).toBe(MAX_ACTIONS_PER_MESSAGE_LIMIT);
+  });
+});
 
 describe('readAgentSettingsBody', () => {
   it('accepts a command string and trims it', () => {
@@ -41,6 +61,11 @@ describe('readAgentSettingsBody', () => {
   it('keeps only string-valued env entries', () => {
     const out = readAgentSettingsBody({ env: { A: '1', B: 2, C: 'ok' } });
     expect(out).toEqual({ env: { A: '1', C: 'ok' } });
+  });
+
+  it('passes through autoContinueEdits only when boolean', () => {
+    expect(readAgentSettingsBody({ autoContinueEdits: true })).toEqual({ autoContinueEdits: true });
+    expect(readAgentSettingsBody({ autoContinueEdits: 1 })).toEqual({});
   });
 
   it('passes through the keepAwakeWhileBusy boolean only when boolean', () => {

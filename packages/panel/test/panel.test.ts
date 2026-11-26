@@ -142,6 +142,11 @@ describe('shared panel assets', () => {
     expect(convSrc).toContain('continue-btn');
     expect(convSrc).toContain("sendText('continue')");
     expect(convSrc).toContain('export async function sendText');
+    // auto-continue checkbox is wired through settings end to end
+    expect(html).toContain('id="auto-continue"');
+    expect(stateSrc).toContain('autoContinueEdits');
+    expect(apiSrc).toContain('autoContinueEdits');
+    expect(appSrc).toContain('autoContinueEl');
   });
 
   it('the start-working modal carries the previous-conversation picker end to end', async () => {

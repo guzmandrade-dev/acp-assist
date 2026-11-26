@@ -23,6 +23,7 @@ import {
   appSelect,
   showFullHistoryEl,
   maxActionsEl,
+  autoContinueEl,
   keepAwakeEl,
   keepAwakeRow,
   reviewBtn,
@@ -200,6 +201,12 @@ function start() {
   }
   if (maxActionsEl) {
     maxActionsEl.addEventListener('change', saveSettings);
+  }
+  if (autoContinueEl) {
+    autoContinueEl.addEventListener('change', () => {
+      state.autoContinueEdits = autoContinueEl.checked;
+      saveSettings();
+    });
   }
   const settingsDetails = document.querySelector('.agent-settings');
   document.addEventListener('pointerdown', (e) => {

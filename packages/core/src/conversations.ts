@@ -35,6 +35,22 @@ export function normalizeMaxActionsPerMessage(value: unknown): number | undefine
 }
 
 /**
+ * The effective edits-per-message limit for one run, from the persisted
+ * settings: with `autoContinueEdits` on, the limit is raised to the hard
+ * cap (MAX_ACTIONS_PER_MESSAGE_LIMIT) so the user does not have to click
+ * Continue — each extra step is a full agent turn, so on long documents
+ * this can be token-heavy; the hard cap still stops runaway loops.
+ * Otherwise the user setting (clamped), else the default.
+ */
+export function effectiveMaxActionsPerMessage(persisted: {
+  maxActionsPerMessage?: unknown;
+  autoContinueEdits?: unknown;
+}): number {
+  if (persisted.autoContinueEdits === true) return MAX_ACTIONS_PER_MESSAGE_LIMIT;
+  return normalizeMaxActionsPerMessage(persisted.maxActionsPerMessage) ?? MAX_ACTIONS_PER_MESSAGE;
+}
+
+/**
  * The app-level error logger: console + best-effort append to
  * `<logDir>/errors.log`. Logging must never break the request path.
  */

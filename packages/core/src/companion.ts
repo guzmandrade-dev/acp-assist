@@ -34,8 +34,7 @@ import {
   startSse,
   createApiAuthGuard,
   generateApiToken,
-  MAX_ACTIONS_PER_MESSAGE,
-  normalizeMaxActionsPerMessage,
+  effectiveMaxActionsPerMessage,
   buildReviewZip,
   formatPageList,
   formatReviewForHistory,
@@ -730,11 +729,10 @@ export function createCompanionServer<TState>(
 
       const key = backend.conversationKey(session);
       const historyPrefix = storeFor(session).buildHistoryPrefix(key);
-      // Effective edits-per-message limit for this run: the user setting
-      // (persisted in agent-settings.json) clamped, else the default.
-      const maxActions =
-        normalizeMaxActionsPerMessage((await agentSettings.read()).maxActionsPerMessage) ??
-        MAX_ACTIONS_PER_MESSAGE;
+      // Effective edits-per-message limit for this run: auto-continue raises
+      // it to the hard cap; otherwise the user setting (clamped), else the
+      // default.
+      const maxActions = effectiveMaxActionsPerMessage(await agentSettings.read());
       // Once-per-version context dedup: when this step's big context block
       // is byte-identical to the one last sent in this session (and no
       // history replay needs a fresh agent to see it), omit it — the ACP
