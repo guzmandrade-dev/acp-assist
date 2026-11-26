@@ -1115,6 +1115,17 @@ work; rules:
     `getTextTables()`/`getGraphicObjects()` counts + previews, or the agent
     cannot see inserted tables/images.
 
+## Formatting fixture battery (2026-11-26)
+
+- `test/formatting-fixture.test.ts` — the LO equivalent of the LyX roundtrip fixture: one
+  markdown-lite ```writer block with every construct (heading, bold/italic/code runs,
+  inline link, bullet + numbered lists, quote, code fence) pinned through
+  `parseContentBlock` AND through `parseAction` -> `writerAdapter.applyAction`, asserting
+  the EditPayload reaching the UNO bridge carries the format intact (`tracked: true`,
+  per-paragraph styles, per-run bold/italic/code/url) — plus insert-table / insert-image /
+  add-comment payload shapes. LO has no clipboard in its edit flow (UNO tracked changes),
+  so "copy/paste complex format" is covered as "the bridge payload preserves the format".
+
 ## Writer rich content (built + live-verified 2026-11-05, e2e 56/56)
 
 Bridge + companion (commits after 2026-11-04): `[ACTION: insert-table pN]`,
