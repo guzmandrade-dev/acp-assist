@@ -70,7 +70,14 @@ afterEach(async () => {
   }
 });
 
-describe('write-only fallback mode', () => {
+// The named-pipe/FIFO transport suites are skippable via LYX_SKIP_PIPE_MOCK
+// (set for the windows-latest CI job: the PowerShell named-pipe transport has
+// repeatedly wedged that job — see AGENTS.md 'CI hang on windows-latest').
+// The wire protocol stays covered on ubuntu CI (FIFO transport) and on local
+// Windows runs.
+const describePipe = process.env.LYX_SKIP_PIPE_MOCK ? describe.skip : describe;
+
+describePipe('write-only fallback mode', () => {
   it('detects the deaf .out pipe and switches to write-only', async () => {
     const { client } = await startDeaf();
     expect(client.mode).toBe('write-only');

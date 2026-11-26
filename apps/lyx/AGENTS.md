@@ -515,6 +515,15 @@ indefinitely. Fixes shipped (commit after v1.16.0):
   instances the deaf-mode reset at connect never surfaced to the client probe
   (mode came back `pipe` instead of `write-only`) — pool size is load-bearing
   for the deaf detection timing.
+- The pipe-mock suites (`lyxserver-mock.test.ts`, `lyxserver-write-only.test.ts`)
+  are skipped on the windows-latest CI job via `LYX_SKIP_PIPE_MOCK=1` (set in
+  test.yml): the PowerShell named-pipe transport wedged that job repeatedly
+  (2026-11-26; an instrumented run showed the bulk-walk test never finishing).
+  The same wire protocol stays covered on ubuntu CI (FIFO transport) and on
+  local Windows runs.
+- `apps/lyx/vitest.config.ts` uses `pool: 'threads'` on all platforms: the forks
+  pool intermittently loses a worker to a native abort at file startup
+  (0xC0000409 on Windows, SIGABRT on Linux — both seen on CI 2026-11-26).
 
 ## Round-trip fixture battery (2026-11-26)
 

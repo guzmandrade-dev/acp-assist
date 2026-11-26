@@ -5,7 +5,7 @@
  * The mock transport is PowerShell named pipes on Windows and Node FIFOs
  * on Linux/macOS, so the suite runs everywhere.
  */
-import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { LyxServerClient } from '../src/lyxserver/client.js';
 import { MockLyxServer } from './mock-lyx-server.js';
 
@@ -15,15 +15,10 @@ import { MockLyxServer } from './mock-lyx-server.js';
 vi.setConfig({ testTimeout: 20_000 });
 
 const activeMocks: Array<{ mock: MockLyxServer; client: LyxServerClient }> = [];
-let mockTestN = 0;
-beforeEach(() => console.error(`[mock] test ${++mockTestN} start`));
-afterEach(() => console.error(`[mock] test ${mockTestN} done`));
 
 async function startMock(paragraphs?: Array<{ layout: string; text: string }>) {
-  console.error('[mock] spawning transport');
   const mock = new MockLyxServer({ paragraphs });
   await mock.start();
-  console.error('[mock] transport ready');
   // Small probe window: the mock never echoes the hello, so a healthy
   // start() always waits it out (the deaf case resolves instantly).
   // Generous round-trip budget: the transport's pipe pairing lags on a
@@ -31,7 +26,6 @@ async function startMock(paragraphs?: Array<{ layout: string; text: string }>) {
   const client = new LyxServerClient({ pipeBase: mock.pipeBase, deafProbeMs: 60, timeoutMs: 30_000 });
   activeMocks.push({ mock, client });
   await client.start();
-  console.error('[mock] client started, mode=' + client.mode);
   return { mock, client };
 }
 
@@ -42,7 +36,14 @@ afterEach(async () => {
   }
 });
 
-describe('LyXServerClient against mock LyX', () => {
+// The named-pipe/FIFO transport suites are skippable via LYX_SKIP_PIPE_MOCK
+// (set for the windows-latest CI job: the PowerShell named-pipe transport has
+// repeatedly wedged that job — see AGENTS.md 'CI hang on windows-latest').
+// The wire protocol stays covered on ubuntu CI (FIFO transport) and on local
+// Windows runs.
+const describePipe = process.env.LYX_SKIP_PIPE_MOCK ? describe.skip : describe;
+
+describePipe('LyXServerClient against mock LyX', () => {
   it('handshakes and round-trips filename and layout', async () => {
     const { client } = await startMock([{ layout: 'Standard', text: 'Hello mock' }]);
     expect(client.mode).toBe('pipe');
