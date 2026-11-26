@@ -23,6 +23,8 @@ import {
   appSelect,
   showFullHistoryEl,
   maxActionsEl,
+  keepAwakeEl,
+  keepAwakeRow,
   reviewBtn,
   openViewerBtn,
 } from './state.js';
@@ -183,6 +185,17 @@ function start() {
       state.showFullHistory = showFullHistoryEl.checked;
       saveSettings();
       rerenderAssistantTexts();
+    });
+  }
+  // Keep-awake only exists in the Electron shell (powerSaveBlocker via the
+  // preload bridge); in the standalone browser host the row stays hidden.
+  if (keepAwakeRow && typeof window.electron?.keepAwake === 'function') {
+    keepAwakeRow.hidden = false;
+  }
+  if (keepAwakeEl) {
+    keepAwakeEl.addEventListener('change', () => {
+      state.keepAwakeWhileBusy = keepAwakeEl.checked;
+      saveSettings();
     });
   }
   if (maxActionsEl) {

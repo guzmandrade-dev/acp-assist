@@ -86,6 +86,7 @@ export function readAgentSettingsBody(body: unknown): Partial<AgentSettings> {
   }
   if (typeof b.officePath === 'string') out.officePath = b.officePath.trim();
   if (typeof b.showFullHistory === 'boolean') out.showFullHistory = b.showFullHistory;
+  if (typeof b.keepAwakeWhileBusy === 'boolean') out.keepAwakeWhileBusy = b.keepAwakeWhileBusy;
   const maxActions = normalizeMaxActionsPerMessage(b.maxActionsPerMessage);
   if (maxActions !== undefined) out.maxActionsPerMessage = maxActions;
   return out;

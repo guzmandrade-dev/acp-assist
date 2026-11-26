@@ -37,6 +37,15 @@ export interface AgentSettings {
    * command; clamped to [1, 50] on read/write.
    */
   maxActionsPerMessage?: number;
+  /**
+   * Panel preference (Electron shell only): while a message/review run is
+   * in flight, hold a power-save blocker so the computer does not sleep
+   * mid-run (long documents, multi-edit batches). The panel calls
+   * window.electron.keepAwake(true/false) around each run; in standalone
+   * browser mode the API is absent and the setting does nothing.
+   * Default false.
+   */
+  keepAwakeWhileBusy?: boolean;
 }
 
 /**

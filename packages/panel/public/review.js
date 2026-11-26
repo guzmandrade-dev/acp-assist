@@ -22,6 +22,7 @@ import {
   reviewHistory,
   reviewRun,
   reviewCancel,
+  setKeepAwake,
 } from './state.js';
 import { api } from './api.js';
 import { addMessage, addSystemMessage, scrollToBottomIfNear } from './messages.js';
@@ -264,6 +265,7 @@ async function runReview() {
   setBusy(true);
   state.generationStart = Date.now();
   state.agentStart = 0;
+  await setKeepAwake(true); // long reviews must not die to the OS sleep timer
   showTyping();
   resetThoughts();
   let streamed = '';
@@ -339,6 +341,7 @@ async function runReview() {
     hideTyping();
     state.generationStart = 0;
     setBusy(false);
+    await setKeepAwake(false);
   }
 }
 

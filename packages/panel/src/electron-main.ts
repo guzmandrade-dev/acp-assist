@@ -10,7 +10,7 @@
  * layout for no maintenance win.
  */
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, screen } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, powerSaveBlocker, screen } from 'electron';
 import { spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -105,6 +105,13 @@ export function createElectronMain(options: ElectronMainOptions): void {
   let watcherLastState: string | null = null;
   /** Last always-on-top value actually applied (avoid redundant Win32 calls). */
   let lastAppliedTop: boolean | null = null;
+  /**
+   * Active powerSaveBlocker id while the panel holds "keep awake" (the
+   * user opted in via the keepAwakeWhileBusy setting and a run is in
+   * flight — long multi-edit runs / reviews must not die to the OS sleep
+   * timer). Null when released.
+   */
+  let powerBlockerId: number | null = null;
 
   function applyAlwaysOnTop(top: boolean): void {
     if (top === lastAppliedTop) return;
@@ -165,6 +172,10 @@ export function createElectronMain(options: ElectronMainOptions): void {
 
   app.on('before-quit', () => {
     focusWatcher?.kill();
+    if (powerBlockerId !== null) {
+      powerSaveBlocker.stop(powerBlockerId);
+      powerBlockerId = null;
+    }
     options.removeRecord?.().catch(() => undefined);
   });
 
@@ -223,6 +234,18 @@ export function createElectronMain(options: ElectronMainOptions): void {
     ipcMain.on('window/toggle-always-on-top', () => {
       followMode = !followMode;
       applyAlwaysOnTop(followMode && watcherLastState !== null && watchedProcesses.has(watcherLastState));
+    });
+
+    // Panel → shell: hold/release a power-save blocker around long runs
+    // (keepAwakeWhileBusy setting; the panel calls this on run start/end).
+    ipcMain.handle('power:keep-awake', (_event, on: unknown) => {
+      if (on && powerBlockerId === null) {
+        powerBlockerId = powerSaveBlocker.start('prevent-display-sleep');
+      } else if (!on && powerBlockerId !== null) {
+        powerSaveBlocker.stop(powerBlockerId);
+        powerBlockerId = null;
+      }
+      return powerBlockerId !== null;
     });
 
     // PDF-review mode: native "open a PDF" picker. Resolves to the chosen

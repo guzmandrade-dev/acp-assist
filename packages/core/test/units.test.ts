@@ -43,6 +43,12 @@ describe('readAgentSettingsBody', () => {
     expect(out).toEqual({ env: { A: '1', C: 'ok' } });
   });
 
+  it('passes through the keepAwakeWhileBusy boolean only when boolean', () => {
+    expect(readAgentSettingsBody({ keepAwakeWhileBusy: true })).toEqual({ keepAwakeWhileBusy: true });
+    expect(readAgentSettingsBody({ keepAwakeWhileBusy: false })).toEqual({ keepAwakeWhileBusy: false });
+    expect(readAgentSettingsBody({ keepAwakeWhileBusy: 'yes' })).toEqual({});
+  });
+
   it('returns an empty object for garbage input', () => {
     expect(readAgentSettingsBody(null)).toEqual({});
     expect(readAgentSettingsBody('nope')).toEqual({});

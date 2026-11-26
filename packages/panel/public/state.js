@@ -60,6 +60,8 @@ export const installBtn = document.getElementById('install-btn');
 export const cmdEl = document.getElementById('agent-cmd');
 export const showFullHistoryEl = document.getElementById('show-full-history');
 export const maxActionsEl = document.getElementById('max-actions');
+export const keepAwakeEl = document.getElementById('keep-awake');
+export const keepAwakeRow = document.getElementById('keep-awake-row');
 export const attachBtn = document.getElementById('attach');
 export const newSessionBtn = document.getElementById('new-session');
 export const fileInput = document.getElementById('file-input');
@@ -166,4 +168,27 @@ export const state = {
    * /api/settings/agent (showFullHistory); default true.
    */
   showFullHistory: true,
+  /**
+   * Hold a power-save blocker in the desktop shell while a run is in
+   * flight (Electron only; no-op in the standalone browser host).
+   * Persisted server-side via /api/settings/agent (keepAwakeWhileBusy);
+   * default false.
+   */
+  keepAwakeWhileBusy: false,
 };
+
+/**
+ * Ask the desktop shell to keep the computer awake (on) or release it
+ * (off). No-op unless the persisted keepAwakeWhileBusy setting is on and
+ * the Electron preload exposed window.electron.keepAwake.
+ */
+export async function setKeepAwake(on) {
+  if (!state.keepAwakeWhileBusy) return;
+  const fn = window.electron?.keepAwake;
+  if (!fn) return;
+  try {
+    await fn(on);
+  } catch {
+    /* best-effort — never break a run over power management */
+  }
+}
