@@ -55,17 +55,18 @@ const fakeDocText = (paragraphs: Array<{ layout: string; text: string }>) =>
     '\\end_document',
   ].join('\n');
 
-async function writeFakeDoc(): Promise<FakeDoc> {
+async function writeFakeDoc(
+  paragraphs = [
+    { layout: 'Title', text: 'placeholder title' },
+    { layout: 'Standard', text: 'first body' },
+    { layout: 'Standard', text: 'second body' },
+  ],
+): Promise<FakeDoc> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lyx-multi-'));
   // These tests predate the save-consent gate; their harness documents live
   // in a (marker-only) git working tree, so the disk save is ungated.
   await fs.mkdir(path.join(dir, '.git'));
   const file = path.join(dir, 'doc.lyx');
-  const paragraphs = [
-    { layout: 'Title', text: 'placeholder title' },
-    { layout: 'Standard', text: 'first body' },
-    { layout: 'Standard', text: 'second body' },
-  ];
   await fs.writeFile(file, fakeDocText(paragraphs), 'utf8');
   return { file, dir, paragraphs };
 }
@@ -117,14 +118,14 @@ class FailingAgent implements AgentRunner {
  */
 function fakeLyx(
   doc: FakeDoc,
-  hooks: { onPaste?: () => Promise<void>; failGoto?: boolean; writeOnly?: boolean; noPaste?: boolean; saveDelayMs?: number; emptyCopyTimes?: number } = {},
+  hooks: { onPaste?: () => Promise<void>; failGoto?: boolean; writeOnly?: boolean; noPaste?: boolean; saveDelayMs?: number; emptyCopyTimes?: number; misalignGoto?: number } = {},
 ) {
   let cursor = 0;
   let selection: { p: number; start: number; end: number } | null = null;
   let fileOverride: string | null = null;
   const clip = { text: '' };
   const client = {
-    calls: { save: 0, paste: 0, copy: 0, undo: 0 },
+    calls: { save: 0, paste: 0, copy: 0, undo: 0, goto: 0 },
     mode: hooks.writeOnly ? 'write-only' : 'pipe',
     /** Test hook: simulate the user focusing another LyX window mid-run. */
     setFile(f: string | null) {
@@ -180,11 +181,15 @@ function fakeLyx(
       return true;
     },
     async paragraphGoto(pit: number) {
+      client.calls.goto += 1;
       // Test hook: force the direct jump to be rejected (unknown LFUN) so
       // the serial-walk fallback is exercised.
       if (hooks.failGoto) return false;
       if (pit < 0 || pit >= doc.paragraphs.length) return false;
-      cursor = pit;
+      // Test hook: simulate pit ids NOT lining up with row indices (insets
+      // owning paragraphs, live-verified 2026-11-22) — the jump "succeeds"
+      // but lands on the wrong paragraph.
+      cursor = hooks.misalignGoto ? Math.min(pit + hooks.misalignGoto, doc.paragraphs.length - 1) : pit;
       selection = null;
       return true;
     },
@@ -198,6 +203,13 @@ function fakeLyx(
       if (next >= doc.paragraphs.length) return false;
       cursor = next;
       selection = null;
+      return true;
+    },
+    async paragraphDownBulk(count: number) {
+      // In-memory equivalent of the one-write bulk walk.
+      for (let i = 0; i < count; i++) {
+        if (!(await client.paragraphDown())) return false;
+      }
       return true;
     },
     async paragraphSelect() {
@@ -299,11 +311,11 @@ interface Harness {
 
 async function startHarness(
   replies: string[],
-  lyxHooks: { onPaste?: () => Promise<void>; failGoto?: boolean; writeOnly?: boolean; noPaste?: boolean; saveDelayMs?: number; emptyCopyTimes?: number } = {},
+  lyxHooks: { onPaste?: () => Promise<void>; failGoto?: boolean; writeOnly?: boolean; noPaste?: boolean; saveDelayMs?: number; emptyCopyTimes?: number; misalignGoto?: number } = {},
   agentOverride?: AgentRunner,
-  extraOptions: { settingsDir?: string } = {},
+  extraOptions: { settingsDir?: string; paragraphs?: Array<{ layout: string; text: string }> } = {},
 ): Promise<Harness> {
-  const doc = await writeFakeDoc();
+  const doc = await writeFakeDoc(extraOptions.paragraphs);
   const lyx = fakeLyx(doc, lyxHooks);
   const agent = agentOverride ?? new FakeAgent(replies);
   const app = createServer({
@@ -548,6 +560,46 @@ describe('multi-action runs over the message stream', () => {
     expect(harness.doc.paragraphs[0].text).toBe('placeholder title');
     expect(harness.doc.paragraphs[1].text).toBe('first body rewritten');
     expect(frames.filter((f) => typeof f.applied === 'string').map((f) => f.applied)).toEqual(['rewrite-at']);
+    expect(frames.at(-1)).toEqual({ done: true });
+  });
+
+  it('skips the direct paragraph-goto jump once a mis-landing is detected (jump probe)', async () => {
+    // misalignGoto simulates pit ids NOT lining up with row indices (insets
+    // owning paragraphs, live-verified 2026-11-22): the first jump "succeeds"
+    // but lands on the wrong paragraph, verification catches it, and the bulk
+    // walk applies the edit correctly. The probe is remembered per document
+    // for the session, so the SECOND action does not pay for a doomed jump.
+    const paragraphs = Array.from({ length: 8 }, (_, i) => ({
+      layout: i === 0 ? 'Title' : 'Standard',
+      text: `para ${i + 1}`,
+    }));
+    const harness = await startHarness(
+      [
+        'Rewriting p6.\n```lyx\n\\begin_layout Standard\npara 6 rewritten\n\\end_layout\n```\n[ACTION: rewrite-at p6]',
+        'Rewriting p6 again.\n```lyx\n\\begin_layout Standard\npara 6 rewritten twice\n\\end_layout\n```\n[ACTION: rewrite-at p6]',
+        'Done.\n[ACTION: none]',
+      ],
+      { misalignGoto: 2 },
+      undefined,
+      { paragraphs },
+    );
+    cleanups.push(async () => {
+      await new Promise<void>((resolve) => harness.server.close(() => resolve()));
+      await fs.rm(harness.doc.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
+
+    const res = await fetch(`${harness.base}/api/session/${harness.sessionId}/message/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${API_TOKEN}` },
+      body: JSON.stringify({ message: 'rewrite p6 twice' }),
+    });
+    const frames = await readSse(res);
+
+    // Both edits landed on p6 (the walk recovered from the misaligned jump).
+    expect(harness.doc.paragraphs[5].text).toBe('para 6 rewritten twice');
+    expect(frames.filter((f) => typeof f.applied === 'string').length).toBe(2);
+    // The jump was attempted exactly once (step 1); step 2 skipped it.
+    expect(harness.lyx.client.calls.goto).toBe(1);
     expect(frames.at(-1)).toEqual({ done: true });
   });
 

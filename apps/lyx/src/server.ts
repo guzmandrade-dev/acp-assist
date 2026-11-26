@@ -130,6 +130,17 @@ export interface LyxState {
    */
   docSnapshot?: DocumentSnapshot | null;
   /**
+   * Result of the last direct `paragraph-goto` jump probe for a document:
+   * pit ids need not line up with the file outline when insets own
+   * paragraphs (live-verified), so in such documents the jump lands wrong
+   * and every action pays a wasted jump + clipboard verify before falling
+   * back to the walk. Once a jump verifiably fails for a document path,
+   * later actions on the SAME path (this session) skip the jump and go
+   * straight to the walk. Keyed by document path — not by snapshot — so
+   * the post-edit saves do not re-arm the probe.
+   */
+  jumpProbe?: { docPath: string; works: boolean } | null;
+  /**
    * Document paths whose save conditions the user accepted this session
    * (save-consent gate; only asked for documents outside version control).
    */
@@ -659,24 +670,48 @@ function createLyxBackend(
       return { ok: false, payload: null, reason: 'mismatch', actual: '' };
     };
 
-    // Direct jump first; fall back to the serial walk when the jump is
-    // rejected or fails verification.
-    const viaJump = await session.state.lyx.paragraphGoto(target - 1, 0);
+    // Direct jump first when it is known to work for this document content
+    // (jumpProbe); fall back to the walk when the jump is rejected or fails
+    // verification. pit ids need not line up with the file outline when
+    // insets own paragraphs, so a failed jump is remembered per snapshot and
+    // not retried for the rest of that document version.
+    const docKey = session.state.documentPath ?? UNSAVED_KEY;
+    const probe = session.state.jumpProbe?.docPath === docKey ? session.state.jumpProbe : null;
+    const viaJump = (probe ? probe.works : true) && (await session.state.lyx.paragraphGoto(target - 1, 0));
     let attempt = viaJump
       ? await selectAndVerify()
       : { ok: false, payload: null, reason: 'select' as const, actual: '' };
-    if (!attempt.ok) {
+    if (attempt.ok) {
+      session.state.jumpProbe = { docPath: docKey, works: true };
+    } else {
+      // Only a REAL mis-landing (non-empty actual) proves the jump wrong; an
+      // empty read is clipboard contention and must not poison the probe.
+      if (viaJump && attempt.reason === 'mismatch' && attempt.actual !== '') {
+        session.state.jumpProbe = { docPath: docKey, works: false };
+      }
       // A wrong jump may have left a selection behind — selections persist
       // in LyX and would pollute the walk's paragraph-select.
       await session.state.lyx.clearSelection();
       const moved = await session.state.lyx.beginOfDocument();
       if (!moved) return fail('buffer-begin failed.');
-      let ok = true;
-      for (let i = 1; i < target && ok; i++) ok = await session.state.lyx.paragraphDown();
-      if (!ok) {
-        return fail(`Could not reach paragraph [p${target}] (paragraph-down failed).`);
+      // Fast path: the whole walk in ONE pipe write (paragraphDownBulk).
+      // The landing spot is verified below; on mismatch the serial walk
+      // re-runs from the top as the authoritative fallback.
+      const bulkOk = await session.state.lyx.paragraphDownBulk(target - 1);
+      attempt = bulkOk
+        ? await selectAndVerify()
+        : { ok: false, payload: null, reason: 'select' as const, actual: '' };
+      if (!attempt.ok) {
+        await session.state.lyx.clearSelection();
+        const reanchored = await session.state.lyx.beginOfDocument();
+        if (!reanchored) return fail('buffer-begin failed.');
+        let ok = true;
+        for (let i = 1; i < target && ok; i++) ok = await session.state.lyx.paragraphDown();
+        if (!ok) {
+          return fail(`Could not reach paragraph [p${target}] (paragraph-down failed).`);
+        }
+        attempt = await selectAndVerify();
       }
-      attempt = await selectAndVerify();
     }
     if (!attempt.ok) {
       logError(

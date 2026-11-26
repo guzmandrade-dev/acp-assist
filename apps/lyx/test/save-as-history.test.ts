@@ -116,6 +116,12 @@ function fakeLyx(initialFile: string, saveMode: 'deferred' | 'immediate', saveAs
     async paragraphDown() {
       return false;
     },
+    async paragraphDownBulk(count: number) {
+      for (let i = 0; i < count; i++) {
+        if (!(await this.paragraphDown())) return false;
+      }
+      return true;
+    },
     async paragraphSelect() {
       return true;
     },

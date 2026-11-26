@@ -81,6 +81,22 @@ describe('LyXServerClient against mock LyX', () => {
     expect(await client.paragraphGoto(99, 0)).toBe(false);
   });
 
+  it('paragraphDownBulk dispatches the whole walk in one write and lands on the target row', async () => {
+    const { mock, client } = await startMock(
+      Array.from({ length: 12 }, (_, i) => ({ layout: 'Standard', text: `Para ${i + 1}` })),
+    );
+    expect(await client.beginOfDocument()).toBe(true);
+    // 10 downs in ONE pipe write: the cursor lands on the 11th paragraph.
+    expect(await client.paragraphDownBulk(10)).toBe(true);
+    expect(await client.paragraphSelect()).toBe(true);
+    expect(await client.copySelection()).toBe(true);
+    expect(mock.clipboardText).toBe('Para 11');
+    // count 0 is a no-op success.
+    expect(await client.paragraphDownBulk(0)).toBe(true);
+    // Overshooting the last row gets an ERROR reply -> false.
+    expect(await client.paragraphDownBulk(5)).toBe(false);
+  });
+
   it('executes the insert-after pN choreography', async () => {
     const { mock, client } = await startMock([
       { layout: 'Title', text: 'Doc title' },

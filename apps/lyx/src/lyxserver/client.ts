@@ -743,6 +743,60 @@ export class LyxServerClient extends EventEmitter {
     }
   }
 
+  /**
+   * Dispatch `count` paragraph-down commands in ONE pipe write, instead of
+   * one round-trip per row (the serial walk to a late paragraph costs N
+   * round-trips and LyX snaps its view to the cursor on every dispatched
+   * LFUN, so it visibly scrolls through the whole document).
+   *
+   * The wire protocol has no request id, so same-func replies can only be
+   * COUNTED, not attributed — and Windows broadcasts duplicate replies —
+   * so an early/late count is possible. Callers MUST therefore verify the
+   * landing spot (gotoParagraph does) and be prepared to re-walk serially.
+   * Returns false on timeout or when any reply is an ERROR.
+   */
+  async paragraphDownBulk(count: number, timeoutMs?: number): Promise<boolean> {
+    if (count <= 0) return true;
+    const func = 'paragraph-down';
+    const lines = Array.from({ length: count }, () => `LYXCMD:${this.clientName}:${func}:\n`).join('');
+    if (this.mode === 'write-only') {
+      // Deaf pipe: no replies can arrive; fire the batch and give LyX's
+      // dispatch queue one grace period for the whole batch.
+      this.send(lines);
+      await sleep(Math.min(Math.max(this.graceFor(func), count * 4), 5_000));
+      return true;
+    }
+    const timeout = timeoutMs ?? Math.max(this.timeoutMs, count * 50 + 2_000);
+    await this.awaitOutCycle();
+    const waiters = this.waiters;
+    return await new Promise<boolean>((resolve) => {
+      let remaining = count;
+      let settled = false;
+      let timer: NodeJS.Timeout;
+      const finish = (ok: boolean): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        waiters.delete(waiter);
+        resolve(ok);
+      };
+      const waiter: Waiter = {
+        func,
+        resolve: (line?: string) => {
+          if (settled) return;
+          if (line === undefined || line.startsWith('ERROR:')) return finish(false);
+          remaining -= 1;
+          if (remaining <= 0) return finish(true);
+          // dispatch() removes a waiter per reply — re-register for the next.
+          waiters.add(waiter);
+        },
+      };
+      timer = setTimeout(() => finish(false), timeout);
+      waiters.add(waiter);
+      this.send(lines);
+    });
+  }
+
   /** Select the entire paragraph the cursor is in. */
   async paragraphSelect(): Promise<boolean> {
     return (await this.tryRequest('paragraph-select')) !== null;
