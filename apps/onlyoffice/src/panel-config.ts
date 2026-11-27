@@ -20,4 +20,11 @@ export const PANEL_CONFIG: PanelConfig = {
   busyText: 'talking to ONLYOFFICE\u2026',
   eventPush: true,
   theme: null,
+  // The bridge .plugin runs inside the editor itself; the picker records
+  // which desktop build is the target (the Euro-Office fork keeps the same
+  // window.Asc plugin API). Drives the targetApp agent setting.
+  targetApps: [
+    { id: 'onlyoffice', label: 'ONLYOFFICE Desktop Editors', hint: 'The bridge plugin is installed via ONLYOFFICE\'s Plugin Manager.' },
+    { id: 'euro-office', label: 'Euro-Office', hint: 'The AGPL ONLYOFFICE fork; the same bridge .plugin works (same window.Asc plugin API).' },
+  ],
 };

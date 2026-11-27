@@ -28,6 +28,7 @@ import {
   findUnopkg,
   installBridge,
   officeHasBundledPython,
+  officePathForTargetApp,
   resolveOfficeTarget,
   sofficeRunning,
   type InstallResult,
@@ -495,11 +496,13 @@ function registerInstallRoutes(
   });
   // The persisted agent settings carry the optional `officePath` (the
   // install target of the bridge .oxt — LibreOffice by default, but any
-  // UNO-based suite such as Collabora Office or Apache OpenOffice).
+  // UNO-based suite such as Collabora Office or Apache OpenOffice), or a
+  // `targetApp` picker id mapped to a standard install location. An
+  // explicit officePath wins over the targetApp mapping.
   const agentSettings = createAgentSettings(options.settingsDir);
   const configuredOfficePath = async (): Promise<string | undefined> => {
     const s = await agentSettings.read();
-    return s.officePath ? s.officePath : undefined;
+    return s.officePath ? s.officePath : officePathForTargetApp(s.targetApp);
   };
 
   app.get(

@@ -374,6 +374,39 @@ describe('shared panel assets', () => {
     expect(css).toContain('.app-select');
   });
 
+  it('shared panel carries the target-app picker seam (hidden details + wiring next to the editor dropdown)', async () => {
+    const dir = panelPublicDir();
+    const html = await fs.readFile(path.join(dir, 'index.html'), 'utf8');
+    expect(html).toContain('id="target-settings"');
+    expect(html).toContain('id="target-app-list"');
+    // The picker sits in the brand row, right after the editor dropdown.
+    const brand = html.slice(html.indexOf('toolbar-brand'), html.indexOf('toolbar-controls'));
+    expect(brand.indexOf('id="app-select"')).toBeGreaterThan(-1);
+    expect(brand.indexOf('id="target-settings"')).toBeGreaterThan(brand.indexOf('id="app-select"'));
+    const appJs = await fs.readFile(path.join(dir, 'app.js'), 'utf8');
+    expect(appJs).toContain('CONFIG.targetApps');
+    expect(appJs).toContain('saveTargetApp');
+    const apiJs = await fs.readFile(path.join(dir, 'api.js'), 'utf8');
+    expect(apiJs).toContain('targetApp');
+    const stateJs = await fs.readFile(path.join(dir, 'state.js'), 'utf8');
+    expect(stateJs).toContain('targetApp');
+    const css = await fs.readFile(path.join(dir, 'style.css'), 'utf8');
+    expect(css).toContain('.target-settings-panel');
+  });
+
+  it('agent settings: max-edits and auto-continue are separate rows', async () => {
+    const dir = panelPublicDir();
+    const html = await fs.readFile(path.join(dir, 'index.html'), 'utf8');
+    expect(html).toContain('id="max-actions-row"');
+    expect(html).toContain('id="auto-continue-row"');
+    // Each option in its own .settings-row (not sharing one row).
+    const maxRow = html.slice(html.indexOf('id="max-actions-row"'), html.indexOf('id="auto-continue-row"'));
+    expect(maxRow).toContain('id="max-actions"');
+    expect(maxRow).not.toContain('id="auto-continue"');
+    const autoRow = html.slice(html.indexOf('id="auto-continue-row"'));
+    expect(autoRow).toContain('id="auto-continue"');
+  });
+
   it('toolbar is two rows: brand row above, controls row (file dropdown + agent + pin + reconnect) below', async () => {
     const dir = panelPublicDir();
     const html = await fs.readFile(path.join(dir, 'index.html'), 'utf8');

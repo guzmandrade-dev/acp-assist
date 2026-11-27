@@ -4,6 +4,15 @@
 
 import { autoContinueEl, cmdEl, keepAwakeEl, maxActionsEl, showFullHistoryEl, state } from './state.js';
 
+/** Persist only the target-app choice (PUT merges server-side). */
+export function saveTargetApp(targetApp) {
+  state.targetApp = targetApp;
+  api('/api/settings/agent', {
+    method: 'PUT',
+    body: JSON.stringify({ targetApp }),
+  }).catch(() => {});
+}
+
 /**
  * Fetch helper for the companion API: attaches the bearer token that the
  * boot script injected same-origin, decodes JSON error bodies into
@@ -61,6 +70,7 @@ export async function loadSettings() {
       state.autoContinueEdits = s.autoContinueEdits;
       if (autoContinueEl) autoContinueEl.checked = s.autoContinueEdits;
     }
+    if (typeof s.targetApp === 'string') state.targetApp = s.targetApp;
   } catch {
     /* keep the HTML defaults */
   }
@@ -77,6 +87,7 @@ export function saveSettings() {
     showFullHistory: showFullHistoryEl ? showFullHistoryEl.checked : state.showFullHistory,
     keepAwakeWhileBusy: keepAwakeEl ? keepAwakeEl.checked : state.keepAwakeWhileBusy,
     autoContinueEdits: autoContinueEl ? autoContinueEl.checked : state.autoContinueEdits,
+    ...(state.targetApp ? { targetApp: state.targetApp } : {}),
     ...(Number.isFinite(maxActions) && maxActions > 0
       ? { maxActionsPerMessage: maxActions }
       : {}),

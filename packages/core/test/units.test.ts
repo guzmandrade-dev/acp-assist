@@ -86,6 +86,12 @@ describe('readAgentSettingsBody', () => {
     expect(readAgentSettingsBody({ officePath: 42 })).toEqual({});
   });
 
+  it('keeps a trimmed targetApp id, drops empty/garbage values', () => {
+    expect(readAgentSettingsBody({ targetApp: ' openoffice ' })).toEqual({ targetApp: 'openoffice' });
+    expect(readAgentSettingsBody({ targetApp: '   ' })).toEqual({});
+    expect(readAgentSettingsBody({ targetApp: 42 })).toEqual({});
+  });
+
   it('keeps a boolean showFullHistory and ignores non-booleans', () => {
     expect(readAgentSettingsBody({ showFullHistory: false })).toEqual({ showFullHistory: false });
     expect(readAgentSettingsBody({ showFullHistory: true })).toEqual({ showFullHistory: true });

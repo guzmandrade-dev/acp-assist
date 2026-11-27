@@ -21,6 +21,9 @@ import {
   fileInput,
   selectionEl,
   appSelect,
+  targetSettingsEl,
+  targetAppListEl,
+  targetAppHintEl,
   showFullHistoryEl,
   maxActionsEl,
   autoContinueEl,
@@ -29,7 +32,7 @@ import {
   reviewBtn,
   openViewerBtn,
 } from './state.js';
-import { api, loadSettings, saveSettings } from './api.js';
+import { api, loadSettings, saveSettings, saveTargetApp } from './api.js';
 import { addSystemMessage, rerenderAssistantTexts, showEmpty } from './messages.js';
 import {
   maybeSetBusyFromError,
@@ -157,8 +160,39 @@ function setupAppSwitcher() {
   });
 }
 
+// Target-application picker: the icon button right of the editor dropdown.
+// CONFIG.targetApps lists this app family's targets (LibreOffice/OpenOffice,
+// ONLYOFFICE/Euro-Office); the choice persists server-side as the agent
+// setting `targetApp` and takes effect on the next reconnect/install.
+function setupTargetAppPicker() {
+  const targets = CONFIG.targetApps;
+  if (!targetSettingsEl || !targetAppListEl || !Array.isArray(targets) || targets.length < 2) return;
+  for (const t of targets) {
+    const label = document.createElement('label');
+    label.className = 'settings-check';
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'target-app';
+    radio.value = t.id;
+    radio.checked = state.targetApp === t.id || (!state.targetApp && t.id === targets[0].id);
+    radio.addEventListener('change', () => {
+      if (!radio.checked) return;
+      saveTargetApp(t.id);
+      if (targetAppHintEl) targetAppHintEl.textContent = t.hint ?? '';
+    });
+    const small = document.createElement('small');
+    small.textContent = t.label;
+    label.append(radio, small);
+    targetAppListEl.appendChild(label);
+  }
+  const active = targets.find((t) => t.id === (state.targetApp || targets[0].id));
+  if (targetAppHintEl) targetAppHintEl.textContent = active?.hint ?? '';
+  targetSettingsEl.hidden = false;
+}
+
 function start() {
   setupAppSwitcher();
+  setupTargetAppPicker();
   setupUpdateRow();
   input.placeholder = 'Ask the agent. It reads the document and your selection, then decides: reply here, insert at the cursor, or rewrite what you selected.';
   // PDF-review mode: the "document" is a read-only PDF, so the composer
@@ -171,6 +205,9 @@ function start() {
     // PDF review is prose-only: the edits-per-message limit does not apply.
     const maxActionsRow = document.getElementById('max-actions-row');
     if (maxActionsRow) maxActionsRow.hidden = true;
+    const autoContinueRow = document.getElementById('auto-continue-row');
+    if (autoContinueRow) autoContinueRow.hidden = true;
+    if (targetSettingsEl) targetSettingsEl.hidden = true;
     input.placeholder = 'Ask about the PDF — the agent answers in prose. Use Review… for the structured report.';
     const hint = document.getElementById('composer-hint');
     if (hint) hint.textContent = 'The agent answers in prose — the PDF is never edited. Open in viewer shows the PDF beside this panel.';
@@ -213,9 +250,11 @@ function start() {
   }
   const settingsDetails = document.querySelector('.agent-settings');
   document.addEventListener('pointerdown', (e) => {
-    if (settingsDetails instanceof HTMLDetailsElement && settingsDetails.open
-        && !settingsDetails.contains(e.target)) {
-      settingsDetails.open = false;
+    for (const details of [settingsDetails, targetSettingsEl]) {
+      if (details instanceof HTMLDetailsElement && details.open
+          && !details.contains(e.target)) {
+        details.open = false;
+      }
     }
   });
   updateComposerState();

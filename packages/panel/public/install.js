@@ -45,7 +45,7 @@ async function refreshBridgeDownloadable() {
     if (info.available) {
       installBtn.title = info.updateNeeded
         ? `Download acp-bridge.plugin v${info.version} — the connected plugin is v${info.connectedVersion}; reinstall to update`
-        : `Download the bundled acp-bridge.plugin (v${info.version ?? '?'}) to install/update the bridge in ONLYOFFICE`;
+        : `Download the bundled acp-bridge.plugin (v${info.version ?? '?'}) to install/update the bridge in ${targetAppLabel()}`;
     }
   } catch {
     installBtn.hidden = true;
@@ -84,6 +84,16 @@ async function downloadBridgePlugin() {
   }
 }
 
+/** Label of the target app picked in the target-app picker (fallback: the app itself). */
+function targetAppLabel() {
+  const targets = CONFIG.targetApps;
+  if (Array.isArray(targets) && targets.length > 0) {
+    const active = targets.find((t) => t.id === state.targetApp) ?? targets[0];
+    return active.label;
+  }
+  return CONFIG.appName ?? 'the editor';
+}
+
 /** Post-download dialog: the manual install steps (server-provided). */
 function showPluginInstructions(info) {
   const backdrop = document.createElement('div');
@@ -93,7 +103,7 @@ function showPluginInstructions(info) {
   modal.setAttribute('role', 'dialog');
   modal.setAttribute('aria-modal', 'true');
   const h = document.createElement('h2');
-  h.textContent = 'Install the bridge plugin in ONLYOFFICE';
+  h.textContent = `Install the bridge plugin in ${targetAppLabel()}`;
   const p = document.createElement('p');
   const code = document.createElement('code');
   code.textContent = 'acp-bridge.plugin';
@@ -153,7 +163,7 @@ async function installBridgeExtension() {
 if (installBtn) {
   if (CONFIG.bridgeDownload) {
     installBtn.textContent = 'Download bridge…';
-    installBtn.title = 'Download the bundled acp-bridge.plugin to install/update the bridge in ONLYOFFICE';
+    installBtn.title = `Download the bundled acp-bridge.plugin to install/update the bridge in ${targetAppLabel()}`;
   }
   installBtn.addEventListener('click', () => {
     if (CONFIG.bridgeDownload) void downloadBridgePlugin();

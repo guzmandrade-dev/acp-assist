@@ -662,3 +662,37 @@ untouched. Rules:
     same-GUID 0.8.0 .plugin via Plugin Manager replaces 0.7.5 in place.
     Reinstall path: `npm run package:plugin`, Plugin Manager → Install
     plugin manually → pick `acp-bridge.plugin`.
+
+## Self-contained plugin runtime (2026-11-27) — Euro-Office decoupling
+
+The bridge plugin no longer loads the sdkjs loader shim from
+`https://onlyoffice.github.io/sdkjs-plugins/v1/plugins.js`: `v1/plugins.js`
++ `v1/plugins.css` are VENDORED verbatim into `bridge-plugin/v1/` (from
+ONLYOFFICE/onlyoffice.github.io, AGPL-3.0 (c) Ascensio System SIA — headers
+preserved, see `v1/NOTICE.md`), and `index.html` references them via
+relative `./v1/plugins.js` / `./v1/plugins.css`. The shim is just a loader;
+the real `window.Asc` / `Asc.plugin` API comes from the editor's own sdkjs
+(Euro-Office keeps it — Euro-Office/plugins#1), so the plugin now works
+offline and identically in ONLYOFFICE and Euro-Office. `package-plugin.mjs`
+zips the whole `bridge-plugin/` dir, so `v1/` rides along automatically;
+reguard in test/plugin.test.ts (no remote src/href in index.html, AGPL
+header intact, shim self-contained).
+
+Euro-Office desktop 9.3.8 facts (live-checked on the user's install at
+`C:\Program Files\Euro-Office\DesktopEditors`): the plugin loader
+(`sdk-all.js` CPluginsManager) uses ONLY the install-tree
+`editors/sdkjs-plugins/` (`path="../../../../sdkjs-plugins/"`, loads
+`plugins.json` from there) — the per-user
+`%LOCALAPPDATA%\Euro-Office\DesktopEditors\data\sdkjs-plugins\` is NOT
+scanned (Euro-Office/DesktopEditors#128), the install-tree sdkjs-plugins
+folder is NOT shipped (must be created, admin rights), and the Plugins tab
+only appears once a plugin folder exists there. The panel's post-download
+instructions for targetApp=euro-office are built by
+`euroOfficeInstallInstructions(detectEuroOfficePluginsDir())` in
+server.ts: detection anchors on `<root>/editors/web-apps` per platform
+(Win Program Files, /opt/euro-office on Linux, .app/Contents on mac) and
+prints the concrete sdkjs-plugins path when found, else per-platform
+example paths. NOTE: real in-editor behavior of the bridge
+under Euro-Office 9.3.8 is NOT yet live-verified (9.3.x vs our verified
+10.0.0.169) — re-run the spike bridge-server probes there before relying on
+it.

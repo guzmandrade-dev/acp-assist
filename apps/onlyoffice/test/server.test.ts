@@ -523,13 +523,14 @@ describe('server (fake agent + fake plugin bridge)', () => {
 
 /** The "Download bridge" routes: bundled .plugin info + file download. */
 describe('bridge plugin package routes', () => {
-  async function serveWith(options: { pluginPath?: string } = {}) {
+  async function serveWith(options: { pluginPath?: string; settingsDir?: string } = {}) {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'oo-acp-hist-'));
     const app = createServer({
       apiToken: API_TOKEN,
       publicDir,
       panelConfig: PANEL_CONFIG,
       historyDir: dir,
+      settingsDir: options.settingsDir,
       pluginBridge: new FakePluginBridge(),
       pluginPath: options.pluginPath,
       agentFactory: fakeAgent([]),
@@ -582,6 +583,35 @@ describe('bridge plugin package routes', () => {
     } finally {
       close();
       await fs.rm(zipPath, { force: true }).catch(() => undefined);
+    }
+  });
+
+  it('serves Euro-Office install instructions when targetApp=euro-office', async () => {
+    const { makeZip } = await import('./zip-fixture.js');
+    const zipPath = path.join(os.tmpdir(), `oo-test-bridge-${process.pid}.plugin`);
+    await fs.writeFile(zipPath, makeZip({ 'config.json': JSON.stringify({ version: '0.8.0' }) }));
+    const settingsDir = await fs.mkdtemp(path.join(os.tmpdir(), 'oo-acp-settings-'));
+    await fs.writeFile(
+      path.join(settingsDir, 'agent-settings.json'),
+      JSON.stringify({ command: 'vibe-acp', targetApp: 'euro-office' }),
+    );
+    const { url, close } = await serveWith({ pluginPath: zipPath, settingsDir });
+    try {
+      const info = await (await fetch(`${url}/api/bridge/plugin`, { headers })).json() as {
+        targetApp: string | null; instructions: string[];
+      };
+      expect(info.targetApp).toBe('euro-office');
+      expect(info.instructions.length).toBeGreaterThan(0);
+      // Euro-Office variant: install-tree copy (detected path or per-platform
+      // example), not the Plugin Manager upload
+      const steps = info.instructions.join('\n');
+      expect(steps).toContain('sdkjs-plugins');
+      expect(steps).toContain('{7E2F9A41-6B3C-4D58-9E7A-1F4B8C6D2E39}');
+      expect(steps).not.toContain('Install plugin manually');
+    } finally {
+      close();
+      await fs.rm(zipPath, { force: true }).catch(() => undefined);
+      await fs.rm(settingsDir, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 

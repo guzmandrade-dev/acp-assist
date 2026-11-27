@@ -21,6 +21,15 @@ export interface AgentSettings {
    */
   officePath?: string;
   /**
+   * Panel-selected target application within the app family, chosen from
+   * the panel config's `targetApps` list (e.g. 'openoffice' vs
+   * 'libreoffice' in the LibreOffice app, 'euro-office' vs 'onlyoffice' in
+   * the ONLYOFFICE app). An explicit `officePath` wins over this id;
+   * empty/absent = the app's default target. Persisted server-side like
+   * the other agent settings so the panel can offer the picker.
+   */
+  targetApp?: string;
+  /**
    * Panel UI preference (persisted alongside the agent command because the
    * companion's port is random per launch, so the panel cannot use
    * localStorage): when false, the chat hides the fenced content blocks

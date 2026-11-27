@@ -48,6 +48,12 @@ export const docEl = document.getElementById('doc');
 export const selectionEl = document.getElementById('selection');
 export const docSelect = document.getElementById('doc-select');
 export const appSelect = document.getElementById('app-select');
+
+export const targetSettingsEl = document.getElementById('target-settings');
+
+export const targetAppListEl = document.getElementById('target-app-list');
+
+export const targetAppHintEl = document.getElementById('target-app-hint');
 export const editorSpinner = document.getElementById('bridge-spinner');
 export const bridgeBusyText = document.getElementById('bridge-busy-text');
 export const input = document.getElementById('input');
@@ -192,6 +198,12 @@ export const state = {
    * /api/settings/agent (autoContinueEdits); default false.
    */
   autoContinueEdits: false,
+  /**
+   * Target application within the app family (the toolbar picker's
+   * selection), persisted server-side via /api/settings/agent (targetApp).
+   * Empty = the app's default/auto-detect target.
+   */
+  targetApp: '',
 };
 
 /**

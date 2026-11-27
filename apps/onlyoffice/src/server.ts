@@ -27,6 +27,7 @@ import {
   buildAttachmentBlock,
   contextOmittedNote,
   createAttachmentExtractor,
+  createAgentSettings,
   createLogError,
   createParseActionTag,
   createWrap,
@@ -135,12 +136,74 @@ export function createServer(options: ServerOptions & {
 
 // --- "Download bridge" routes (manual .plugin install/update path) -----------
 
-/** Install instructions for the panel's post-download dialog. */
+/** Install instructions for the panel's post-download dialog (ONLYOFFICE). */
 export const PLUGIN_INSTALL_INSTRUCTIONS: readonly string[] = [
   'In ONLYOFFICE Desktop Editors open the Plugins tab → Plugin Manager → "Install plugin manually" and pick the downloaded acp-bridge.plugin. The same plugin GUID replaces the old version — no editor restart needed.',
   'Reopen the "ACP Assist Bridge" plugin from the Plugins tab so it reconnects. If it looks connected but this panel disagrees, press Reconnect inside the plugin.',
   'Keep the plugin tab open while chatting. For beta versions, download the .plugin asset from the release page instead of this bundled file.',
 ];
+
+/** The bridge plugin's GUID folder name inside an editor's sdkjs-plugins dir. */
+export const BRIDGE_PLUGIN_GUID_DIR = '{7E2F9A41-6B3C-4D58-9E7A-1F4B8C6D2E39}';
+
+/**
+ * Best-effort detection of Euro-Office's install-tree sdkjs-plugins dir
+ * (the ONLY place its 9.3.x desktop build loads plugins from). The release
+ * does NOT ship that folder (Euro-Office/DesktopEditors#128 — it must be
+ * created with admin rights), so detection anchors on the install root's
+ * `editors/web-apps` marker and returns the sdkjs-plugins path to create.
+ * Returns null when Euro-Office is not found at a standard spot.
+ */
+export async function detectEuroOfficePluginsDir(): Promise<string | null> {
+  const roots: string[] = [];
+  if (process.platform === 'win32') {
+    const pf = process.env.PROGRAMFILES ?? 'C:\\Program Files';
+    const pf86 = process.env['PROGRAMFILES(X86)'] ?? 'C:\\Program Files (x86)';
+    for (const root of ['Euro-Office', 'Nextcloud Office']) {
+      roots.push(path.join(pf, root, 'DesktopEditors'));
+      roots.push(path.join(pf86, root, 'DesktopEditors'));
+    }
+  } else if (process.platform === 'darwin') {
+    roots.push('/Applications/Euro-Office.app/Contents');
+    roots.push('/Applications/Nextcloud Office.app/Contents');
+  } else {
+    roots.push('/opt/euro-office/DesktopEditors');
+    roots.push('/opt/euro-office');
+    roots.push('/usr/lib/euro-office');
+  }
+  for (const root of roots) {
+    try {
+      const marker = path.join(root, 'editors', 'web-apps');
+      if (await fs.stat(marker).then(() => true).catch(() => false)) {
+        return path.join(root, 'editors', 'sdkjs-plugins');
+      }
+    } catch {
+      /* try next */
+    }
+  }
+  return null;
+}
+
+/**
+ * Install instructions when the panel's target-app picker is set to
+ * Euro-Office: its desktop build (9.3.x) loads plugins ONLY from the
+ * install-tree editors/sdkjs-plugins/ (per-user sdkjs-plugins is ignored,
+ * Euro-Office/DesktopEditors#128), so there is no Plugin Manager upload —
+ * the .plugin (a zip) must be extracted into the install tree with admin
+ * rights, and the Plugins tab appears after a full editor restart.
+ * The target path is the detected install-tree dir when found, else
+ * per-platform examples.
+ */
+export function euroOfficeInstallInstructions(pluginsDir: string | null): string[] {
+  const target = pluginsDir
+    ? `${path.join(pluginsDir, BRIDGE_PLUGIN_GUID_DIR)} (on this machine)`
+    : `the editors/sdkjs-plugins/ folder of your Euro-Office install — e.g. C:\\Program Files\\Euro-Office\\DesktopEditors\\editors\\sdkjs-plugins\\${BRIDGE_PLUGIN_GUID_DIR} on Windows, /opt/euro-office/DesktopEditors/editors/sdkjs-plugins/${BRIDGE_PLUGIN_GUID_DIR} on Linux — folder name ${BRIDGE_PLUGIN_GUID_DIR}`;
+  return [
+    `Extract the downloaded acp-bridge.plugin (it is a plain zip) and copy the extracted folder to ${target}. Writing there needs admin/root rights. Euro-Office 9.3.x loads plugins only from this install tree (per-user sdkjs-plugins is ignored, Euro-Office/DesktopEditors#128), so there is no Plugin Manager upload.`,
+    'Fully restart Euro-Office — the Plugins tab appears only once a plugin is present in the install tree. Open the "ACP Assist Bridge" plugin from the Plugins tab so it connects (the bridge also auto-starts with the editor).',
+    'Keep the plugin tab open while chatting. The bundled .plugin is self-contained (the sdkjs loader shim is vendored under v1/), so no download from onlyoffice.github.io is needed.',
+  ];
+}
 
 function registerPluginRoutes(
   app: express.Express,
@@ -160,15 +223,22 @@ function registerPluginRoutes(
       }
       const hello = bridge.connectedHello;
       const connectedVersion = hello?.version ?? null;
+      // The post-download steps depend on the target app picked in the
+      // panel's target-app picker (persisted as the targetApp setting).
+      const agentSettings = createAgentSettings(options.settingsDir);
+      const targetApp = (await agentSettings.read()).targetApp;
       res.json({
         available,
         path: pluginPath,
         version,
         connected: bridge.isConnected(),
         connectedVersion,
+        targetApp: targetApp ?? null,
         // Only claim an update when both versions are known and differ.
         updateNeeded: available && version !== null && connectedVersion !== null && version !== connectedVersion,
-        instructions: PLUGIN_INSTALL_INSTRUCTIONS,
+        instructions: targetApp === 'euro-office'
+          ? euroOfficeInstallInstructions(await detectEuroOfficePluginsDir())
+          : PLUGIN_INSTALL_INSTRUCTIONS,
       });
     }),
   );

@@ -1086,6 +1086,25 @@ describe('bridge install: configurable office target (officePath)', () => {
     }
   });
 
+  it('officePathForTargetApp maps picker ids via env override; auto/unknown → undefined', async () => {
+    const { officePathForTargetApp } = await import('../src/bridge/install.js');
+    const aoo = await makeFakeOffice('ProductName=Apache OpenOffice 4.1');
+    try {
+      expect(officePathForTargetApp('openoffice', { LO_OPENOFFICE_PATH: aoo.root }))
+        .toBe(aoo.root);
+      // env override pointing nowhere → falls through to standard
+      // locations, which don't exist in the test env → undefined
+      expect(officePathForTargetApp('openoffice', { LO_OPENOFFICE_PATH: path.join(aoo.tmp, 'nope') }))
+        .toBeUndefined();
+      expect(officePathForTargetApp('auto', { LO_OPENOFFICE_PATH: aoo.root })).toBeUndefined();
+      expect(officePathForTargetApp('libreoffice', { LO_OPENOFFICE_PATH: aoo.root })).toBeUndefined();
+      expect(officePathForTargetApp(undefined, { LO_OPENOFFICE_PATH: aoo.root })).toBeUndefined();
+      expect(officePathForTargetApp('wordperfect', { LO_OPENOFFICE_PATH: aoo.root })).toBeUndefined();
+    } finally {
+      await fs.rm(aoo.tmp, { recursive: true, force: true });
+    }
+  });
+
   it('resolveOfficeTarget returns null for paths without program/unopkg', async () => {
     const { resolveOfficeTarget } = await import('../src/bridge/install.js');
     const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'lo-acp-empty-'));

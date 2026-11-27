@@ -86,6 +86,52 @@ export function resolveOfficeTarget(configured: string): OfficeTarget | null {
 }
 
 /**
+ * Map a target-app picker id (the agent setting `targetApp`: 'auto' |
+ * 'openoffice' | 'collabora' | …) to an office install root, using env
+ * overrides (LO_OPENOFFICE_PATH / LO_COLLABORA_PATH) then the standard
+ * per-platform locations. Returns undefined for 'auto'/'libreoffice' and
+ * unknown ids (→ LibreOffice auto-detection) and when no candidate has a
+ * `program/unopkg` on disk. An explicit `officePath` setting wins over
+ * this mapping (see server.ts configuredOfficePath).
+ */
+export function officePathForTargetApp(
+  targetApp: string | undefined | null,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  if (!targetApp || targetApp === 'auto' || targetApp === 'libreoffice') return undefined;
+  const candidates: string[] = [];
+  if (targetApp === 'openoffice') {
+    if (env.LO_OPENOFFICE_PATH) candidates.push(env.LO_OPENOFFICE_PATH);
+    if (process.platform === 'win32') {
+      const pf = env.PROGRAMFILES ?? 'C:\\Program Files';
+      const pf86 = env['PROGRAMFILES(X86)'] ?? 'C:\\Program Files (x86)';
+      candidates.push(path.join(pf, 'OpenOffice'), path.join(pf86, 'OpenOffice'));
+    } else if (process.platform !== 'darwin') {
+      candidates.push('/usr/lib/openoffice', '/opt/openoffice4', '/usr/lib64/openoffice');
+    }
+  } else if (targetApp === 'collabora') {
+    if (env.LO_COLLABORA_PATH) candidates.push(env.LO_COLLABORA_PATH);
+    if (process.platform === 'win32') {
+      const pf = env.PROGRAMFILES ?? 'C:\\Program Files';
+      const pf86 = env['PROGRAMFILES(X86)'] ?? 'C:\\Program Files (x86)';
+      candidates.push(path.join(pf, 'Collabora Office'), path.join(pf86, 'Collabora Office'));
+    } else if (process.platform !== 'darwin') {
+      candidates.push('/usr/lib/collaboraoffice', '/opt/collaboraoffice');
+    }
+  } else {
+    return undefined;
+  }
+  for (const candidate of candidates) {
+    try {
+      if (resolveOfficeTarget(candidate)) return candidate;
+    } catch {
+      /* unreadable candidate — try the next */
+    }
+  }
+  return undefined;
+}
+
+/**
  * The per-user profile ROOT for a vendor: the directory whose versioned
  * children each hold a `user/` dir (e.g. `%APPDATA%\LibreOffice\4\user`,
  * `%APPDATA%\OpenOffice\4\user`). Best-known conventions per platform;

@@ -688,6 +688,16 @@ alternative is pointing officePath at LibreOffice/Collabora, which bundle
 Python. Config-only by design (no panel UI). Tests: unit +
 route-level in test/.
 
+Update (2026-11-27): the panel now HAS the UI — a folder-icon picker
+right of the editor dropdown (shared panel `targetApps` config) persists a
+`targetApp` id ('auto' | 'openoffice' | 'collabora') via
+/api/settings/agent. `officePathForTargetApp()` (install.ts) maps the id to
+a standard install location (env overrides LO_OPENOFFICE_PATH /
+LO_COLLABORA_PATH); an explicit `officePath` still wins over the picker
+(server.ts configuredOfficePath). The ONLYOFFICE app's picker
+('onlyoffice' | 'euro-office') records the target build the same way —
+backend consumption there is the Euro-Office follow-up.
+
 ### Package-cache clearing (added 2026-10-21)
 
 **LibreOffice does NOT rebuild its extension package-registry cache

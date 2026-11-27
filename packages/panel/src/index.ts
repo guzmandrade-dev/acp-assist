@@ -55,6 +55,16 @@ export interface PanelConfig {
   /** CSS theme class on <html> (e.g. 'theme-lyx'); null = default. */
   theme: string | null;
   /**
+   * Target applications within this app's family, offered by the
+   * toolbar's target-app picker (the icon button right of the editor
+   * dropdown): e.g. LibreOffice / Apache OpenOffice / Collabora Office
+   * for the LibreOffice app, ONLYOFFICE / Euro-Office for the ONLYOFFICE
+   * app. The chosen id persists server-side as the agent setting
+   * `targetApp`. Absent or a single entry = the picker stays hidden
+   * (the app has no meaningful target choice).
+   */
+  targetApps?: { id: string; label: string; hint?: string }[];
+  /**
    * Unified-app only: this panel instance's app id ('lyx' |
    * 'libreoffice' | 'onlyoffice'). When set, the served index.html
    * loads the boot script with `?app=<id>` so the multi-app host can
