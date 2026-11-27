@@ -92,3 +92,27 @@ describe('bridge-plugin: auto-start (v0.8.0)', () => {
     expect(configSrc).toMatch(/auto-starts when the editor opens/);
   });
 });
+
+describe('bridge-plugin: self-contained (no external SDK URL)', () => {
+  it('index.html loads the vendored v1 runtime via relative paths only', async () => {
+    const html = await read('index.html');
+    expect(html).toContain('src="./v1/plugins.js"');
+    expect(html).toContain('href="./v1/plugins.css"');
+    // No remote script/link references — the plugin must work offline and
+    // inside Euro-Office, which decouples from onlyoffice.github.io.
+    const remote = html.match(/(?:src|href)="https?:\/\/[^"]+"/g);
+    expect(remote).toBeNull();
+  });
+
+  it('v1/plugins.js + v1/plugins.css are vendored with the AGPL header intact', async () => {
+    const js = await read('v1/plugins.js');
+    const css = await read('v1/plugins.css');
+    expect(js).toContain('Copyright Ascensio System SIA');
+    expect(js).toContain('GNU Affero General Public License');
+    expect(css.length).toBeGreaterThan(1000);
+    const notice = await read('v1/NOTICE.md');
+    expect(notice).toContain('ONLYOFFICE/onlyoffice.github.io');
+    // The loader shim must be self-contained (no further sub-resources).
+    expect(js.match(/(?:src|href)\s*=\s*['"][^'"]+['"]/g)).toBeNull();
+  });
+});
